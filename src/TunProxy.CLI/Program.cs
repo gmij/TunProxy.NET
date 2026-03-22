@@ -31,8 +31,10 @@ public class Program
                 return;
             }
 
-            Log.Information("TunProxy 启动");
+            Log.Information("========================================");
+            Log.Information("TunProxy .NET 8 TUN 代理");
             Log.Information("版本：{Version}", typeof(Program).Assembly.GetName().Version);
+            Log.Information("========================================");
 
             // 加载配置文件
             var config = LoadConfig(args);
@@ -170,6 +172,12 @@ public class Program
                 SubnetMask = "255.255.255.0",
                 AddDefaultRoute = true
             },
+            Route = new RouteConfig
+            {
+                Mode = "whitelist",
+                ProxyDomains = new List<string> { "google.com", "github.com", "stackoverflow.com" },
+                DirectDomains = new List<string> { "cn", "com.cn", "163.com", "qq.com" }
+            },
             Logging = new LoggingConfig
             {
                 MinimumLevel = "Information",
@@ -271,6 +279,7 @@ public class AppConfig
 {
     public ProxyConfig Proxy { get; set; } = new();
     public TunConfig Tun { get; set; } = new();
+    public RouteConfig Route { get; set; } = new();
     public LoggingConfig Logging { get; set; } = new();
 }
 
@@ -283,11 +292,25 @@ public class ProxyConfig
     public string? Password { get; set; }
 }
 
+public class RouteRule
+{
+    public string Mode { get; set; } = "whitelist"; // whitelist or blacklist
+    public List<string> Domains { get; set; } = new();
+    public List<string> IpRanges { get; set; } = new();
+}
+
 public class TunConfig
 {
     public string IpAddress { get; set; } = "10.0.0.1";
     public string SubnetMask { get; set; } = "255.255.255.0";
     public bool AddDefaultRoute { get; set; } = true;
+}
+
+public class RouteConfig
+{
+    public string Mode { get; set; } = "whitelist"; // whitelist, blacklist, or all
+    public List<string> ProxyDomains { get; set; } = new(); // 走代理的域名
+    public List<string> DirectDomains { get; set; } = new(); // 直连的域名
 }
 
 public class LoggingConfig

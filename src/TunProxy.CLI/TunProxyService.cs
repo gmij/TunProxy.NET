@@ -21,6 +21,9 @@ public class TunProxyService
     private WintunAdapter? _adapter;
     private TcpConnectionManager? _connectionManager;
     private CancellationTokenSource? _cts;
+    private long _totalBytesSent;
+    private long _totalBytesReceived;
+    private int _packetCount;
 
     public TunProxyService(string proxyHost, int proxyPort, TunProxy.Core.Connections.ProxyType proxyType, string? username = null, string? password = null)
     {
@@ -57,8 +60,22 @@ public class TunProxyService
         Log.Information("连接管理器初始化完成");
 
         Log.Information("TunProxy 运行中，按 Ctrl+C 停止");
+        Log.Information("代理目标：{Host}:{Port}", _proxyHost, _proxyPort);
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        // 启动流量统计定时器
+        _ = Task.Run(async () =>
+        {
+            var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                Log.Information("流量统计：发送 {Sent:N0} 字节，接收 {Received:N0} 字节，数据包 {Packets} 个",
+                    Interlocked.Read(ref _totalBytesSent),
+                    Interlocked.Read(ref _totalBytesReceived),
+                    Interlocked.Read(ref _packetCount));
+            }
+        }, ct);
 
         try
         {
@@ -197,6 +214,14 @@ public class TunProxyService
             if (packet == null)
                 return;
 
+            // 处理 DNS 请求（UDP 53）
+            if (packet.IsUDP && packet.DestinationPort == 53)
+            {
+                Log.Debug("DNS 请求：{Source} -> {Dest}", packet.Header.SourceAddress, packet.Header.DestinationAddress);
+                // TODO: 实现 DNS over Proxy
+                return;
+            }
+
             // 只处理 TCP 流量
             if (!packet.IsTCP || packet.SourcePort == null || packet.DestinationPort == null)
                 return;
@@ -206,6 +231,10 @@ public class TunProxyService
             // 只代理 HTTP (80) 和 HTTPS (443)
             if (destPort != 80 && destPort != 443)
                 return;
+
+            // 路由规则判断（TODO: 需要 DNS 解析后判断域名）
+            var destIP = packet.Header.DestinationAddress.ToString();
+            Interlocked.Increment(ref _packetCount);
 
             var destIP = packet.Header.DestinationAddress.ToString();
             Log.Debug("{SourceIP}:{SourcePort} -> {DestIP}:{DestPort} ({Bytes} bytes)",

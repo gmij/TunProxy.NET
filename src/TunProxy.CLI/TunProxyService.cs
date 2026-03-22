@@ -22,6 +22,7 @@ public class TunProxyService
     private TcpConnectionManager? _connectionManager;
     private GeoIpService? _geoIpService;
     private GfwListService? _gfwListService;
+    private WindowsRouteService? _routeService;
     private CancellationTokenSource? _cts;
     private long _totalBytesSent;
     private long _totalBytesReceived;
@@ -29,6 +30,7 @@ public class TunProxyService
     private readonly List<string> _geoProxy;
     private readonly List<string> _geoDirect;
     private readonly bool _enableGfwList;
+    private readonly string _routeMode;
 
     public TunProxyService(
         string proxyHost, 
@@ -54,6 +56,8 @@ public class TunProxyService
         _enableGfwList = enableGfwList;
         if (enableGfwList)
             _gfwListService = new GfwListService(gfwListUrl, gfwListPath);
+        _routeMode = "global"; // TODO: 从配置读取
+        _routeService = new WindowsRouteService();
     }
 
     public async Task StartAsync(CancellationToken ct)
@@ -72,10 +76,18 @@ public class TunProxyService
         using var session = _adapter.StartSession(0x400000);
         Log.Information("会话启动成功");
 
-        // 3. 配置 TUN 接口 IP
+        // 3. 配置 TUN 接口 IP 和路由
         Log.Information("配置 TUN 接口 IP...");
         ConfigureTunInterface();
         Log.Information("TUN 接口配置完成");
+
+        // 配置路由模式
+        Log.Information("路由模式：{Mode}", "global"); // TODO: 从配置读取
+        if (true) // TODO: AutoAddDefaultRoute
+        {
+            Log.Information("添加默认路由...");
+            AddDefaultRoute();
+        }
 
         // 4. 初始化 GeoIP 服务
         if (_geoProxy.Count > 0 || _geoDirect.Count > 0)
@@ -195,10 +207,6 @@ public class TunProxyService
             using var proc = Process.Start(psi);
             proc?.WaitForExit(5000);
             
-            psi.Arguments = "interface ip add route 0.0.0.0/0 \"TunProxy\" 10.0.0.1";
-            using var proc2 = Process.Start(psi);
-            proc2?.WaitForExit(5000);
-            
             Log.Information("TUN 接口配置成功");
         }
         catch (Exception ex)
@@ -206,6 +214,29 @@ public class TunProxyService
             Log.Warning(ex, "自动配置 TUN 接口失败");
             Log.Information("请手动运行：netsh interface ip set address \"TunProxy\" static 10.0.0.1 255.255.255.0");
         }
+    }
+
+    private void AddDefaultRoute()
+    {
+        try
+        {
+            _routeService?.AddDefaultRoute();
+            Log.Information("默认路由添加成功");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "添加默认路由失败");
+        }
+    }
+
+    /// <summary>
+    /// 执行路由诊断
+    /// </summary>
+    public void RunRouteDiagnosis()
+    {
+        Log.Information("开始路由诊断...");
+        var result = _routeService?.Diagnose();
+        result?.Print();
     }
 
     private async Task PacketLoop(WintunSession session, CancellationToken ct)

@@ -170,6 +170,11 @@ public class Program
                     PrintHelp();
                     Environment.Exit(0);
                     break;
+                case "--diagnose" or "-d":
+                    // 路由诊断模式
+                    RunRouteDiagnosis();
+                    Environment.Exit(0);
+                    break;
             }
         }
 
@@ -207,7 +212,10 @@ public class Program
                 GeoIpDbPath = "GeoLite2-Country.mmdb",
                 EnableGfwList = true, // 启用 GFWList
                 GfwListUrl = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt",
-                GfwListPath = "gfwlist.txt"
+                GfwListPath = "gfwlist.txt",
+                TunRouteMode = "global", // global, smart, manual
+                TunRouteApps = new List<string> { "chrome.exe", "firefox.exe", "msedge.exe" },
+                AutoAddDefaultRoute = true
             },
             Logging = new LoggingConfig
             {
@@ -348,6 +356,9 @@ public class RouteConfig
     public bool EnableGfwList { get; set; } = false; // 是否启用 GFWList
     public string GfwListUrl { get; set; } = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt";
     public string GfwListPath { get; set; } = "gfwlist.txt";
+    public string TunRouteMode { get; set; } = "global"; // global, smart, manual
+    public List<string> TunRouteApps { get; set; } = new(); // 指定应用（进程名）
+    public bool AutoAddDefaultRoute { get; set; } = true; // 是否自动添加默认路由
 }
 
 public class LoggingConfig

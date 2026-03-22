@@ -64,7 +64,10 @@ public class Program
                 config.Password,
                 routeConfig.GeoProxy,
                 routeConfig.GeoDirect,
-                routeConfig.GeoIpDbPath);
+                routeConfig.GeoIpDbPath,
+                routeConfig.EnableGfwList,
+                routeConfig.GfwListUrl,
+                routeConfig.GfwListPath);
 
             using var cts = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) =>
@@ -201,7 +204,10 @@ public class Program
                 DirectDomains = new List<string> { "cn", "com.cn", "163.com", "qq.com" },
                 GeoProxy = new List<string> { "US", "JP", "SG", "HK" }, // 这些国家走代理
                 GeoDirect = new List<string> { "CN" }, // 中国直连
-                GeoIpDbPath = "GeoLite2-Country.mmdb"
+                GeoIpDbPath = "GeoLite2-Country.mmdb",
+                EnableGfwList = true, // 启用 GFWList
+                GfwListUrl = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt",
+                GfwListPath = "gfwlist.txt"
             },
             Logging = new LoggingConfig
             {
@@ -339,6 +345,9 @@ public class RouteConfig
     public List<string> GeoProxy { get; set; } = new(); // 走代理的国家代码
     public List<string> GeoDirect { get; set; } = new(); // 直连的国家代码
     public string GeoIpDbPath { get; set; } = "GeoLite2-Country.mmdb"; // GeoIP 数据库路径
+    public bool EnableGfwList { get; set; } = false; // 是否启用 GFWList
+    public string GfwListUrl { get; set; } = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt";
+    public string GfwListPath { get; set; } = "gfwlist.txt";
 }
 
 public class LoggingConfig

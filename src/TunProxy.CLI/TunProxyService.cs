@@ -21,12 +21,14 @@ public class TunProxyService
     private WintunAdapter? _adapter;
     private TcpConnectionManager? _connectionManager;
     private GeoIpService? _geoIpService;
+    private GfwListService? _gfwListService;
     private CancellationTokenSource? _cts;
     private long _totalBytesSent;
     private long _totalBytesReceived;
     private long _packetCount;
     private readonly List<string> _geoProxy;
     private readonly List<string> _geoDirect;
+    private readonly bool _enableGfwList;
 
     public TunProxyService(
         string proxyHost, 
@@ -36,7 +38,10 @@ public class TunProxyService
         string? password = null,
         List<string>? geoProxy = null,
         List<string>? geoDirect = null,
-        string geoIpDbPath = "GeoLite2-Country.mmdb")
+        string geoIpDbPath = "GeoLite2-Country.mmdb",
+        bool enableGfwList = false,
+        string gfwListUrl = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt",
+        string gfwListPath = "gfwlist.txt")
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
@@ -46,6 +51,9 @@ public class TunProxyService
         _geoProxy = geoProxy ?? new List<string>();
         _geoDirect = geoDirect ?? new List<string>();
         _geoIpService = new GeoIpService(geoIpDbPath);
+        _enableGfwList = enableGfwList;
+        if (enableGfwList)
+            _gfwListService = new GfwListService(gfwListUrl, gfwListPath);
     }
 
     public async Task StartAsync(CancellationToken ct)
@@ -76,6 +84,13 @@ public class TunProxyService
             await _geoIpService!.InitializeAsync();
             Log.Information("GEO 代理规则：{Proxy}", string.Join(",", _geoProxy));
             Log.Information("GEO 直连规则：{Direct}", string.Join(",", _geoDirect));
+        }
+
+        // 5. 初始化 GFWList
+        if (_enableGfwList && _gfwListService != null)
+        {
+            Log.Information("初始化 GFWList...");
+            await _gfwListService.InitializeAsync();
         }
 
         // 5. 创建连接管理器
@@ -258,17 +273,29 @@ public class TunProxyService
             var destIP = packet.Header.DestinationAddress.ToString();
             Interlocked.Increment(ref _packetCount);
 
-            // GEO 路由判断
+            // 路由判断顺序：GFWList > GEO > 默认
             bool shouldProxy = true;
+
+            // 1. GFWList 判断（优先级最高）
+            if (_enableGfwList && _gfwListService != null)
+            {
+                // TODO: 需要 DNS 解析获取域名
+                // 暂时简化处理，如果有 GFWList 就默认走代理
+                Log.Debug("GFWList 启用：{IP}:{Port}", destIP, destPort);
+            }
+
+            // 2. GEO 判断
             if (_geoIpService != null && (_geoProxy.Count > 0 || _geoDirect.Count > 0))
             {
-                shouldProxy = _geoIpService.ShouldProxy(
+                var geoShouldProxy = _geoIpService.ShouldProxy(
                     packet.Header.DestinationAddress, 
                     _geoProxy, 
                     _geoDirect);
                 
-                Log.Debug("GEO 判断：{IP} -> {Country}, 代理：{ShouldProxy}", 
-                    destIP, _geoIpService.GetCountryCode(packet.Header.DestinationAddress), shouldProxy);
+                Log.Debug("GEO 判断：{IP} -> {Country}, 代理：{GeoShouldProxy}", 
+                    destIP, _geoIpService.GetCountryCode(packet.Header.DestinationAddress), geoShouldProxy);
+                
+                shouldProxy = geoShouldProxy;
             }
 
             if (!shouldProxy)

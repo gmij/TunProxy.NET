@@ -80,32 +80,45 @@ public class IPPacket
             DestinationAddress = new IPAddress(data.Slice(16, 4))
         };
 
-        var packet = new IPPacket
-        {
-            Header = header,
-            Payload = data.Slice(headerLength).ToArray()
-        };
+        // 先解析 TCP/UDP 头部，确定传输层头部长度
+        int transportHeaderLength = 0;
+        TCPHeaderInfo? tcpHeader = null;
+        UDPHeaderInfo? udpHeader = null;
 
-        // 解析 TCP/UDP 头部
         if (header.ProtocolType == IPProtocol.TCP && data.Length >= headerLength + 20)
         {
-            packet.TCPHeader = new TCPHeaderInfo
+            tcpHeader = new TCPHeaderInfo
             {
                 SourcePort = BitConverter.ToUInt16(data.Slice(headerLength, 2)),
                 DestinationPort = BitConverter.ToUInt16(data.Slice(headerLength + 2, 2))
             };
+            // TCP 数据偏移（以 4 字节为单位）
+            byte dataOffset = data[headerLength + 12];
+            byte tcpHeaderLen = (byte)((dataOffset >> 4) * 4);
+            transportHeaderLength = tcpHeaderLen;
         }
         else if (header.ProtocolType == IPProtocol.UDP && data.Length >= headerLength + 8)
         {
-            packet.UDPHeader = new UDPHeaderInfo
+            udpHeader = new UDPHeaderInfo
             {
                 SourcePort = BitConverter.ToUInt16(data.Slice(headerLength, 2)),
                 DestinationPort = BitConverter.ToUInt16(data.Slice(headerLength + 2, 2)),
                 Length = BitConverter.ToUInt16(data.Slice(headerLength + 4, 2))
             };
+            transportHeaderLength = 8; // UDP 头部固定 8 字节
         }
 
-        return packet;
+        // Payload = IP payload - 传输层头部 = 应用层数据
+        int payloadStart = headerLength + transportHeaderLength;
+        byte[] payload = data.Length > payloadStart ? data.Slice(payloadStart).ToArray() : Array.Empty<byte>();
+
+        return new IPPacket
+        {
+            Header = header,
+            Payload = payload,
+            TCPHeader = tcpHeader,
+            UDPHeader = udpHeader
+        };
     }
 }
 

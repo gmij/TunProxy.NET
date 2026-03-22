@@ -17,30 +17,54 @@ public class TcpConnectionManager : IDisposable
     private readonly ProxyType _proxyType;
     private readonly string? _username;
     private readonly string? _password;
+    private readonly int _maxConnections;
+    private readonly TimeSpan _connectionTimeout;
     private bool _disposed;
 
-    public TcpConnectionManager(string proxyHost, int proxyPort, ProxyType proxyType, string? username = null, string? password = null)
+    public TcpConnectionManager(
+        string proxyHost,
+        int proxyPort,
+        ProxyType proxyType,
+        string? username = null,
+        string? password = null,
+        int maxConnections = 1000,
+        TimeSpan? connectionTimeout = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
         _proxyType = proxyType;
         _username = username;
         _password = password;
+        _maxConnections = maxConnections;
+        _connectionTimeout = connectionTimeout ?? TimeSpan.FromSeconds(30);
     }
 
     /// <summary>
     /// 获取或创建 TCP 连接
     /// </summary>
-    public TcpConnection GetOrCreateConnection(IPPacket packet)
+    public TcpConnection? GetOrCreateConnection(IPPacket packet)
     {
         if (packet.SourcePort == null || packet.DestinationPort == null)
             throw new ArgumentException("Invalid packet");
 
         var connKey = MakeConnectionKey(packet);
-        
+
         if (!_connections.TryGetValue(connKey, out var connection))
         {
-            connection = new TcpConnection(_proxyHost, _proxyPort, _proxyType, _username, _password);
+            // 检查连接数限制
+            if (_connections.Count >= _maxConnections)
+            {
+                // 尝试清理一些过期连接
+                CleanupIdleConnections(TimeSpan.FromMinutes(1));
+
+                // 如果仍然超过限制，返回 null
+                if (_connections.Count >= _maxConnections)
+                {
+                    return null;
+                }
+            }
+
+            connection = new TcpConnection(_proxyHost, _proxyPort, _proxyType, _username, _password, _connectionTimeout);
             _connections[connKey] = connection;
         }
 
@@ -116,45 +140,92 @@ public class TcpConnection : IDisposable
     private readonly ProxyType _proxyType;
     private readonly string? _username;
     private readonly string? _password;
+    private readonly TimeSpan _connectionTimeout;
     private TcpClient? _client;
     private NetworkStream? _stream;
     private bool _connected;
     private bool _disposed;
+    private int _retryCount;
+    private const int MaxRetries = 3;
 
     public DateTime LastActivity { get; private set; } = DateTime.UtcNow;
+    public bool HasErrors { get; private set; }
 
-    public TcpConnection(string proxyHost, int proxyPort, ProxyType proxyType, string? username = null, string? password = null)
+    public TcpConnection(
+        string proxyHost,
+        int proxyPort,
+        ProxyType proxyType,
+        string? username = null,
+        string? password = null,
+        TimeSpan? connectionTimeout = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
         _proxyType = proxyType;
         _username = username;
         _password = password;
+        _connectionTimeout = connectionTimeout ?? TimeSpan.FromSeconds(30);
     }
 
     /// <summary>
-    /// 连接到代理服务器
+    /// 连接到代理服务器（带重试机制）
     /// </summary>
-    public async Task ConnectAsync(string destHost, int destPort, CancellationToken ct)
+    public async Task<bool> ConnectAsync(string destHost, int destPort, CancellationToken ct)
     {
-        if (_connected) return;
+        if (_connected) return true;
 
-        _client = new TcpClient();
-        await _client.ConnectAsync(_proxyHost, _proxyPort, ct);
-        _stream = _client.GetStream();
+        Exception? lastException = null;
 
-        // SOCKS5 握手
-        if (_proxyType == ProxyType.Socks5)
+        for (int i = 0; i <= MaxRetries; i++)
         {
-            await Socks5HandshakeAsync(destHost, destPort, ct);
-        }
-        else if (_proxyType == ProxyType.Http)
-        {
-            await HttpConnectAsync(destHost, destPort, ct);
+            try
+            {
+                _client?.Dispose();
+                _client = new TcpClient();
+
+                // 设置连接超时
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(_connectionTimeout);
+
+                await _client.ConnectAsync(_proxyHost, _proxyPort, cts.Token);
+                _stream = _client.GetStream();
+
+                // SOCKS5 握手
+                if (_proxyType == ProxyType.Socks5)
+                {
+                    await Socks5HandshakeAsync(destHost, destPort, cts.Token);
+                }
+                else if (_proxyType == ProxyType.Http)
+                {
+                    await HttpConnectAsync(destHost, destPort, cts.Token);
+                }
+
+                _connected = true;
+                _retryCount = 0;
+                HasErrors = false;
+                LastActivity = DateTime.UtcNow;
+                return true;
+            }
+            catch (Exception ex) when (i < MaxRetries && !ct.IsCancellationRequested)
+            {
+                lastException = ex;
+                _retryCount++;
+
+                // 指数退避：等待 100ms, 200ms, 400ms
+                var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, i));
+                await Task.Delay(delay, ct);
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                break;
+            }
         }
 
-        _connected = true;
-        LastActivity = DateTime.UtcNow;
+        HasErrors = true;
+        throw new InvalidOperationException(
+            $"Failed to connect after {MaxRetries + 1} attempts",
+            lastException);
     }
 
     /// <summary>

@@ -1,7 +1,7 @@
 # Build outputs
-/bin/
-/obj/
-/publish/
+bin/
+obj/
+publish/
 *.dll
 *.exe
 *.pdb
@@ -23,3 +23,9 @@ wintun.zip
 
 # Logs
 *.log
+
+# GeoIP database
+*.mmdb
+
+# GFWList
+gfwlist.txt

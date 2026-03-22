@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Net;
@@ -5,6 +6,7 @@ using System.Net.Sockets;
 using Serilog;
 using TunProxy.Core.Connections;
 using TunProxy.Core.Dns;
+using TunProxy.Core.Metrics;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Wintun;
 using ProxyType = TunProxy.Core.Connections.ProxyType;
@@ -27,13 +29,11 @@ public class TunProxyService
     private GfwListService? _gfwListService;
     private WindowsRouteService? _routeService;
     private CancellationTokenSource? _cts;
-    private long _totalBytesSent;
-    private long _totalBytesReceived;
-    private long _packetCount;
     private readonly List<string> _geoProxy;
     private readonly List<string> _geoDirect;
     private readonly bool _enableGfwList;
-    private readonly string _routeMode;
+    private readonly ArrayPool<byte> _bufferPool = ArrayPool<byte>.Shared;
+    private readonly ProxyMetrics _metrics = new();
 
     public TunProxyService(
         string proxyHost, 
@@ -59,8 +59,28 @@ public class TunProxyService
         _enableGfwList = enableGfwList;
         if (enableGfwList)
             _gfwListService = new GfwListService(gfwListUrl, gfwListPath);
-        _routeMode = "global"; // TODO: 从配置读取
         _routeService = new WindowsRouteService();
+    }
+
+    /// <summary>
+    /// 获取指标快照（用于 Web API）
+    /// </summary>
+    public MetricsSnapshot GetMetrics() => _metrics.GetSnapshot();
+
+    /// <summary>
+    /// 获取服务状态（用于 Web API）
+    /// </summary>
+    public ServiceStatus GetStatus()
+    {
+        return new ServiceStatus
+        {
+            IsRunning = _cts != null && !_cts.IsCancellationRequested,
+            ProxyHost = _proxyHost,
+            ProxyPort = _proxyPort,
+            ProxyType = _proxyType.ToString(),
+            ActiveConnections = _connectionManager?.ActiveConnections ?? 0,
+            Metrics = _metrics.GetSnapshot()
+        };
     }
 
     public async Task StartAsync(CancellationToken ct)
@@ -68,81 +88,130 @@ public class TunProxyService
         Log.Information("TunProxy 启动中...");
         Log.Information("代理：{Host}:{Port} ({Type})", _proxyHost, _proxyPort, _proxyType);
 
-        // 1. 确保 wintun.dll 存在
-        await EnsureWintunDllAsync(ct);
-
-        // 2. 创建 TUN 适配器
-        Log.Information("创建 TUN 适配器...");
-        _adapter = WintunAdapter.CreateAdapter("TunProxy", "Wintun");
-        Log.Information("TUN 适配器创建成功");
-
-        using var session = _adapter.StartSession(0x400000);
-        Log.Information("会话启动成功");
-
-        // 3. 配置 TUN 接口 IP 和路由
-        Log.Information("配置 TUN 接口 IP...");
-        ConfigureTunInterface();
-        Log.Information("TUN 接口配置完成");
-
-        // 配置路由模式
-        Log.Information("路由模式：{Mode}", "global"); // TODO: 从配置读取
-        if (true) // TODO: AutoAddDefaultRoute
-        {
-            Log.Information("添加默认路由...");
-            AddDefaultRoute();
-        }
-
-        // 4. 初始化 GeoIP 服务
-        if (_geoProxy.Count > 0 || _geoDirect.Count > 0)
-        {
-            Log.Information("初始化 GeoIP 服务...");
-            await _geoIpService!.InitializeAsync();
-            Log.Information("GEO 代理规则：{Proxy}", string.Join(",", _geoProxy));
-            Log.Information("GEO 直连规则：{Direct}", string.Join(",", _geoDirect));
-        }
-
-        // 5. 初始化 GFWList
-        if (_enableGfwList && _gfwListService != null)
-        {
-            Log.Information("初始化 GFWList...");
-            await _gfwListService.InitializeAsync();
-        }
-
-        // 5. 创建连接管理器
-        _connectionManager = new TcpConnectionManager(_proxyHost, _proxyPort, _proxyType, _username, _password);
-        Log.Information("连接管理器初始化完成");
-
-        Log.Information("TunProxy 运行中，按 Ctrl+C 停止");
-        Log.Information("代理目标：{Host}:{Port}", _proxyHost, _proxyPort);
-
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-
-        // 启动流量统计定时器
-        _ = Task.Run(async () =>
-        {
-            var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-            while (await timer.WaitForNextTickAsync(ct))
-            {
-                Log.Information("流量统计：发送 {Sent:N0} 字节，接收 {Received:N0} 字节，数据包 {Packets} 个",
-                    Interlocked.Read(ref _totalBytesSent),
-                    Interlocked.Read(ref _totalBytesReceived),
-                    Interlocked.Read(ref _packetCount));
-            }
-        }, ct);
-
         try
         {
-            await PacketLoop(session, _cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            Log.Information("正在停止...");
+            // 1. 确保 wintun.dll 存在
+            await EnsureWintunDllAsync(ct);
+
+            // 2. 创建 TUN 适配器
+            Log.Information("创建 TUN 适配器...");
+            _adapter = WintunAdapter.CreateAdapter("TunProxy", "Wintun");
+            Log.Information("TUN 适配器创建成功");
+
+            using var session = _adapter.StartSession(0x400000);
+            Log.Information("会话启动成功");
+
+            // 3. 配置 TUN 接口 IP 和路由
+            Log.Information("配置 TUN 接口 IP...");
+            ConfigureTunInterface();
+            Log.Information("TUN 接口配置完成");
+
+            // 配置路由模式
+            Log.Information("路由模式：{Mode}", "global");
+            if (true) // TODO: AutoAddDefaultRoute
+            {
+                Log.Information("添加默认路由...");
+                AddDefaultRoute();
+            }
+
+            // 4. 初始化 GeoIP 服务
+            if (_geoProxy.Count > 0 || _geoDirect.Count > 0)
+            {
+                Log.Information("初始化 GeoIP 服务...");
+                await _geoIpService!.InitializeAsync();
+                Log.Information("GEO 代理规则：{Proxy}", string.Join(",", _geoProxy));
+                Log.Information("GEO 直连规则：{Direct}", string.Join(",", _geoDirect));
+            }
+
+            // 5. 初始化 GFWList
+            if (_enableGfwList && _gfwListService != null)
+            {
+                Log.Information("初始化 GFWList...");
+                await _gfwListService.InitializeAsync();
+            }
+
+            // 5. 创建连接管理器
+            _connectionManager = new TcpConnectionManager(_proxyHost, _proxyPort, _proxyType, _username, _password);
+            Log.Information("连接管理器初始化完成");
+
+            Log.Information("TunProxy 运行中，按 Ctrl+C 停止");
+            Log.Information("代理目标：{Host}:{Port}", _proxyHost, _proxyPort);
+
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+            // 启动流量统计定时器
+            _ = Task.Run(async () =>
+            {
+                var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+                while (await timer.WaitForNextTickAsync(ct))
+                {
+                    var snapshot = _metrics.GetSnapshot();
+                    Log.Information("流量统计：发送 {Sent:N0} 字节，接收 {Received:N0} 字节，数据包 {Packets} 个，" +
+                        "活跃连接 {Active}，总连接 {Total}，失败 {Failed}",
+                        snapshot.TotalBytesSent,
+                        snapshot.TotalBytesReceived,
+                        snapshot.TotalPackets,
+                        snapshot.ActiveConnections,
+                        snapshot.TotalConnections,
+                        snapshot.FailedConnections);
+                }
+            }, ct);
+
+            try
+            {
+                await PacketLoop(session, _cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Information("正在停止...");
+            }
         }
         finally
         {
-            _connectionManager?.Dispose();
-            _adapter?.Dispose();
+            await StopAsync();
         }
+    }
+
+    /// <summary>
+    /// 优雅停止服务
+    /// </summary>
+    public async Task StopAsync()
+    {
+        Log.Information("开始停止服务...");
+
+        try
+        {
+            // 1. 取消操作
+            _cts?.Cancel();
+
+            // 2. 等待连接关闭
+            await Task.Delay(1000);
+
+            // 3. 清理连接
+            _connectionManager?.Dispose();
+            Log.Information("连接管理器已清理");
+
+            // 4. 删除路由
+            try
+            {
+                _routeService?.RemoveDefaultRoute();
+                Log.Information("默认路由已删除");
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "删除路由失败");
+            }
+
+            // 5. 释放适配器
+            _adapter?.Dispose();
+            Log.Information("TUN 适配器已释放");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "停止服务时出错");
+        }
+
+        Log.Information("服务已停止");
     }
 
     /// <summary>
@@ -286,10 +355,13 @@ public class TunProxyService
             if (packet == null)
                 return;
 
+            _metrics.IncrementPackets();
+
             // 处理 DNS 请求（UDP 53）
             if (packet.IsUDP && packet.DestinationPort == 53)
             {
                 Log.Debug("DNS 请求：{Source} -> {Dest}", packet.Header.SourceAddress, packet.Header.DestinationAddress);
+                _metrics.IncrementDnsQueries();
                 await ProcessDnsQueryAsync(session, packet, ct);
                 return;
             }
@@ -299,13 +371,12 @@ public class TunProxyService
                 return;
 
             var destPort = packet.DestinationPort.Value;
-            
+
             // 只代理 HTTP (80) 和 HTTPS (443)
             if (destPort != 80 && destPort != 443)
                 return;
 
-            var destIP = packet.Header.DestinationAddress.ToString();
-            Interlocked.Increment(ref _packetCount);
+            var destIP = packet.Header.DestinationAddress.ToString();;
 
             // 路由判断顺序：GFWList > GEO > 默认
             bool shouldProxy = true;
@@ -343,11 +414,27 @@ public class TunProxyService
 
             // 获取或创建连接
             var connection = _connectionManager!.GetOrCreateConnection(packet);
-            
+
+            if (connection == null)
+            {
+                Log.Warning("连接池已满，丢弃数据包");
+                return;
+            }
+
             // 如果连接未建立，先连接
             if (!connection.IsConnected)
             {
-                await connection.ConnectAsync(destIP, destPort, ct);
+                _metrics.IncrementTotalConnections();
+                _metrics.IncrementActiveConnections();
+
+                var connected = await connection.ConnectAsync(destIP, destPort, ct);
+                if (!connected)
+                {
+                    _metrics.DecrementActiveConnections();
+                    _metrics.IncrementFailedConnections();
+                    Log.Warning("连接建立失败：{IP}:{Port}", destIP, destPort);
+                    return;
+                }
                 Log.Information("连接建立：{IP}:{Port}", destIP, destPort);
             }
 
@@ -355,17 +442,26 @@ public class TunProxyService
             if (packet.Payload.Length > 0)
             {
                 await connection.SendAsync(packet.Payload, ct);
-                
-                // 接收响应
-                var responseBuffer = new byte[4096];
-                var bytesRead = await connection.ReceiveAsync(responseBuffer, ct);
-                
-                if (bytesRead > 0)
+                _metrics.AddBytesSent(packet.Payload.Length);
+
+                // 接收响应 - 使用 ArrayPool
+                var responseBuffer = _bufferPool.Rent(8192);
+                try
                 {
-                    Log.Debug("收到响应 {Bytes} bytes", bytesRead);
-                    
-                    // 回写到 TUN 设备
-                    await WriteResponseToTunAsync(session, packet, responseBuffer.AsSpan(0, bytesRead), ct);
+                    var bytesRead = await connection.ReceiveAsync(responseBuffer, ct);
+
+                    if (bytesRead > 0)
+                    {
+                        _metrics.AddBytesReceived(bytesRead);
+                        Log.Debug("收到响应 {Bytes} bytes", bytesRead);
+
+                        // 回写到 TUN 设备
+                        await WriteResponseToTunAsync(session, packet, responseBuffer.AsSpan(0, bytesRead), ct);
+                    }
+                }
+                finally
+                {
+                    _bufferPool.Return(responseBuffer);
                 }
             }
         }
@@ -532,6 +628,7 @@ public class TunProxyService
             var dnsResponse = await QueryDnsViaSocks5Async(domain, requestPacket.Header.DestinationAddress.ToString(), ct);
             if (dnsResponse == null || dnsResponse.Length == 0)
             {
+                _metrics.IncrementFailedDnsQueries();
                 Log.Warning("DNS 查询失败：{Domain}", domain);
                 return;
             }

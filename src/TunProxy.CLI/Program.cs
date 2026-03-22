@@ -24,6 +24,14 @@ public class Program
 
         try
         {
+            // 检查操作系统支持
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                Log.Error("当前版本仅支持 Windows 系统");
+                Log.Information("Linux 支持正在开发中");
+                return;
+            }
+
             // 检查管理员权限
             if (!IsAdministrator())
             {
@@ -235,6 +243,9 @@ public class Program
     /// </summary>
     private static bool IsAdministrator()
     {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return false;
+
         using var identity = WindowsIdentity.GetCurrent();
         var principal = new WindowsPrincipal(identity);
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
@@ -245,6 +256,12 @@ public class Program
     /// </summary>
     private static void RunAsAdministrator()
     {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            Log.Error("自动提权仅在 Windows 上支持");
+            return;
+        }
+
         var exePath = Environment.ProcessPath!;
         var args = Environment.GetCommandLineArgs().Skip(1).ToArray();
 

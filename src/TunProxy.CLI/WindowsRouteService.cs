@@ -50,6 +50,18 @@ public class WindowsRouteService
     /// </summary>
     public bool AddDefaultRoute()
     {
+        // 先检查是否已存在 TUN 默认路由
+        var routes = GetRouteTable();
+        var existingTunRoute = routes.FirstOrDefault(r =>
+            r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress);
+
+        if (existingTunRoute != null)
+        {
+            Console.WriteLine($"[ROUTE] TUN 默认路由已存在，跳过添加");
+            return true;
+        }
+
+        // 添加路由，使用较低的 metric 确保优先级
         return ExecuteNetshCommand($"interface ip add route 0.0.0.0/0 \"{_tunInterfaceName}\" {_tunIpAddress} metric=1");
     }
 
@@ -152,9 +164,9 @@ public class WindowsRouteService
 
             // 2. 检查默认路由
             var routes = GetRouteTable();
-            var defaultRoute = routes.FirstOrDefault(r => 
-                r.Network == "0.0.0.0" && r.Interface.Contains(interfaceIndex?.ToString() ?? ""));
-            
+            var defaultRoute = routes.FirstOrDefault(r =>
+                r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress);
+
             result.HasDefaultRoute = defaultRoute != null;
             result.DefaultRouteMetric = defaultRoute?.Metric;
 
@@ -163,14 +175,29 @@ public class WindowsRouteService
                 result.Issues.Add("默认路由不存在");
             }
 
-            // 3. 检查路由优先级
-            var competingRoutes = routes.Where(r => 
-                r.Network == "0.0.0.0" && !r.Interface.Contains(interfaceIndex?.ToString() ?? "")).ToList();
-            
+            // 3. 检查路由优先级（metric 越小优先级越高）
+            var competingRoutes = routes.Where(r =>
+                r.Network == "0.0.0.0" && r.Gateway != _tunIpAddress).ToList();
+
             result.CompetingRoutes = competingRoutes.Count;
-            if (competingRoutes.Any(r => int.Parse(r.Metric) < int.Parse(defaultRoute?.Metric ?? "999")))
+
+            if (defaultRoute != null && competingRoutes.Any())
             {
-                result.Issues.Add("存在优先级更高的其他默认路由");
+                var tunMetric = int.TryParse(defaultRoute.Metric, out var tm) ? tm : 999;
+                var hasHigherPriority = competingRoutes.Any(r =>
+                {
+                    var metric = int.TryParse(r.Metric, out var m) ? m : 999;
+                    return metric < tunMetric;
+                });
+
+                if (hasHigherPriority)
+                {
+                    result.Issues.Add($"存在优先级更高的其他默认路由 (TUN metric={tunMetric})");
+                    foreach (var route in competingRoutes.Where(r => int.Parse(r.Metric) < tunMetric))
+                    {
+                        result.Issues.Add($"  - Gateway={route.Gateway}, Metric={route.Metric}");
+                    }
+                }
             }
 
             // 4. 测试网络连通性

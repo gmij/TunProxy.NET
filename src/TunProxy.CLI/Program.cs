@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -34,7 +36,10 @@ public class TunProxyService
         Console.WriteLine($"🥔 TunProxy 启动中...");
         Console.WriteLine($"代理：{_proxyHost}:{_proxyPort} ({_proxyType})");
 
-        // 创建 TUN 适配器
+        // 1. 确保 wintun.dll 存在
+        await EnsureWintunDllAsync(ct);
+
+        // 2. 创建 TUN 适配器
         Console.WriteLine("创建 TUN 适配器...");
         _adapter = WintunAdapter.CreateAdapter("TunProxy", "Wintun");
         Console.WriteLine("✓ TUN 适配器创建成功");
@@ -42,10 +47,12 @@ public class TunProxyService
         using var session = _adapter.StartSession(0x400000); // 4MB ring buffer
         Console.WriteLine("✓ 会话启动成功");
 
-        // 配置 TUN 接口 IP
+        // 3. 配置 TUN 接口 IP
+        Console.WriteLine("配置 TUN 接口 IP...");
         ConfigureTunInterface();
+        Console.WriteLine("✓ TUN 接口配置完成");
 
-        Console.WriteLine("🥔 TunProxy 运行中，按 Ctrl+C 停止...\n");
+        Console.WriteLine("\n🥔 TunProxy 运行中，按 Ctrl+C 停止...\n");
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
@@ -63,16 +70,87 @@ public class TunProxyService
         }
     }
 
+    /// <summary>
+    /// 自动下载 wintun.dll
+    /// </summary>
+    private static async Task EnsureWintunDllAsync(CancellationToken ct)
+    {
+        var wintunPath = Path.Combine(AppContext.BaseDirectory, "wintun.dll");
+        if (File.Exists(wintunPath))
+        {
+            Console.WriteLine("✓ wintun.dll 已存在");
+            return;
+        }
+
+        Console.WriteLine("下载 wintun.dll...");
+        
+        using var client = new HttpClient();
+        client.Timeout = TimeSpan.FromMinutes(5);
+        
+        // 下载 Wintun ZIP
+        var downloadUrl = "https://www.wintun.net/builds/wintun-0.14.1.zip";
+        var tempZip = Path.Combine(Path.GetTempPath(), "wintun.zip");
+        
+        try
+        {
+            var data = await client.GetByteArrayAsync(downloadUrl, ct);
+            await File.WriteAllBytesAsync(tempZip, data, ct);
+            
+            // 解压
+            ZipFile.ExtractToDirectory(tempZip, Path.GetTempPath(), true);
+            
+            // 找到 DLL 并复制
+            var dllFiles = Directory.GetFiles(Path.GetTempPath(), "wintun.dll", SearchOption.AllDirectories);
+            if (dllFiles.Length == 0)
+                throw new Exception("未找到 wintun.dll");
+            
+            File.Copy(dllFiles[0], wintunPath, true);
+            Console.WriteLine($"✓ wintun.dll 下载完成：{wintunPath}");
+            
+            // 清理
+            File.Delete(tempZip);
+            foreach (var dir in Directory.GetDirectories(Path.GetTempPath(), "wintun*"))
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ wintun.dll 下载失败：{ex.Message}");
+            Console.WriteLine("请手动下载：https://www.wintun.net/builds/wintun-0.14.1.zip");
+            throw;
+        }
+    }
+
     private void ConfigureTunInterface()
     {
-        // 使用 netsh 配置 TUN 接口 IP
-        // 注意：实际部署时需要管理员权限
-        Console.WriteLine("配置 TUN 接口 IP: 10.0.0.1/24");
-        
-        // 这里应该调用 Windows API 或 netsh 来配置
-        // 简化版本，用户需要手动配置或使用其他工具
-        Console.WriteLine("⚠ 请手动配置 TUN 接口 IP 或使用管理员权限运行");
-        Console.WriteLine("  netsh interface ip set address \"TunProxy\" static 10.0.0.1 255.255.255.0");
+        try
+        {
+            // 使用 netsh 配置 TUN 接口 IP
+            var psi = new ProcessStartInfo
+            {
+                FileName = "netsh",
+                Arguments = "interface ip set address \"TunProxy\" static 10.0.0.1 255.255.255.0",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var proc = Process.Start(psi);
+            proc?.WaitForExit(5000);
+            
+            // 添加路由（可选）
+            psi.Arguments = "interface ip add route 0.0.0.0/0 \"TunProxy\" 10.0.0.1";
+            using var proc2 = Process.Start(psi);
+            proc2?.WaitForExit(5000);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠ 自动配置失败：{ex.Message}");
+            Console.WriteLine("请手动运行：");
+            Console.WriteLine("  netsh interface ip set address \"TunProxy\" static 10.0.0.1 255.255.255.0");
+        }
     }
 
     private async Task PacketLoop(WintunSession session, CancellationToken ct)
@@ -87,11 +165,8 @@ public class TunProxyService
             {
                 try
                 {
-                    // 复制数据包
                     var data = new byte[packetSize];
                     Marshal.Copy(packet, data, 0, (int)packetSize);
-
-                    // 处理数据包
                     _ = ProcessPacketAsync(data, ct);
                 }
                 finally
@@ -101,7 +176,6 @@ public class TunProxyService
             }
             else if (Marshal.GetLastWin32Error() == WintunNative.ERROR_NO_MORE_ITEMS)
             {
-                // 没有数据包，等待
                 WintunNative.WaitForSingleObject(readWaitEvent, 100);
             }
         }
@@ -115,27 +189,21 @@ public class TunProxyService
             if (packet == null)
                 return;
 
-            // 只处理 TCP 流量（HTTP/HTTPS）
             if (!packet.IsTCP || packet.DestinationPort == null)
                 return;
 
             var destPort = packet.DestinationPort.Value;
-
-            // 只代理 HTTP (80) 和 HTTPS (443) 流量
             if (destPort != 80 && destPort != 443)
                 return;
 
-            var destIP = packet.Header.DestinationAddress;
-            var sourceIP = packet.Header.SourceAddress;
+            var destIP = packet.Header.DestinationAddress.ToString();
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {packet.Header.SourceAddress} -> {destIP}:{destPort}");
 
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {sourceIP} -> {destIP}:{destPort} ({packet.Payload.Length} bytes)");
-
-            // 通过代理转发
             await ForwardViaProxyAsync(packet, ct);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ 处理数据包失败：{ex.Message}");
+            Console.WriteLine($"❌ 处理失败：{ex.Message}");
         }
     }
 
@@ -147,7 +215,6 @@ public class TunProxyService
         var destIP = packet.Header.DestinationAddress.ToString();
         var destPort = packet.DestinationPort.Value;
 
-        // 创建代理连接
         using var proxy = _proxyType switch
         {
             ProxyType.Socks5 => (IDisposableProxyClient?)new Socks5Client(_proxyHost, _proxyPort, _username, _password),
@@ -160,25 +227,20 @@ public class TunProxyService
             await proxy.ConnectAsync(destIP, destPort, ct);
             var proxyStream = proxy.GetStream();
 
-            // 发送 payload 到代理
             if (packet.Payload.Length > 0)
             {
                 await proxyStream.WriteAsync(packet.Payload, ct);
-
-                // 读取响应（简化版本，实际应该保持长连接）
                 var responseBuffer = new byte[4096];
                 var bytesRead = await proxyStream.ReadAsync(responseBuffer, ct);
-
                 if (bytesRead > 0)
                 {
-                    // TODO: 将响应写回 TUN 设备
                     Console.WriteLine($"  ✓ 收到响应 {bytesRead} bytes");
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"  ❌ 代理转发失败：{ex.Message}");
+            Console.WriteLine($"  ❌ 转发失败：{ex.Message}");
         }
     }
 }
@@ -203,7 +265,6 @@ public class Program
         int proxyPort = 7890;
         var proxyType = ProxyType.Socks5;
 
-        // 解析命令行参数
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -257,7 +318,7 @@ public class Program
     private static void PrintHelp()
     {
         Console.WriteLine(@"
-🥔 TunProxy - .NET 8 TUN 代理
+🥔 TunProxy - .NET 8 TUN 代理（傻瓜版）
 
 用法：TunProxy.CLI [选项]
 

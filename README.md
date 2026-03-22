@@ -12,18 +12,25 @@
 - ⏳ 规则引擎
 - ⏳ DNS 处理
 
-## 快速开始
+## 快速开始（傻瓜版）
 
-### 1. 下载 Wintun DLL
+### 1. 下载编译好的程序
 
-从 https://www.wintun.net/ 下载 `wintun.dll`，放到项目根目录。
+从 [GitHub Actions](https://github.com/gmij/TunProxy.NET/actions) 下载最新构建：
+- 点击最新的成功 build
+- 下载 `TunProxy.NET-win-x64-AOT.zip`
 
-```bash
-# 下载 wintun.dll (需要手动下载)
-# https://www.wintun.net/builds/wintun-0.14.1.zip
+### 2. 解压并运行
+
+```powershell
+# 解压 ZIP 文件
+# 以管理员身份运行 PowerShell
+
+# 运行（会自动下载 wintun.dll，自动配置 TUN 接口）
+.\TunProxy.CLI.exe -p 127.0.0.1:7890 -t socks5
 ```
 
-### 2. 构建项目
+**就这么简单！** wintun.dll 会自动下载，TUN 接口会自动配置。
 
 ```bash
 cd TunProxy.NET

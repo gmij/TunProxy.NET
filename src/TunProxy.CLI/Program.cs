@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Serilog;
 using TunProxy.Core.Connections;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Wintun;
+using ProxyType = TunProxy.Core.Connections.ProxyType;
 
 namespace TunProxy.CLI;
 

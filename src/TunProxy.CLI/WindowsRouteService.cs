@@ -75,10 +75,23 @@ public class WindowsRouteService
     /// </summary>
     public bool AddDefaultRoute()
     {
-        // 先检查是否已存在 TUN 默认路由
+        var tunInterfaceName = GetTunInterfaceName();
         var routes = GetRouteTable();
+
+        // 清理所有指向 TUN IP 作为网关的旧路由（可能是之前未正确清理的）
+        var staleRoutes = routes.Where(r =>
+            r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress && r.Interface != _tunIpAddress).ToList();
+
+        foreach (var staleRoute in staleRoutes)
+        {
+            Console.WriteLine($"[ROUTE] 检测到过期路由：0.0.0.0 -> {staleRoute.Gateway} via {staleRoute.Interface}，正在清理...");
+            // 尝试通过 gateway 删除
+            ExecuteNetshCommand($"interface ip delete route 0.0.0.0/0 {staleRoute.Gateway}");
+        }
+
+        // 检查是否已存在正确的 TUN 默认路由（网关和接口都是 TUN IP）
         var existingTunRoute = routes.FirstOrDefault(r =>
-            r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress);
+            r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress && r.Interface == _tunIpAddress);
 
         if (existingTunRoute != null)
         {
@@ -87,7 +100,7 @@ public class WindowsRouteService
         }
 
         // 添加路由，使用较低的 metric 确保优先级
-        var tunInterfaceName = GetTunInterfaceName();
+        Console.WriteLine($"[ROUTE] 添加默认路由：0.0.0.0/0 -> {_tunIpAddress} via {tunInterfaceName}");
         return ExecuteNetshCommand($"interface ip add route 0.0.0.0/0 \"{tunInterfaceName}\" {_tunIpAddress} metric=1");
     }
 
@@ -194,7 +207,7 @@ public class WindowsRouteService
             // 2. 检查默认路由
             var routes = GetRouteTable();
             var defaultRoute = routes.FirstOrDefault(r =>
-                r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress);
+                r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress && r.Interface == _tunIpAddress);
 
             result.HasDefaultRoute = defaultRoute != null;
             result.DefaultRouteMetric = defaultRoute?.Metric;

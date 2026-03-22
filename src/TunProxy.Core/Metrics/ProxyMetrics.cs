@@ -17,6 +17,7 @@ public class ProxyMetrics
     // 诊断统计 - 用于调试数据包过滤
     private long _rawPacketsReceived;  // 从 TUN 接收的原始数据包总数
     private long _parseFailures;        // 解析失败的数据包
+    private long _ipv6Packets;          // IPv6 数据包（暂不支持）
     private long _nonTcpUdpPackets;     // 非 TCP/UDP 数据包（如 ICMP）
     private long _portFilteredPackets;  // 被端口过滤的数据包（非 80/443）
     private long _directRoutedPackets;  // 直连路由的数据包
@@ -45,6 +46,7 @@ public class ProxyMetrics
     // 诊断统计
     public long RawPacketsReceived => Interlocked.Read(ref _rawPacketsReceived);
     public long ParseFailures => Interlocked.Read(ref _parseFailures);
+    public long IPv6Packets => Interlocked.Read(ref _ipv6Packets);
     public long NonTcpUdpPackets => Interlocked.Read(ref _nonTcpUdpPackets);
     public long PortFilteredPackets => Interlocked.Read(ref _portFilteredPackets);
     public long DirectRoutedPackets => Interlocked.Read(ref _directRoutedPackets);
@@ -72,6 +74,7 @@ public class ProxyMetrics
     // 诊断方法
     public void IncrementRawPacketsReceived() => Interlocked.Increment(ref _rawPacketsReceived);
     public void IncrementParseFailures() => Interlocked.Increment(ref _parseFailures);
+    public void IncrementIPv6Packets() => Interlocked.Increment(ref _ipv6Packets);
     public void IncrementNonTcpUdpPackets() => Interlocked.Increment(ref _nonTcpUdpPackets);
     public void IncrementPortFilteredPackets() => Interlocked.Increment(ref _portFilteredPackets);
     public void IncrementDirectRoutedPackets() => Interlocked.Increment(ref _directRoutedPackets);
@@ -93,6 +96,7 @@ public class ProxyMetrics
             FailedDnsQueries = FailedDnsQueries,
             RawPacketsReceived = RawPacketsReceived,
             ParseFailures = ParseFailures,
+            IPv6Packets = IPv6Packets,
             NonTcpUdpPackets = NonTcpUdpPackets,
             PortFilteredPackets = PortFilteredPackets,
             DirectRoutedPackets = DirectRoutedPackets,
@@ -118,6 +122,7 @@ public class MetricsSnapshot
     public long FailedDnsQueries { get; set; }
     public long RawPacketsReceived { get; set; }
     public long ParseFailures { get; set; }
+    public long IPv6Packets { get; set; }
     public long NonTcpUdpPackets { get; set; }
     public long PortFilteredPackets { get; set; }
     public long DirectRoutedPackets { get; set; }

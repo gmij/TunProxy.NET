@@ -104,6 +104,7 @@ public class TunProxyService
             // 3. 配置 TUN 接口 IP 和路由
             Log.Information("配置 TUN 接口 IP...");
             ConfigureTunInterface();
+            DisableIPv6OnTunInterface();
             Log.Information("TUN 接口配置完成");
 
             // 配置路由模式
@@ -158,14 +159,28 @@ public class TunProxyService
                     // 显示诊断信息，帮助定位流量为零的原因
                     if (snapshot.RawPacketsReceived > 0)
                     {
-                        Log.Information("诊断统计：原始数据包 {Raw}，解析失败 {ParseFailed}，非TCP/UDP {NonTcpUdp}，" +
-                            "端口过滤 {PortFiltered}，直连路由 {DirectRouted}，DNS查询 {Dns}",
+                        Log.Information("诊断统计：原始数据包 {Raw}，IPv6 {IPv6}，其他解析失败 {OtherParseFailed}，" +
+                            "非TCP/UDP {NonTcpUdp}，端口过滤 {PortFiltered}，直连路由 {DirectRouted}，DNS查询 {Dns}",
                             snapshot.RawPacketsReceived,
-                            snapshot.ParseFailures,
+                            snapshot.IPv6Packets,
+                            snapshot.ParseFailures - snapshot.IPv6Packets,
                             snapshot.NonTcpUdpPackets,
                             snapshot.PortFilteredPackets,
                             snapshot.DirectRoutedPackets,
                             snapshot.DnsQueries);
+
+                        // 如果收到了数据包但没有处理任何TCP流量，提供诊断建议
+                        if (snapshot.TotalPackets == 0 && snapshot.RawPacketsReceived > 10)
+                        {
+                            if (snapshot.IPv6Packets > 0)
+                            {
+                                Log.Warning("检测到 IPv6 流量但暂不支持。建议：在 TUN 适配器上禁用 IPv6，或使用 'netsh interface ipv6 set interface \"TunProxy\" forwarding=disabled'");
+                            }
+                            if (snapshot.NonTcpUdpPackets > 0 && snapshot.PortFilteredPackets == 0)
+                            {
+                                Log.Warning("只检测到非 TCP/UDP 流量（如 ICMP ping）。可能原因：1) 路由未生效；2) 应用程序未使用代理；3) 流量走了其他网络接口");
+                            }
+                        }
                     }
                 }
             }, ct);
@@ -293,13 +308,41 @@ public class TunProxyService
 
             using var proc = Process.Start(psi);
             proc?.WaitForExit(5000);
-            
+
             Log.Information("TUN 接口配置成功");
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "自动配置 TUN 接口失败");
             Log.Information("请手动运行：netsh interface ip set address \"TunProxy\" static 10.0.0.1 255.255.255.0");
+        }
+    }
+
+    /// <summary>
+    /// 禁用 TUN 接口的 IPv6 以避免 IPv6 流量干扰
+    /// </summary>
+    private void DisableIPv6OnTunInterface()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "netsh",
+                Arguments = "interface ipv6 set interface \"TunProxy\" forwarding=disabled advertise=disabled",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var proc = Process.Start(psi);
+            proc?.WaitForExit(5000);
+
+            Log.Information("TUN 接口 IPv6 已禁用");
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "禁用 IPv6 失败（可忽略）");
         }
     }
 
@@ -377,6 +420,30 @@ public class TunProxyService
             if (packet == null)
             {
                 _metrics.IncrementParseFailures();
+
+                // 添加诊断日志以了解解析失败的原因
+                if (data.Length >= 1)
+                {
+                    byte versionAndIhl = data[0];
+                    byte version = (byte)((versionAndIhl >> 4) & 0x0F);
+                    if (version == 6)
+                    {
+                        _metrics.IncrementIPv6Packets();
+                        Log.Debug("收到 IPv6 数据包（暂不支持），长度：{Length}", data.Length);
+                    }
+                    else if (version != 4)
+                    {
+                        Log.Debug("收到未知 IP 版本数据包：版本 {Version}，长度：{Length}", version, data.Length);
+                    }
+                    else
+                    {
+                        Log.Debug("IPv4 数据包解析失败，长度：{Length}（可能头部不完整）", data.Length);
+                    }
+                }
+                else
+                {
+                    Log.Debug("收到空数据包");
+                }
                 return;
             }
 

@@ -10,15 +10,39 @@ namespace TunProxy.CLI;
 /// </summary>
 public class WindowsRouteService
 {
-    private readonly string _tunInterfaceName;
     private readonly string _tunIpAddress;
     private readonly string _tunSubnetMask;
 
-    public WindowsRouteService(string tunInterfaceName = "TunProxy", string tunIpAddress = "10.0.0.1", string tunSubnetMask = "255.255.255.0")
+    public WindowsRouteService(string tunIpAddress = "10.0.0.1", string tunSubnetMask = "255.255.255.0")
     {
-        _tunInterfaceName = tunInterfaceName;
         _tunIpAddress = tunIpAddress;
         _tunSubnetMask = tunSubnetMask;
+    }
+
+    /// <summary>
+    /// 获取 Wintun 适配器的实际网络连接名称
+    /// </summary>
+    private string GetTunInterfaceName()
+    {
+        try
+        {
+            var adapter = NetworkInterface.GetAllNetworkInterfaces()
+                .FirstOrDefault(ni =>
+                    ni.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
+                    ni.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase));
+
+            if (adapter != null)
+            {
+                return adapter.Name;
+            }
+
+            // 默认使用 TunProxy 作为后备
+            return "TunProxy";
+        }
+        catch
+        {
+            return "TunProxy";
+        }
     }
 
     /// <summary>
@@ -28,9 +52,10 @@ public class WindowsRouteService
     {
         try
         {
+            var tunInterfaceName = GetTunInterfaceName();
             var adapter = NetworkInterface.GetAllNetworkInterfaces()
-                .FirstOrDefault(ni => ni.Name.Equals(_tunInterfaceName, StringComparison.OrdinalIgnoreCase));
-            
+                .FirstOrDefault(ni => ni.Name.Equals(tunInterfaceName, StringComparison.OrdinalIgnoreCase));
+
             if (adapter == null)
                 return null;
 
@@ -62,7 +87,8 @@ public class WindowsRouteService
         }
 
         // 添加路由，使用较低的 metric 确保优先级
-        return ExecuteNetshCommand($"interface ip add route 0.0.0.0/0 \"{_tunInterfaceName}\" {_tunIpAddress} metric=1");
+        var tunInterfaceName = GetTunInterfaceName();
+        return ExecuteNetshCommand($"interface ip add route 0.0.0.0/0 \"{tunInterfaceName}\" {_tunIpAddress} metric=1");
     }
 
     /// <summary>
@@ -70,7 +96,8 @@ public class WindowsRouteService
     /// </summary>
     public bool RemoveDefaultRoute()
     {
-        return ExecuteNetshCommand($"interface ip delete route 0.0.0.0/0 \"{_tunInterfaceName}\"");
+        var tunInterfaceName = GetTunInterfaceName();
+        return ExecuteNetshCommand($"interface ip delete route 0.0.0.0/0 \"{tunInterfaceName}\"");
     }
 
     /// <summary>
@@ -79,7 +106,8 @@ public class WindowsRouteService
     public bool AddRoute(string network, string mask, string? gateway = null)
     {
         var gw = gateway ?? _tunIpAddress;
-        return ExecuteNetshCommand($"interface ip add route {network}/{mask} \"{_tunInterfaceName}\" {gw}");
+        var tunInterfaceName = GetTunInterfaceName();
+        return ExecuteNetshCommand($"interface ip add route {network}/{mask} \"{tunInterfaceName}\" {gw}");
     }
 
     /// <summary>
@@ -87,7 +115,8 @@ public class WindowsRouteService
     /// </summary>
     public bool RemoveRoute(string network, string mask)
     {
-        return ExecuteNetshCommand($"interface ip delete route {network}/{mask} \"{_tunInterfaceName}\"");
+        var tunInterfaceName = GetTunInterfaceName();
+        return ExecuteNetshCommand($"interface ip delete route {network}/{mask} \"{tunInterfaceName}\"");
     }
 
     /// <summary>
@@ -239,16 +268,17 @@ public class WindowsRouteService
     {
         try
         {
+            var tunInterfaceName = GetTunInterfaceName();
             var adapter = NetworkInterface.GetAllNetworkInterfaces()
-                .FirstOrDefault(ni => ni.Name.Equals(_tunInterfaceName, StringComparison.OrdinalIgnoreCase));
-            
+                .FirstOrDefault(ni => ni.Name.Equals(tunInterfaceName, StringComparison.OrdinalIgnoreCase));
+
             if (adapter == null)
                 return null;
 
             var properties = adapter.GetIPProperties();
             var unicast = properties.UnicastAddresses
                 .FirstOrDefault(a => a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
-            
+
             return unicast?.Address.ToString();
         }
         catch

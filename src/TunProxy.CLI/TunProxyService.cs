@@ -107,6 +107,10 @@ public class TunProxyService
             Log.Information("配置 TUN 接口 IP...");
             ConfigureTunInterface();
             DisableIPv6OnTunInterface();
+
+            // 显示实际的网络接口信息以帮助诊断
+            ShowNetworkInterfaces();
+
             Log.Information("TUN 接口配置完成");
 
             // 配置路由模式
@@ -298,14 +302,45 @@ public class TunProxyService
         }
     }
 
+    /// <summary>
+    /// 查找 Wintun 适配器的实际网络连接名称
+    /// </summary>
+    private string GetTunInterfaceName()
+    {
+        try
+        {
+            var interfaces = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces();
+            var tunInterface = interfaces.FirstOrDefault(iface =>
+                iface.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
+                iface.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase));
+
+            if (tunInterface != null)
+            {
+                Log.Debug("找到 TUN 接口：{Name} (描述: {Desc})", tunInterface.Name, tunInterface.Description);
+                return tunInterface.Name;
+            }
+
+            Log.Warning("未找到 Wintun 网络接口，将使用默认名称 'TunProxy'");
+            return "TunProxy";
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "无法枚举网络接口，使用默认名称");
+            return "TunProxy";
+        }
+    }
+
     private void ConfigureTunInterface()
     {
         try
         {
+            var actualInterfaceName = GetTunInterfaceName();
+            Log.Information("使用接口名称: {Name}", actualInterfaceName);
+
             var psi = new ProcessStartInfo
             {
                 FileName = "netsh",
-                Arguments = "interface ip set address \"TunProxy\" static 10.0.0.1 255.255.255.0",
+                Arguments = $"interface ip set address \"{actualInterfaceName}\" static 10.0.0.1 255.255.255.0",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -313,14 +348,67 @@ public class TunProxyService
             };
 
             using var proc = Process.Start(psi);
-            proc?.WaitForExit(5000);
+            if (proc != null)
+            {
+                var output = proc.StandardOutput.ReadToEnd();
+                var error = proc.StandardError.ReadToEnd();
+                proc.WaitForExit(5000);
 
-            Log.Information("TUN 接口配置成功");
+                if (proc.ExitCode != 0)
+                {
+                    Log.Warning("TUN 接口配置返回错误码 {ExitCode}", proc.ExitCode);
+                    if (!string.IsNullOrEmpty(error))
+                    {
+                        Log.Warning("错误信息：{Error}", error.Trim());
+                    }
+                    Log.Information("请手动运行：netsh interface ip set address \"{Interface}\" static 10.0.0.1 255.255.255.0",
+                        actualInterfaceName);
+                }
+                else
+                {
+                    Log.Information("TUN 接口配置成功");
+                }
+
+                if (!string.IsNullOrEmpty(output))
+                {
+                    Log.Debug("配置输出：{Output}", output.Trim());
+                }
+            }
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "自动配置 TUN 接口失败");
-            Log.Information("请手动运行：netsh interface ip set address \"TunProxy\" static 10.0.0.1 255.255.255.0");
+            Log.Information("请手动运行：netsh interface ip set address \"<接口名称>\" static 10.0.0.1 255.255.255.0");
+        }
+    }
+
+    /// <summary>
+    /// 显示网络接口信息以帮助诊断
+    /// </summary>
+    private void ShowNetworkInterfaces()
+    {
+        try
+        {
+            var interfaces = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces();
+            Log.Information("当前网络接口列表：");
+            foreach (var iface in interfaces)
+            {
+                if (iface.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase) ||
+                    iface.Name.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
+                    iface.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase))
+                {
+                    var ipProps = iface.GetIPProperties();
+                    var ipv4 = ipProps.UnicastAddresses
+                        .FirstOrDefault(addr => addr.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+
+                    Log.Information("  找到 TUN 接口：名称={Name}, 描述={Desc}, IP={IP}, 状态={Status}",
+                        iface.Name, iface.Description, ipv4?.Address?.ToString() ?? "无", iface.OperationalStatus);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "无法列出网络接口");
         }
     }
 
@@ -331,10 +419,12 @@ public class TunProxyService
     {
         try
         {
+            var actualInterfaceName = GetTunInterfaceName();
+
             var psi = new ProcessStartInfo
             {
                 FileName = "netsh",
-                Arguments = "interface ipv6 set interface \"TunProxy\" forwarding=disabled advertise=disabled",
+                Arguments = $"interface ipv6 set interface \"{actualInterfaceName}\" forwarding=disabled advertise=disabled",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

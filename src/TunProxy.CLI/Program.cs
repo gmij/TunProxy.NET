@@ -125,8 +125,8 @@ public class TunProxyService
             if (destPort != 80 && destPort != 443)
                 return;
 
-            var destIP = packet.Header.DestinationIPAddress;
-            var sourceIP = packet.Header.SourceIPAddress;
+            var destIP = packet.Header.DestinationAddress;
+            var sourceIP = packet.Header.SourceAddress;
 
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {sourceIP} -> {destIP}:{destPort} ({packet.Payload.Length} bytes)");
 
@@ -144,7 +144,7 @@ public class TunProxyService
         if (packet.DestinationPort == null)
             return;
 
-        var destIP = packet.Header.DestinationIPAddress.ToString();
+        var destIP = packet.Header.DestinationAddress.ToString();
         var destPort = packet.DestinationPort.Value;
 
         // 创建代理连接

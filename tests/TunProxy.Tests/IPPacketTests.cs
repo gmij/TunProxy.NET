@@ -38,8 +38,8 @@ public class IPPacketTests
         Assert.True(packet.IsTCP);
         Assert.Equal((ushort)12345, packet.SourcePort);
         Assert.Equal((ushort)80, packet.DestinationPort);
-        Assert.Equal("10.0.0.1", packet.Header.SourceIPAddress.ToString());
-        Assert.Equal("10.0.0.2", packet.Header.DestinationIPAddress.ToString());
+        Assert.Equal("10.0.0.1", packet.Header.SourceAddress.ToString());
+        Assert.Equal("10.0.0.2", packet.Header.DestinationAddress.ToString());
         Assert.Equal(5, packet.Payload.Length);
     }
 

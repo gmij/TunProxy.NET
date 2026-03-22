@@ -197,7 +197,10 @@ public class TcpConnection : IDisposable
                     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     cts.CancelAfter(_connectionTimeout);
 
-                    await _client.ConnectAsync(_proxyHost, _proxyPort, cts.Token);
+                    var targetHost = _proxyType == ProxyType.Direct ? destHost : _proxyHost;
+                    var targetPort = _proxyType == ProxyType.Direct ? destPort : _proxyPort;
+
+                    await _client.ConnectAsync(targetHost, targetPort, cts.Token);
                     _stream = _client.GetStream();
 
                     // SOCKS5 握手
@@ -405,5 +408,6 @@ public class TcpConnection : IDisposable
 public enum ProxyType
 {
     Socks5,
-    Http
+    Http,
+    Direct
 }

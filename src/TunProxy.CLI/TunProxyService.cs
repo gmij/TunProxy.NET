@@ -25,6 +25,7 @@ public class TunProxyService
     private readonly string? _password;
     private WintunAdapter? _adapter;
     private TcpConnectionManager? _connectionManager;
+    private TcpConnectionManager? _directConnectionManager;
     private GeoIpService? _geoIpService;
     private GfwListService? _gfwListService;
     private WindowsRouteService? _routeService;
@@ -80,7 +81,7 @@ public class TunProxyService
             ProxyHost = _proxyHost,
             ProxyPort = _proxyPort,
             ProxyType = _proxyType.ToString(),
-            ActiveConnections = _connectionManager?.ActiveConnections ?? 0,
+            ActiveConnections = (_connectionManager?.ActiveConnections ?? 0) + (_directConnectionManager?.ActiveConnections ?? 0),
             Metrics = _metrics.GetSnapshot()
         };
     }
@@ -143,6 +144,7 @@ public class TunProxyService
 
             // 5. 创建连接管理器
             _connectionManager = new TcpConnectionManager(_proxyHost, _proxyPort, _proxyType, _username, _password);
+            _directConnectionManager = new TcpConnectionManager(string.Empty, 0, ProxyType.Direct);
             Log.Information("连接管理器初始化完成");
 
             Log.Information("TunProxy 运行中，按 Ctrl+C 停止");
@@ -233,6 +235,7 @@ public class TunProxyService
 
             // 3. 清理连接
             _connectionManager?.Dispose();
+            _directConnectionManager?.Dispose();
             Log.Information("连接管理器已清理");
 
             // 4. 删除路由
@@ -675,15 +678,25 @@ public class TunProxyService
             if (!shouldProxy)
             {
                 _metrics.IncrementDirectRoutedPackets();
-                Log.Debug("直连：{IP}:{Port}", destIP, destPort);
-                return; // 直连，不走代理
             }
 
-            Log.Debug("{SourceIP}:{SourcePort} -> {DestIP}:{DestPort} ({Bytes} bytes)",
-                packet.Header.SourceAddress, packet.SourcePort, destIP, destPort, packet.Payload.Length);
+            Log.Debug("{Mode} {SourceIP}:{SourcePort} -> {DestIP}:{DestPort} ({Bytes} bytes)",
+                shouldProxy ? "代理" : "直连",
+                packet.Header.SourceAddress,
+                packet.SourcePort,
+                destIP,
+                destPort,
+                packet.Payload.Length);
+
+            var connectionManager = shouldProxy ? _connectionManager : _directConnectionManager;
+            if (connectionManager == null)
+            {
+                Log.Warning("连接管理器未初始化");
+                return;
+            }
 
             // 获取或创建连接
-            var connection = _connectionManager!.GetOrCreateConnection(packet);
+            var connection = connectionManager.GetOrCreateConnection(packet);
 
             if (connection == null)
             {

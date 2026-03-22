@@ -12,7 +12,7 @@ public class IPPacketTests
         var packetData = new byte[]
         {
             // IPv4 头部（20 字节）- 多字节字段用小端（BitConverter 期望）
-            0x45, 0x00, 0x1C, 0x00, // 版本 4, IHL 5, TOS, 总长度 28 (小端：0x001C)
+            0x45, 0x00, 0x2D, 0x00, // 版本 4, IHL 5, TOS, 总长度 45 (小端：0x002D = 20+20+5)
             0x00, 0x01, 0x00, 0x00, // 标识
             0x40, 0x06, 0x00, 0x00, // TTL 64, 协议 6 (TCP)
             0x0A, 0x00, 0x00, 0x01, // 源 IP: 10.0.0.1

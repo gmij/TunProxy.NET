@@ -35,7 +35,8 @@ public class WindowsRouteService
                 return null;
 
             var properties = adapter.GetIPProperties();
-            return properties.GetIPv4Properties()?.Index;
+            var index = properties.GetIPv4Properties()?.Index;
+            return index.HasValue ? (uint?)index.Value : null;
         }
         catch (Exception ex)
         {

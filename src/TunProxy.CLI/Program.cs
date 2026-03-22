@@ -171,8 +171,9 @@ public class Program
                     Environment.Exit(0);
                     break;
                 case "--diagnose" or "-d":
-                    // 路由诊断模式
-                    RunRouteDiagnosis();
+                    // 路由诊断模式 - 单独运行诊断工具
+                    Console.WriteLine("路由诊断模式 - 请使用独立命令运行");
+                    Console.WriteLine("用法：TunProxy.CLI.exe diagnose");
                     Environment.Exit(0);
                     break;
             }

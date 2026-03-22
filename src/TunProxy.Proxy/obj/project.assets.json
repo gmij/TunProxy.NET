@@ -1,0 +1,94 @@
+{
+  "version": 3,
+  "targets": {
+    "net8.0": {
+      "TunProxy.Core/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "compile": {
+          "bin/placeholder/TunProxy.Core.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/TunProxy.Core.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "TunProxy.Core/1.0.0": {
+      "type": "project",
+      "path": "../TunProxy.Core/TunProxy.Core.csproj",
+      "msbuildProject": "../TunProxy.Core/TunProxy.Core.csproj"
+    }
+  },
+  "projectFileDependencyGroups": {
+    "net8.0": [
+      "TunProxy.Core >= 1.0.0"
+    ]
+  },
+  "packageFolders": {
+    "/home/runner/.nuget/packages/": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "/home/runner/work/TunProxy.NET/TunProxy.NET/src/TunProxy.Proxy/TunProxy.Proxy.csproj",
+      "projectName": "TunProxy.Proxy",
+      "projectPath": "/home/runner/work/TunProxy.NET/TunProxy.NET/src/TunProxy.Proxy/TunProxy.Proxy.csproj",
+      "packagesPath": "/home/runner/.nuget/packages/",
+      "outputPath": "/home/runner/work/TunProxy.NET/TunProxy.NET/src/TunProxy.Proxy/obj/",
+      "projectStyle": "PackageReference",
+      "configFilePaths": [
+        "/home/runner/.nuget/NuGet/NuGet.Config"
+      ],
+      "originalTargetFrameworks": [
+        "net8.0"
+      ],
+      "sources": {
+        "https://api.nuget.org/v3/index.json": {}
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "projectReferences": {
+            "/home/runner/work/TunProxy.NET/TunProxy.NET/src/TunProxy.Core/TunProxy.Core.csproj": {
+              "projectPath": "/home/runner/work/TunProxy.NET/TunProxy.NET/src/TunProxy.Core/TunProxy.Core.csproj"
+            }
+          }
+        }
+      },
+      "warningProperties": {
+        "warnAsError": [
+          "NU1605"
+        ]
+      },
+      "restoreAuditProperties": {
+        "enableAudit": "true",
+        "auditLevel": "low",
+        "auditMode": "direct"
+      }
+    },
+    "frameworks": {
+      "net8.0": {
+        "targetAlias": "net8.0",
+        "imports": [
+          "net461",
+          "net462",
+          "net47",
+          "net471",
+          "net472",
+          "net48",
+          "net481"
+        ],
+        "assetTargetFallback": true,
+        "warn": true,
+        "frameworkReferences": {
+          "Microsoft.NETCore.App": {
+            "privateAssets": "all"
+          }
+        },
+        "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/8.0.418/PortableRuntimeIdentifierGraph.json"
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "dgSpecHash": "ZsDx/MW6ucM=",
+  "success": true,
+  "projectFilePath": "/home/runner/work/TunProxy.NET/TunProxy.NET/src/TunProxy.CLI/TunProxy.CLI.csproj",
+  "expectedPackageFiles": [
+    "/home/runner/.nuget/packages/maxmind.db/4.0.0/maxmind.db.4.0.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/maxmind.geoip2/5.1.0/maxmind.geoip2.5.1.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/6.0.0/microsoft.extensions.dependencyinjection.abstractions.6.0.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.extensions.options/6.0.0/microsoft.extensions.options.6.0.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.extensions.primitives/6.0.0/microsoft.extensions.primitives.6.0.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/serilog/3.1.1/serilog.3.1.1.nupkg.sha512",
+    "/home/runner/.nuget/packages/serilog.sinks.console/5.0.1/serilog.sinks.console.5.0.1.nupkg.sha512",
+    "/home/runner/.nuget/packages/serilog.sinks.file/5.0.0/serilog.sinks.file.5.0.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.runtime.compilerservices.unsafe/6.0.0/system.runtime.compilerservices.unsafe.6.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

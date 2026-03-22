@@ -23,7 +23,7 @@ public class TunProxyService
     private CancellationTokenSource? _cts;
     private long _totalBytesSent;
     private long _totalBytesReceived;
-    private int _packetCount;
+    private long _packetCount;
 
     public TunProxyService(string proxyHost, int proxyPort, TunProxy.Core.Connections.ProxyType proxyType, string? username = null, string? password = null)
     {
@@ -236,7 +236,6 @@ public class TunProxyService
             var destIP = packet.Header.DestinationAddress.ToString();
             Interlocked.Increment(ref _packetCount);
 
-            var destIP = packet.Header.DestinationAddress.ToString();
             Log.Debug("{SourceIP}:{SourcePort} -> {DestIP}:{DestPort} ({Bytes} bytes)",
                 packet.Header.SourceAddress, packet.SourcePort, destIP, destPort, packet.Payload.Length);
 

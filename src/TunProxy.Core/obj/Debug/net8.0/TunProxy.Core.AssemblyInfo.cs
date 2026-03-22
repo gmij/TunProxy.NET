@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TunProxy.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+65b3f7c823d869205b0264f0b8f86d208291d51c")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f43b2e93fbc43e736b936a01f124653a24ba7fef")]
 [assembly: System.Reflection.AssemblyProductAttribute("TunProxy.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TunProxy.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

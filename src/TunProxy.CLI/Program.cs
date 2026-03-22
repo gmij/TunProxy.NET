@@ -86,11 +86,11 @@ public class Program
                     config.ProxyType = proxy.TryGetProperty("Type", out var type) 
                         ? type.GetString()?.ToLower() switch
                         {
-                            "socks5" => ProxyType.Socks5,
-                            "http" => ProxyType.Http,
-                            _ => ProxyType.Socks5
+                            "socks5" => TunProxy.Core.Connections.ProxyType.Socks5,
+                            "http" => TunProxy.Core.Connections.ProxyType.Http,
+                            _ => TunProxy.Core.Connections.ProxyType.Socks5
                         }
-                        : ProxyType.Socks5;
+                        : TunProxy.Core.Connections.ProxyType.Socks5;
                     config.Username = proxy.GetProperty("Username").GetString();
                     config.Password = proxy.GetProperty("Password").GetString();
                 }
@@ -128,9 +128,9 @@ public class Program
                     {
                         config.ProxyType = args[++i].ToLower() switch
                         {
-                            "socks5" => ProxyType.Socks5,
-                            "http" => ProxyType.Http,
-                            _ => ProxyType.Socks5
+                            "socks5" => TunProxy.Core.Connections.ProxyType.Socks5,
+                            "http" => TunProxy.Core.Connections.ProxyType.Http,
+                            _ => TunProxy.Core.Connections.ProxyType.Socks5
                         };
                     }
                     break;
@@ -157,31 +157,25 @@ public class Program
     /// </summary>
     private static void CreateSampleConfig(string path)
     {
-        var sample = new
-        {
-            Proxy = new
-            {
-                Host = "127.0.0.1",
-                Port = 7890,
-                Type = "Socks5",
-                Username = (string?)null,
-                Password = (string?)null
-            },
-            Tun = new
-            {
-                IpAddress = "10.0.0.1",
-                SubnetMask = "255.255.255.0",
-                AddDefaultRoute = true
-            },
-            Logging = new
-            {
-                MinimumLevel = "Information",
-                FilePath = "logs/tunproxy-.log"
-            }
-        };
-
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        var json = JsonSerializer.Serialize(sample, options);
+        // AOT 环境下避免使用 JsonSerializer.Serialize 匿名类型
+        var json = """{
+  "Proxy": {
+    "Host": "127.0.0.1",
+    "Port": 7890,
+    "Type": "Socks5",
+    "Username": null,
+    "Password": null
+  },
+  "Tun": {
+    "IpAddress": "10.0.0.1",
+    "SubnetMask": "255.255.255.0",
+    "AddDefaultRoute": true
+  },
+  "Logging": {
+    "MinimumLevel": "Information",
+    "FilePath": "logs/tunproxy-.log"
+  }
+}""";
         File.WriteAllText(path, json);
     }
 

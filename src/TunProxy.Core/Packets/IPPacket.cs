@@ -18,10 +18,15 @@ public enum IPProtocol : byte
 /// </summary>
 public class IPPacket
 {
-    public IPv4HeaderInfo Header { get; private set; } = null!;
+    public IPv4HeaderInfo Header { get; private set; }
     public byte[] Payload { get; private set; } = Array.Empty<byte>();
     public TCPHeaderInfo? TCPHeader { get; private set; }
     public UDPHeaderInfo? UDPHeader { get; private set; }
+
+    private IPPacket()
+    {
+        Header = new IPv4HeaderInfo();
+    }
 
     public bool IsTCP => Header.ProtocolType == IPProtocol.TCP;
     public bool IsUDP => Header.ProtocolType == IPProtocol.UDP;

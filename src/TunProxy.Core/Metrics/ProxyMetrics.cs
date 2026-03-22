@@ -13,6 +13,14 @@ public class ProxyMetrics
     private long _failedConnections;
     private long _dnsQueries;
     private long _failedDnsQueries;
+
+    // 诊断统计 - 用于调试数据包过滤
+    private long _rawPacketsReceived;  // 从 TUN 接收的原始数据包总数
+    private long _parseFailures;        // 解析失败的数据包
+    private long _nonTcpUdpPackets;     // 非 TCP/UDP 数据包（如 ICMP）
+    private long _portFilteredPackets;  // 被端口过滤的数据包（非 80/443）
+    private long _directRoutedPackets;  // 直连路由的数据包
+
     private readonly DateTime _startTime;
 
     public ProxyMetrics()
@@ -34,6 +42,13 @@ public class ProxyMetrics
     public long DnsQueries => Interlocked.Read(ref _dnsQueries);
     public long FailedDnsQueries => Interlocked.Read(ref _failedDnsQueries);
 
+    // 诊断统计
+    public long RawPacketsReceived => Interlocked.Read(ref _rawPacketsReceived);
+    public long ParseFailures => Interlocked.Read(ref _parseFailures);
+    public long NonTcpUdpPackets => Interlocked.Read(ref _nonTcpUdpPackets);
+    public long PortFilteredPackets => Interlocked.Read(ref _portFilteredPackets);
+    public long DirectRoutedPackets => Interlocked.Read(ref _directRoutedPackets);
+
     // 运行时间
     public TimeSpan Uptime => DateTime.UtcNow - _startTime;
 
@@ -54,6 +69,13 @@ public class ProxyMetrics
     public void IncrementDnsQueries() => Interlocked.Increment(ref _dnsQueries);
     public void IncrementFailedDnsQueries() => Interlocked.Increment(ref _failedDnsQueries);
 
+    // 诊断方法
+    public void IncrementRawPacketsReceived() => Interlocked.Increment(ref _rawPacketsReceived);
+    public void IncrementParseFailures() => Interlocked.Increment(ref _parseFailures);
+    public void IncrementNonTcpUdpPackets() => Interlocked.Increment(ref _nonTcpUdpPackets);
+    public void IncrementPortFilteredPackets() => Interlocked.Increment(ref _portFilteredPackets);
+    public void IncrementDirectRoutedPackets() => Interlocked.Increment(ref _directRoutedPackets);
+
     /// <summary>
     /// 获取指标快照（用于 API 返回）
     /// </summary>
@@ -69,6 +91,11 @@ public class ProxyMetrics
             FailedConnections = FailedConnections,
             DnsQueries = DnsQueries,
             FailedDnsQueries = FailedDnsQueries,
+            RawPacketsReceived = RawPacketsReceived,
+            ParseFailures = ParseFailures,
+            NonTcpUdpPackets = NonTcpUdpPackets,
+            PortFilteredPackets = PortFilteredPackets,
+            DirectRoutedPackets = DirectRoutedPackets,
             UptimeSeconds = (long)Uptime.TotalSeconds,
             BytesPerSecond = BytesPerSecond,
             PacketsPerSecond = PacketsPerSecond
@@ -89,6 +116,11 @@ public class MetricsSnapshot
     public long FailedConnections { get; set; }
     public long DnsQueries { get; set; }
     public long FailedDnsQueries { get; set; }
+    public long RawPacketsReceived { get; set; }
+    public long ParseFailures { get; set; }
+    public long NonTcpUdpPackets { get; set; }
+    public long PortFilteredPackets { get; set; }
+    public long DirectRoutedPackets { get; set; }
     public long UptimeSeconds { get; set; }
     public double BytesPerSecond { get; set; }
     public double PacketsPerSecond { get; set; }

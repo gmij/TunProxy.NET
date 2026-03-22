@@ -154,12 +154,27 @@ public class TunProxyService
                         snapshot.ActiveConnections,
                         snapshot.TotalConnections,
                         snapshot.FailedConnections);
+
+                    // 显示诊断信息，帮助定位流量为零的原因
+                    if (snapshot.RawPacketsReceived > 0)
+                    {
+                        Log.Information("诊断统计：原始数据包 {Raw}，解析失败 {ParseFailed}，非TCP/UDP {NonTcpUdp}，" +
+                            "端口过滤 {PortFiltered}，直连路由 {DirectRouted}，DNS查询 {Dns}",
+                            snapshot.RawPacketsReceived,
+                            snapshot.ParseFailures,
+                            snapshot.NonTcpUdpPackets,
+                            snapshot.PortFilteredPackets,
+                            snapshot.DirectRoutedPackets,
+                            snapshot.DnsQueries);
+                    }
                 }
             }, ct);
 
             try
             {
-                await PacketLoop(session, _cts.Token);
+                // PacketLoop 现在是同步的，需要在后台任务中运行
+                var loopTask = Task.Run(() => PacketLoop(session, _cts.Token), _cts.Token);
+                await loopTask;
             }
             catch (OperationCanceledException)
             {
@@ -311,20 +326,23 @@ public class TunProxyService
         result?.Print();
     }
 
-    private async Task PacketLoop(WintunSession session, CancellationToken ct)
+    private void PacketLoop(WintunSession session, CancellationToken ct)
     {
         var readWaitEvent = session.ReadWaitEvent;
-        var cleanupTimer = new PeriodicTimer(TimeSpan.FromMinutes(5));
 
-        while (!ct.IsCancellationRequested)
+        // 启动独立的清理任务，避免阻塞数据包接收循环
+        _ = Task.Run(async () =>
         {
-            // 清理空闲连接
-            if (await cleanupTimer.WaitForNextTickAsync(ct))
+            var cleanupTimer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+            while (await cleanupTimer.WaitForNextTickAsync(ct))
             {
                 _connectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(10));
                 Log.Information("活跃连接数：{Count}", _connectionManager?.ActiveConnections ?? 0);
             }
+        }, ct);
 
+        while (!ct.IsCancellationRequested)
+        {
             var packet = session.ReceivePacket(out var packetSize);
 
             if (packet != IntPtr.Zero)
@@ -333,6 +351,10 @@ public class TunProxyService
                 {
                     var data = new byte[packetSize];
                     System.Runtime.InteropServices.Marshal.Copy(packet, data, 0, (int)packetSize);
+
+                    // 记录收到的原始数据包
+                    _metrics.IncrementRawPacketsReceived();
+
                     _ = ProcessPacketAsync(session, data, ct);
                 }
                 finally
@@ -353,7 +375,10 @@ public class TunProxyService
         {
             var packet = IPPacket.Parse(data);
             if (packet == null)
+            {
+                _metrics.IncrementParseFailures();
                 return;
+            }
 
             _metrics.IncrementPackets();
 
@@ -368,13 +393,19 @@ public class TunProxyService
 
             // 只处理 TCP 流量
             if (!packet.IsTCP || packet.SourcePort == null || packet.DestinationPort == null)
+            {
+                _metrics.IncrementNonTcpUdpPackets();
                 return;
+            }
 
             var destPort = packet.DestinationPort.Value;
 
             // 只代理 HTTP (80) 和 HTTPS (443)
             if (destPort != 80 && destPort != 443)
+            {
+                _metrics.IncrementPortFilteredPackets();
                 return;
+            }
 
             var destIP = packet.Header.DestinationAddress.ToString();;
 
@@ -405,6 +436,7 @@ public class TunProxyService
 
             if (!shouldProxy)
             {
+                _metrics.IncrementDirectRoutedPackets();
                 Log.Debug("直连：{IP}:{Port}", destIP, destPort);
                 return; // 直连，不走代理
             }

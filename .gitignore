@@ -1,0 +1,25 @@
+# Build outputs
+/bin/
+/obj/
+/publish/
+*.dll
+*.exe
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+
+# ZIP files
+*.zip
+
+# wintun (downloaded separately)
+wintun.dll
+wintun.zip
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+
+# Logs
+*.log

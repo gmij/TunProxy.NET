@@ -13,7 +13,8 @@
     <ProjectReference Include="..\TunProxy.Proxy\TunProxy.Proxy.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
+  <!-- wintun.dll 只在 Windows 发布时需要 -->
+  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <None Include="..\..\wintun.dll" Link="wintun.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

@@ -8,6 +8,7 @@ public class IPPacketTests
     public void Parse_ValidIPv4Packet_ReturnsPacket()
     {
         // 构造一个简单的 IPv4 数据包（TCP，源端口 12345，目标端口 80）
+        // 注意：网络字节序是大端（big-endian）
         var packetData = new byte[]
         {
             // IPv4 头部（20 字节）
@@ -17,9 +18,9 @@ public class IPPacketTests
             0x0A, 0x00, 0x00, 0x01, // 源 IP: 10.0.0.1
             0x0A, 0x00, 0x00, 0x02, // 目标 IP: 10.0.0.2
             
-            // TCP 头部（20 字节）
-            0x30, 0x39, // 源端口：12345
-            0x00, 0x50, // 目标端口：80
+            // TCP 头部（20 字节）- 大端字节序
+            0x30, 0x39, // 源端口：12345 (0x3039)
+            0x00, 0x50, // 目标端口：80 (0x0050)
             0x00, 0x00, 0x00, 0x01, // 序列号
             0x00, 0x00, 0x00, 0x00, // 确认号
             0x50, 0x02, 0xFF, 0xFF, // 数据偏移 5, 标志 SYN

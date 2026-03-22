@@ -15,14 +15,14 @@ public class TunProxyService
 {
     private readonly string _proxyHost;
     private readonly int _proxyPort;
-    private readonly ProxyType _proxyType;
+    private readonly TunProxy.Core.Connections.ProxyType _proxyType;
     private readonly string? _username;
     private readonly string? _password;
     private WintunAdapter? _adapter;
     private TcpConnectionManager? _connectionManager;
     private CancellationTokenSource? _cts;
 
-    public TunProxyService(string proxyHost, int proxyPort, ProxyType proxyType, string? username = null, string? password = null)
+    public TunProxyService(string proxyHost, int proxyPort, TunProxy.Core.Connections.ProxyType proxyType, string? username = null, string? password = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;

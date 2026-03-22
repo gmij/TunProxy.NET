@@ -1,16 +1,8 @@
 # TunProxy.NET
 
-🥔 用 .NET 8 实现的 TUN 模式代理，支持 AOT 编译。
+.NET 8 实现的 TUN 模式代理，支持 SOCKS5 和 HTTP 代理，可 AOT 编译为单文件。
 
-## 功能
-
-- ✅ TUN 虚拟网卡（基于 Wintun）
-- ✅ SOCKS5 代理
-- ✅ HTTP 代理（CONNECT 方法）
-- ✅ Native AOT 支持
-- ⏳ TCP 流量转发
-- ⏳ 规则引擎
-- ⏳ DNS 处理
+替代目标：Clash for Windows（TUN 模式）
 
 ## 快速开始（傻瓜版）
 
@@ -24,103 +16,88 @@
 
 ```powershell
 # 解压 ZIP 文件
-# 以管理员身份运行 PowerShell
+# 双击运行（会自动提权）
 
-# 运行（会自动下载 wintun.dll，自动配置 TUN 接口）
 .\TunProxy.CLI.exe -p 127.0.0.1:7890 -t socks5
 ```
 
-**就这么简单！** wintun.dll 会自动下载，TUN 接口会自动配置。
+就这么简单！wintun.dll 会自动下载，TUN 接口会自动配置，权限会自动提升。
 
-```bash
-cd TunProxy.NET
+## 功能特性
 
-# 调试构建
-dotnet build
+- [x] TUN 虚拟网卡（基于 Wintun）
+- [x] SOCKS5 代理
+- [x] HTTP 代理（CONNECT 方法）
+- [x] Native AOT 支持
+- [x] TCP 长连接管理（连接池复用）
+- [x] 响应数据包回写
+- [x] 自动下载 wintun.dll
+- [x] 自动配置 TUN 接口
+- [x] 自动提权（管理员权限）
+- [x] Serilog 日志（控制台 + 文件）
+- [ ] DNS 请求处理
+- [ ] 路由规则引擎
 
-# 发布（普通）
-dotnet publish -c Release -r win-x64 --self-contained
+## 命令行参数
 
-# 发布（AOT，单文件）
-dotnet publish -c Release -r win-x64 /p:PublishAot=true
-```
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-p, --proxy <host:port>` | 代理服务器地址 | 127.0.0.1:7890 |
+| `-t, --type <type>` | 代理类型：socks5, http | socks5 |
+| `-h, --help` | 显示帮助 | - |
 
-### 3. 运行
-
-**需要管理员权限！**
-
-```bash
-# 使用默认配置（SOCKS5 127.0.0.1:7890）
-TunProxy.CLI.exe
-
-# 指定代理
-TunProxy.CLI.exe -p 127.0.0.1:7890 -t socks5
-
-# HTTP 代理
-TunProxy.CLI.exe -p 192.168.1.100:8080 -t http
-```
-
-### 4. 配置 TUN 接口
+## 示例
 
 ```powershell
-# 设置 TUN 接口 IP
-netsh interface ip set address "TunProxy" static 10.0.0.1 255.255.255.0
+# 使用默认配置（SOCKS5 127.0.0.1:7890）
+.\TunProxy.CLI.exe
 
-# 添加路由（可选，只代理特定流量）
-route add 0.0.0.0 mask 0.0.0.0 10.0.0.1
+# 指定 SOCKS5 代理
+.\TunProxy.CLI.exe -p 127.0.0.1:7890 -t socks5
+
+# 指定 HTTP 代理
+.\TunProxy.CLI.exe -p 192.168.1.100:8080 -t http
 ```
+
+## 日志
+
+日志输出到：
+- 控制台（实时查看）
+- `logs/tunproxy-YYYYMMDD.log`（按天滚动）
 
 ## 项目结构
 
 ```
 TunProxy.NET/
 ├── src/
-│   ├── TunProxy.Core/      # 核心库
-│   │   ├── Wintun/         # Wintun P/Invoke 封装
-│   │   └── Packets/        # IP/TCP/UDP包解析
-│   ├── TunProxy.Proxy/     # 代理协议实现
+│   ├── TunProxy.Core/         # 核心库
+│   │   ├── Wintun/            # Wintun P/Invoke 封装
+│   │   ├── Packets/           # IP/TCP/UDP包解析
+│   │   └── Connections/       # TCP 连接管理
+│   ├── TunProxy.Proxy/        # 代理协议实现
 │   │   ├── Socks5Client.cs
 │   │   └── HttpProxyClient.cs
-│   └── TunProxy.CLI/       # 命令行工具
-├── wintun.dll              # Wintun 驱动（单独下载）
-└── README.md
+│   └── TunProxy.CLI/          # 命令行工具
+├── tests/
+│   └── TunProxy.Tests/        # 单元测试
+├── README.md
+└── TunProxy.NET.sln
 ```
-
-## 工作原理
-
-```
-用户应用 → Wintun 虚拟网卡 → TunProxy.NET → SOCKS5/HTTP代理 → 互联网
-```
-
-1. Wintun 创建虚拟网卡，拦截系统流量
-2. TunProxy 从 TUN 设备读取 IP 包
-3. 解析 TCP/UDP 头部，提取目标地址
-4. 通过代理服务器转发流量
-5. 接收响应，写回 TUN 设备
-
-## 当前状态
-
-**MVP 阶段** - 基础功能已实现，还需要：
-
-- [ ] 完整的 TCP 连接管理（当前是简化版本）
-- [ ] 响应数据包写回 TUN 设备
-- [ ] DNS 请求处理
-- [ ] 规则引擎（决定哪些流量走代理）
-- [ ] 性能优化（Span<T>, 零拷贝）
-- [ ] Windows 服务支持
-- [ ] 配置 GUI
 
 ## 技术栈
 
 - .NET 8
 - Native AOT
 - Wintun (WireGuard 团队)
-- P/Invoke
+- Serilog
+- xUnit
+
+## 注意事项
+
+1. 需要 Windows 10/11
+2. 首次运行会自动下载 wintun.dll（约 200KB）
+3. 需要稳定的代理服务器
 
 ## 许可证
 
 MIT
-
----
-
-_斌哥的数字分身 🥔 出品_

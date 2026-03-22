@@ -59,7 +59,7 @@ public class Program
                 try
                 {
                     var json = File.ReadAllText(configPath);
-                    var appConfig = System.Text.Json.JsonSerializer.Deserialize<AppConfig>(json);
+                    var appConfig = JsonSerializer.Deserialize(json, AppJsonContext.Default.AppConfig);
                     routeConfig = appConfig?.Route ?? routeConfig;
                 }
                 catch { }

@@ -409,37 +409,100 @@ public class TunProxyService
     {
         var sourceIP = requestPacket.Header.DestinationAddress.GetAddressBytes();
         var destIP = requestPacket.Header.SourceAddress.GetAddressBytes();
-        
+
         var sourcePort = requestPacket.DestinationPort!.Value;
         var destPort = requestPacket.SourcePort!.Value;
 
-        // TCP 头部（20 字节）
+        // 构建 TCP 头部（20 字节）
         var tcpHeader = new byte[20];
-        tcpHeader[0] = (byte)(sourcePort & 0xFF);
-        tcpHeader[1] = (byte)(sourcePort >> 8);
-        tcpHeader[2] = (byte)(destPort & 0xFF);
-        tcpHeader[3] = (byte)(destPort >> 8);
-        tcpHeader[12] = 0x50;
-        tcpHeader[13] = 0x10;
-        tcpHeader[14] = 0xFF;
-        tcpHeader[15] = 0xFF;
 
-        // IP 头部（20 字节）
+        // 源端口和目标端口（网络字节序）
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(0, 2), sourcePort);
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(2, 2), destPort);
+
+        // 序列号和确认号（使用请求包中的值）
+        uint seqNum = requestPacket.TCPHeader?.AckNumber ?? 0;
+        uint ackNum = requestPacket.TCPHeader.HasValue
+            ? requestPacket.TCPHeader.Value.SequenceNumber + (uint)Math.Max(1, requestPacket.Payload.Length)
+            : 0;
+
+        NetworkHelper.WriteUInt32BigEndian(tcpHeader.AsSpan(4, 4), seqNum);
+        NetworkHelper.WriteUInt32BigEndian(tcpHeader.AsSpan(8, 4), ackNum);
+
+        // 数据偏移（5 * 4 = 20字节）和标志位
+        tcpHeader[12] = 0x50;  // 数据偏移 = 5 (20字节)
+        tcpHeader[13] = 0x18;  // PSH + ACK 标志
+
+        // 窗口大小
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(14, 2), 65535);
+
+        // 校验和（稍后计算）
+        tcpHeader[16] = 0;
+        tcpHeader[17] = 0;
+
+        // 紧急指针
+        tcpHeader[18] = 0;
+        tcpHeader[19] = 0;
+
+        // 构建 IP 头部（20 字节）
         var ipHeader = new byte[20];
+
+        // 版本 (4) 和头部长度 (5 * 4 = 20字节)
         ipHeader[0] = 0x45;
+
+        // 服务类型
+        ipHeader[1] = 0x00;
+
+        // 总长度
         var totalLength = (ushort)(20 + 20 + responseData.Length);
-        ipHeader[2] = (byte)(totalLength & 0xFF);
-        ipHeader[3] = (byte)(totalLength >> 8);
-        ipHeader[8] = 0x40;
+        NetworkHelper.WriteUInt16BigEndian(ipHeader.AsSpan(2, 2), totalLength);
+
+        // 标识符
+        ipHeader[4] = 0x00;
+        ipHeader[5] = 0x00;
+
+        // 标志和片偏移
+        ipHeader[6] = 0x40;  // Don't Fragment
+        ipHeader[7] = 0x00;
+
+        // TTL
+        ipHeader[8] = 0x40;  // 64
+
+        // 协议 (TCP = 6)
         ipHeader[9] = 0x06;
-        
+
+        // 校验和（稍后计算）
+        ipHeader[10] = 0x00;
+        ipHeader[11] = 0x00;
+
+        // 源 IP 和目标 IP
         Array.Copy(sourceIP, 0, ipHeader, 12, 4);
         Array.Copy(destIP, 0, ipHeader, 16, 4);
 
+        // 计算 IP 校验和
+        var ipChecksum = NetworkHelper.CalculateIPChecksum(ipHeader);
+        NetworkHelper.WriteUInt16BigEndian(ipHeader.AsSpan(10, 2), ipChecksum);
+
+        // 构建完整的 TCP 段（用于计算校验和）
+        var tcpSegment = new byte[20 + responseData.Length];
+        Array.Copy(tcpHeader, 0, tcpSegment, 0, 20);
+        responseData.CopyTo(tcpSegment.AsSpan(20));
+
+        // 计算 TCP 校验和
+        var tcpChecksum = NetworkHelper.CalculateTcpUdpChecksum(
+            sourceIP,
+            destIP,
+            6,  // TCP 协议
+            tcpSegment);
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(16, 2), tcpChecksum);
+
+        // 更新 tcpSegment 中的校验和
+        Array.Copy(tcpHeader, 16, tcpSegment, 16, 2);
+
+        // 组装最终数据包
         var packet = new byte[20 + 20 + responseData.Length];
         Array.Copy(ipHeader, 0, packet, 0, 20);
-        Array.Copy(tcpHeader, 0, packet, 20, 20);
-        responseData.CopyTo(packet.AsSpan(40));
+        Array.Copy(tcpSegment, 0, packet, 20, tcpSegment.Length);
 
         return packet;
     }

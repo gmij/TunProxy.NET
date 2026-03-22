@@ -69,6 +69,8 @@ jobs:
           /p:PublishAot=true `
           /p:IlcOptimizationPreference=Size `
           /p:StripSymbols=true `
+          /p:DebugType=none `
+          /p:DebugSymbols=false `
           -o publish/win-x64
       shell: pwsh
       

@@ -706,6 +706,15 @@ public class TunProxyService
                     return;
                 }
                 Log.Information("连接建立：{IP}:{Port}", destIP, destPort);
+
+                // 连接建立后，如果是 SYN 包，发送 SYN-ACK 响应
+                if (packet.TCPHeader.HasValue && packet.TCPHeader.Value.SYN && !packet.TCPHeader.Value.ACK)
+                {
+                    Log.Debug("发送 SYN-ACK 响应：{Source}:{SrcPort} -> {Dest}:{DestPort}",
+                        destIP, destPort, packet.Header.SourceAddress, sourcePort);
+                    await WriteSynAckResponseAsync(session, packet, ct);
+                    return;
+                }
             }
 
             // 发送数据到代理
@@ -734,6 +743,12 @@ public class TunProxyService
                     _bufferPool.Return(responseBuffer);
                 }
             }
+            else if (packet.TCPHeader.HasValue && packet.TCPHeader.Value.ACK && !packet.TCPHeader.Value.SYN)
+            {
+                // 纯 ACK 包（握手的第三步或 keepalive），不需要响应
+                Log.Debug("收到 ACK：{Source}:{SrcPort} -> {Dest}:{DestPort}",
+                    packet.Header.SourceAddress, sourcePort, destIP, destPort);
+            }
         }
         catch (Exception ex)
         {
@@ -747,7 +762,37 @@ public class TunProxyService
     private static unsafe Task WriteResponseToTunAsync(WintunSession session, IPPacket requestPacket, ReadOnlySpan<byte> responseData, CancellationToken ct)
     {
         var responsePacket = BuildResponsePacket(requestPacket, responseData);
-        
+
+        if (responsePacket.Length == 0)
+            return Task.CompletedTask;
+
+        var sendPacket = session.AllocateSendPacket((uint)responsePacket.Length);
+        if (sendPacket == IntPtr.Zero)
+        {
+            Log.Warning("分配发送缓冲区失败");
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            System.Runtime.InteropServices.Marshal.Copy(responsePacket, 0, sendPacket, responsePacket.Length);
+            session.SendPacket(sendPacket);
+        }
+        finally
+        {
+            // Wintun 会自动管理
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 发送 SYN-ACK 响应到 TUN 设备
+    /// </summary>
+    private static unsafe Task WriteSynAckResponseAsync(WintunSession session, IPPacket requestPacket, CancellationToken ct)
+    {
+        var responsePacket = BuildSynAckPacket(requestPacket);
+
         if (responsePacket.Length == 0)
             return Task.CompletedTask;
 
@@ -872,6 +917,104 @@ public class TunProxyService
         var packet = new byte[20 + 20 + responseData.Length];
         Array.Copy(ipHeader, 0, packet, 0, 20);
         Array.Copy(tcpSegment, 0, packet, 20, tcpSegment.Length);
+
+        return packet;
+    }
+
+    /// <summary>
+    /// 构建 SYN-ACK 响应包
+    /// </summary>
+    private static byte[] BuildSynAckPacket(IPPacket requestPacket)
+    {
+        var sourceIP = requestPacket.Header.DestinationAddress.GetAddressBytes();
+        var destIP = requestPacket.Header.SourceAddress.GetAddressBytes();
+
+        var sourcePort = requestPacket.DestinationPort!.Value;
+        var destPort = requestPacket.SourcePort!.Value;
+
+        // 构建 TCP 头部（20 字节）
+        var tcpHeader = new byte[20];
+
+        // 源端口和目标端口（网络字节序）
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(0, 2), sourcePort);
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(2, 2), destPort);
+
+        // 序列号：使用随机初始序列号
+        uint seqNum = (uint)Random.Shared.Next();
+        NetworkHelper.WriteUInt32BigEndian(tcpHeader.AsSpan(4, 4), seqNum);
+
+        // 确认号：客户端序列号 + 1（SYN 消耗 1 个序列号）
+        uint ackNum = requestPacket.TCPHeader.HasValue
+            ? requestPacket.TCPHeader.Value.SequenceNumber + 1
+            : 0;
+        NetworkHelper.WriteUInt32BigEndian(tcpHeader.AsSpan(8, 4), ackNum);
+
+        // 数据偏移（5 * 4 = 20字节）和标志位
+        tcpHeader[12] = 0x50;  // 数据偏移 = 5 (20字节)
+        tcpHeader[13] = 0x12;  // SYN + ACK 标志 (0x02 + 0x10 = 0x12)
+
+        // 窗口大小
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(14, 2), 65535);
+
+        // 校验和（稍后计算）
+        tcpHeader[16] = 0;
+        tcpHeader[17] = 0;
+
+        // 紧急指针
+        tcpHeader[18] = 0;
+        tcpHeader[19] = 0;
+
+        // 构建 IP 头部（20 字节）
+        var ipHeader = new byte[20];
+
+        // 版本 (4) 和头部长度 (5 * 4 = 20字节)
+        ipHeader[0] = 0x45;
+
+        // 服务类型
+        ipHeader[1] = 0x00;
+
+        // 总长度（IP头 + TCP头，无数据）
+        var totalLength = (ushort)(20 + 20);
+        NetworkHelper.WriteUInt16BigEndian(ipHeader.AsSpan(2, 2), totalLength);
+
+        // 标识符
+        ipHeader[4] = 0x00;
+        ipHeader[5] = 0x00;
+
+        // 标志和片偏移
+        ipHeader[6] = 0x40;  // Don't Fragment
+        ipHeader[7] = 0x00;
+
+        // TTL
+        ipHeader[8] = 0x40;  // 64
+
+        // 协议 (TCP = 6)
+        ipHeader[9] = 0x06;
+
+        // 校验和（稍后计算）
+        ipHeader[10] = 0x00;
+        ipHeader[11] = 0x00;
+
+        // 源 IP 和目标 IP
+        Array.Copy(sourceIP, 0, ipHeader, 12, 4);
+        Array.Copy(destIP, 0, ipHeader, 16, 4);
+
+        // 计算 IP 校验和
+        var ipChecksum = NetworkHelper.CalculateIPChecksum(ipHeader);
+        NetworkHelper.WriteUInt16BigEndian(ipHeader.AsSpan(10, 2), ipChecksum);
+
+        // 计算 TCP 校验和（SYN-ACK 无数据）
+        var tcpChecksum = NetworkHelper.CalculateTcpUdpChecksum(
+            sourceIP,
+            destIP,
+            6,  // TCP 协议
+            tcpHeader);
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(16, 2), tcpChecksum);
+
+        // 组装最终数据包
+        var packet = new byte[40];  // IP头(20) + TCP头(20)
+        Array.Copy(ipHeader, 0, packet, 0, 20);
+        Array.Copy(tcpHeader, 0, packet, 20, 20);
 
         return packet;
     }

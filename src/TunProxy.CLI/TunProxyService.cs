@@ -1,7 +1,10 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Net;
+using System.Net.Sockets;
 using Serilog;
 using TunProxy.Core.Connections;
+using TunProxy.Core.Dns;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Wintun;
 using ProxyType = TunProxy.Core.Connections.ProxyType;
@@ -287,7 +290,7 @@ public class TunProxyService
             if (packet.IsUDP && packet.DestinationPort == 53)
             {
                 Log.Debug("DNS 请求：{Source} -> {Dest}", packet.Header.SourceAddress, packet.Header.DestinationAddress);
-                // TODO: 实现 DNS over Proxy
+                await ProcessDnsQueryAsync(session, packet, ct);
                 return;
             }
 
@@ -503,6 +506,238 @@ public class TunProxyService
         var packet = new byte[20 + 20 + responseData.Length];
         Array.Copy(ipHeader, 0, packet, 0, 20);
         Array.Copy(tcpSegment, 0, packet, 20, tcpSegment.Length);
+
+        return packet;
+    }
+
+    /// <summary>
+    /// 处理 DNS 查询
+    /// </summary>
+    private async Task ProcessDnsQueryAsync(WintunSession session, IPPacket requestPacket, CancellationToken ct)
+    {
+        try
+        {
+            // 解析 DNS 查询
+            var dnsPacket = DnsPacket.Parse(requestPacket.Payload);
+            if (dnsPacket == null || dnsPacket.Questions.Count == 0)
+            {
+                Log.Warning("无效的 DNS 查询包");
+                return;
+            }
+
+            var domain = dnsPacket.Questions[0].Name;
+            Log.Debug("DNS 查询：{Domain}", domain);
+
+            // 通过代理查询 DNS
+            var dnsResponse = await QueryDnsViaSocks5Async(domain, requestPacket.Header.DestinationAddress.ToString(), ct);
+            if (dnsResponse == null || dnsResponse.Length == 0)
+            {
+                Log.Warning("DNS 查询失败：{Domain}", domain);
+                return;
+            }
+
+            Log.Debug("DNS 响应：{Domain}, {Bytes} bytes", domain, dnsResponse.Length);
+
+            // 构建 UDP 响应包
+            await WriteUdpResponseToTunAsync(session, requestPacket, dnsResponse, ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "处理 DNS 查询失败");
+        }
+    }
+
+    /// <summary>
+    /// 通过 SOCKS5 查询 DNS
+    /// </summary>
+    private async Task<byte[]?> QueryDnsViaSocks5Async(string domain, string dnsServer, CancellationToken ct)
+    {
+        TcpClient? client = null;
+        try
+        {
+            client = new TcpClient();
+            await client.ConnectAsync(_proxyHost, _proxyPort, ct);
+            var stream = client.GetStream();
+
+            // SOCKS5 握手
+            await stream.WriteAsync(new byte[] { 0x05, 0x01, 0x00 }, ct);
+            var response = new byte[2];
+            await stream.ReadExactlyAsync(response, ct);
+
+            if (response[0] != 0x05 || response[1] != 0x00)
+            {
+                Log.Warning("SOCKS5 握手失败");
+                return null;
+            }
+
+            // 连接到 DNS 服务器（UDP 关联）
+            // 对于 DNS，我们使用 SOCKS5 的 UDP ASSOCIATE 命令
+            // 但由于实现复杂性，这里改用直接连接 DNS 服务器的 TCP 方式
+            // 注意：标准 DNS 使用 UDP，但也支持 TCP（RFC 1035）
+
+            var connectRequest = new List<byte> { 0x05, 0x01, 0x00, 0x01 };
+            var dnsIp = IPAddress.Parse(dnsServer);
+            connectRequest.AddRange(dnsIp.GetAddressBytes());
+            connectRequest.Add(0x00);  // 端口 53
+            connectRequest.Add(0x35);
+
+            await stream.WriteAsync(connectRequest.ToArray(), ct);
+
+            var connectResponse = new byte[256];
+            var bytesRead = await stream.ReadAsync(connectResponse, ct);
+
+            if (bytesRead < 10 || connectResponse[1] != 0x00)
+            {
+                Log.Warning("SOCKS5 连接 DNS 服务器失败");
+                return null;
+            }
+
+            // DNS-over-TCP 需要在查询前加上 2 字节的长度字段
+            var originalQuery = DnsPacket.Parse(new byte[0])?.Build() ?? Array.Empty<byte>();
+            if (originalQuery.Length == 0)
+            {
+                // 构建标准 DNS A 记录查询
+                var dnsQuery = new DnsPacket
+                {
+                    TransactionId = (ushort)Random.Shared.Next(0, 65536),
+                    Flags = new DnsFlags(0x0100), // 标准查询
+                    Questions = new List<DnsQuestion>
+                    {
+                        new DnsQuestion
+                        {
+                            Name = domain,
+                            Type = 1,  // A 记录
+                            Class = 1  // IN
+                        }
+                    }
+                };
+                originalQuery = dnsQuery.Build();
+            }
+
+            var tcpQuery = new byte[originalQuery.Length + 2];
+            NetworkHelper.WriteUInt16BigEndian(tcpQuery.AsSpan(0, 2), (ushort)originalQuery.Length);
+            Array.Copy(originalQuery, 0, tcpQuery, 2, originalQuery.Length);
+
+            await stream.WriteAsync(tcpQuery, ct);
+
+            // 读取响应长度
+            var lengthBytes = new byte[2];
+            await stream.ReadExactlyAsync(lengthBytes, ct);
+            var responseLength = NetworkHelper.ReadUInt16BigEndian(lengthBytes);
+
+            // 读取 DNS 响应
+            var dnsResponseData = new byte[responseLength];
+            await stream.ReadExactlyAsync(dnsResponseData, ct);
+
+            return dnsResponseData;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "SOCKS5 DNS 查询异常：{Domain}", domain);
+            return null;
+        }
+        finally
+        {
+            client?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 写入 UDP 响应到 TUN 设备
+    /// </summary>
+    private static Task WriteUdpResponseToTunAsync(WintunSession session, IPPacket requestPacket, ReadOnlySpan<byte> responseData, CancellationToken ct)
+    {
+        var responsePacket = BuildUdpResponsePacket(requestPacket, responseData);
+
+        if (responsePacket.Length == 0)
+            return Task.CompletedTask;
+
+        var sendPacket = session.AllocateSendPacket((uint)responsePacket.Length);
+        if (sendPacket == IntPtr.Zero)
+        {
+            Log.Warning("分配发送缓冲区失败");
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            System.Runtime.InteropServices.Marshal.Copy(responsePacket, 0, sendPacket, responsePacket.Length);
+            session.SendPacket(sendPacket);
+        }
+        finally
+        {
+            // Wintun 会自动管理
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 构建 UDP 响应包
+    /// </summary>
+    private static byte[] BuildUdpResponsePacket(IPPacket requestPacket, ReadOnlySpan<byte> responseData)
+    {
+        var sourceIP = requestPacket.Header.DestinationAddress.GetAddressBytes();
+        var destIP = requestPacket.Header.SourceAddress.GetAddressBytes();
+
+        var sourcePort = requestPacket.DestinationPort!.Value;
+        var destPort = requestPacket.SourcePort!.Value;
+
+        // 构建 UDP 头部（8 字节）
+        var udpHeader = new byte[8];
+        NetworkHelper.WriteUInt16BigEndian(udpHeader.AsSpan(0, 2), sourcePort);
+        NetworkHelper.WriteUInt16BigEndian(udpHeader.AsSpan(2, 2), destPort);
+        NetworkHelper.WriteUInt16BigEndian(udpHeader.AsSpan(4, 2), (ushort)(8 + responseData.Length));
+        // 校验和先设为 0
+        udpHeader[6] = 0;
+        udpHeader[7] = 0;
+
+        // 构建 IP 头部（20 字节）
+        var ipHeader = new byte[20];
+        ipHeader[0] = 0x45;  // 版本 4, IHL 5
+        ipHeader[1] = 0x00;  // TOS
+
+        var totalLength = (ushort)(20 + 8 + responseData.Length);
+        NetworkHelper.WriteUInt16BigEndian(ipHeader.AsSpan(2, 2), totalLength);
+
+        ipHeader[4] = 0x00;  // 标识
+        ipHeader[5] = 0x00;
+        ipHeader[6] = 0x40;  // Flags: Don't Fragment
+        ipHeader[7] = 0x00;
+        ipHeader[8] = 0x40;  // TTL = 64
+        ipHeader[9] = 0x11;  // 协议 = UDP (17)
+
+        // 校验和稍后计算
+        ipHeader[10] = 0x00;
+        ipHeader[11] = 0x00;
+
+        Array.Copy(sourceIP, 0, ipHeader, 12, 4);
+        Array.Copy(destIP, 0, ipHeader, 16, 4);
+
+        // 计算 IP 校验和
+        var ipChecksum = NetworkHelper.CalculateIPChecksum(ipHeader);
+        NetworkHelper.WriteUInt16BigEndian(ipHeader.AsSpan(10, 2), ipChecksum);
+
+        // 构建完整的 UDP 段（用于计算校验和）
+        var udpSegment = new byte[8 + responseData.Length];
+        Array.Copy(udpHeader, 0, udpSegment, 0, 8);
+        responseData.CopyTo(udpSegment.AsSpan(8));
+
+        // 计算 UDP 校验和
+        var udpChecksum = NetworkHelper.CalculateTcpUdpChecksum(
+            sourceIP,
+            destIP,
+            17,  // UDP 协议
+            udpSegment);
+        NetworkHelper.WriteUInt16BigEndian(udpHeader.AsSpan(6, 2), udpChecksum);
+
+        // 更新 udpSegment 中的校验和
+        Array.Copy(udpHeader, 6, udpSegment, 6, 2);
+
+        // 组装最终数据包
+        var packet = new byte[20 + 8 + responseData.Length];
+        Array.Copy(ipHeader, 0, packet, 0, 20);
+        Array.Copy(udpSegment, 0, packet, 20, udpSegment.Length);
 
         return packet;
     }

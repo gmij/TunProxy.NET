@@ -35,8 +35,8 @@ public class IPPacketTests
         Assert.Equal(4, packet.Header.Version);
         Assert.Equal(IPProtocol.TCP, packet.Header.ProtocolType);
         Assert.True(packet.IsTCP);
-        Assert.Equal(12345, packet.SourcePort);
-        Assert.Equal(80, packet.DestinationPort);
+        Assert.Equal((ushort)12345, packet.SourcePort);
+        Assert.Equal((ushort)80, packet.DestinationPort);
         Assert.Equal("10.0.0.1", packet.Header.SourceIPAddress.ToString());
         Assert.Equal("10.0.0.2", packet.Header.DestinationIPAddress.ToString());
         Assert.Equal(5, packet.Payload.Length);
@@ -95,8 +95,8 @@ public class IPPacketTests
 
         Assert.NotNull(packet);
         Assert.True(packet.IsUDP);
-        Assert.Equal(53, packet.SourcePort);
-        Assert.Equal(53, packet.DestinationPort);
+        Assert.Equal((ushort)53, packet.SourcePort);
+        Assert.Equal((ushort)53, packet.DestinationPort);
         Assert.NotNull(packet.UDPHeader);
     }
 

@@ -118,7 +118,7 @@ public sealed class WintunSession : IDisposable
 /// <summary>
 /// Wintun API 原生封装
 /// </summary>
-internal static class WintunNative
+public static class WintunNative
 {
     private const string DllName = "wintun";
 

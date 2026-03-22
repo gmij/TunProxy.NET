@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Wintun;
 using TunProxy.Proxy;
@@ -149,8 +150,8 @@ public class TunProxyService
         // 创建代理连接
         using var proxy = _proxyType switch
         {
-            ProxyType.Socks5 => (IDisposableProxyClient)new Socks5Client(_proxyHost, _proxyPort, _username, _password),
-            ProxyType.Http => new HttpProxyClient(_proxyHost, _proxyPort, _username, _password),
+            ProxyType.Socks5 => (IDisposableProxyClient?)new Socks5Client(_proxyHost, _proxyPort, _username, _password),
+            ProxyType.Http => (IDisposableProxyClient?)new HttpProxyClient(_proxyHost, _proxyPort, _username, _password),
             _ => throw new InvalidOperationException("Unsupported proxy type")
         };
 

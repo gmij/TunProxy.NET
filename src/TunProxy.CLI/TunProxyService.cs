@@ -490,15 +490,65 @@ public class TunProxyService
             }
 
             var destPort = packet.DestinationPort.Value;
+            var sourcePort = packet.SourcePort.Value;
+            var destIP = packet.Header.DestinationAddress.ToString();
+
+            // 记录所有收到的 TCP 数据包，特别关注 SYN 包（新连接）
+            if (packet.TCPHeader.HasValue)
+            {
+                var tcpFlags = packet.TCPHeader.Value;
+                if (tcpFlags.SYN && !tcpFlags.ACK)
+                {
+                    // TCP SYN 包 - 新连接尝试
+                    Log.Information("收到 TCP SYN：{Source}:{SrcPort} -> {Dest}:{DestPort}",
+                        packet.Header.SourceAddress, sourcePort, destIP, destPort);
+                }
+                else
+                {
+                    // 其他 TCP 包 - 使用 Debug 级别避免过多日志
+                    Log.Debug("收到 TCP：{Source}:{SrcPort} -> {Dest}:{DestPort}, Flags: {Flags}, Payload: {Bytes} bytes",
+                        packet.Header.SourceAddress, sourcePort, destIP, destPort,
+                        $"SYN={tcpFlags.SYN} ACK={tcpFlags.ACK} PSH={tcpFlags.PSH} FIN={tcpFlags.FIN} RST={tcpFlags.RST}",
+                        packet.Payload.Length);
+                }
+
+                // 尝试提取 HTTP Host 头（仅对 HTTP 流量）
+                if (destPort == 80 && packet.Payload.Length > 0 && tcpFlags.PSH)
+                {
+                    try
+                    {
+                        var payloadText = System.Text.Encoding.ASCII.GetString(packet.Payload);
+                        if (payloadText.StartsWith("GET ") || payloadText.StartsWith("POST ") ||
+                            payloadText.StartsWith("HEAD ") || payloadText.StartsWith("PUT "))
+                        {
+                            var lines = payloadText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                            foreach (var line in lines)
+                            {
+                                if (line.StartsWith("Host:", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var host = line.Substring(5).Trim();
+                                    Log.Information("HTTP 请求 Host: {Host}, 目标 IP: {IP}", host, destIP);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // 忽略解析错误
+                    }
+                }
+            }
 
             // 只代理 HTTP (80) 和 HTTPS (443)
             if (destPort != 80 && destPort != 443)
             {
                 _metrics.IncrementPortFilteredPackets();
+                // 记录第一次看到被过滤的端口，帮助诊断
+                Log.Debug("TCP 数据包端口过滤：{Source}:{SrcPort} -> {Dest}:{DestPort}（仅支持 80/443）",
+                    packet.Header.SourceAddress, sourcePort, destIP, destPort);
                 return;
             }
-
-            var destIP = packet.Header.DestinationAddress.ToString();;
 
             // 路由判断顺序：GFWList > GEO > 默认
             bool shouldProxy = true;

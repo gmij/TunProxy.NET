@@ -20,18 +20,32 @@ public class TunProxyService
     private readonly string? _password;
     private WintunAdapter? _adapter;
     private TcpConnectionManager? _connectionManager;
+    private GeoIpService? _geoIpService;
     private CancellationTokenSource? _cts;
     private long _totalBytesSent;
     private long _totalBytesReceived;
     private long _packetCount;
+    private readonly List<string> _geoProxy;
+    private readonly List<string> _geoDirect;
 
-    public TunProxyService(string proxyHost, int proxyPort, TunProxy.Core.Connections.ProxyType proxyType, string? username = null, string? password = null)
+    public TunProxyService(
+        string proxyHost, 
+        int proxyPort, 
+        TunProxy.Core.Connections.ProxyType proxyType, 
+        string? username = null, 
+        string? password = null,
+        List<string>? geoProxy = null,
+        List<string>? geoDirect = null,
+        string geoIpDbPath = "GeoLite2-Country.mmdb")
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
         _proxyType = proxyType;
         _username = username;
         _password = password;
+        _geoProxy = geoProxy ?? new List<string>();
+        _geoDirect = geoDirect ?? new List<string>();
+        _geoIpService = new GeoIpService(geoIpDbPath);
     }
 
     public async Task StartAsync(CancellationToken ct)
@@ -55,7 +69,16 @@ public class TunProxyService
         ConfigureTunInterface();
         Log.Information("TUN 接口配置完成");
 
-        // 4. 创建连接管理器
+        // 4. 初始化 GeoIP 服务
+        if (_geoProxy.Count > 0 || _geoDirect.Count > 0)
+        {
+            Log.Information("初始化 GeoIP 服务...");
+            await _geoIpService!.InitializeAsync();
+            Log.Information("GEO 代理规则：{Proxy}", string.Join(",", _geoProxy));
+            Log.Information("GEO 直连规则：{Direct}", string.Join(",", _geoDirect));
+        }
+
+        // 5. 创建连接管理器
         _connectionManager = new TcpConnectionManager(_proxyHost, _proxyPort, _proxyType, _username, _password);
         Log.Information("连接管理器初始化完成");
 
@@ -232,9 +255,27 @@ public class TunProxyService
             if (destPort != 80 && destPort != 443)
                 return;
 
-            // 路由规则判断（TODO: 需要 DNS 解析后判断域名）
             var destIP = packet.Header.DestinationAddress.ToString();
             Interlocked.Increment(ref _packetCount);
+
+            // GEO 路由判断
+            bool shouldProxy = true;
+            if (_geoIpService != null && (_geoProxy.Count > 0 || _geoDirect.Count > 0))
+            {
+                shouldProxy = _geoIpService.ShouldProxy(
+                    packet.Header.DestinationAddress, 
+                    _geoProxy, 
+                    _geoDirect);
+                
+                Log.Debug("GEO 判断：{IP} -> {Country}, 代理：{ShouldProxy}", 
+                    destIP, _geoIpService.GetCountryCode(packet.Header.DestinationAddress), shouldProxy);
+            }
+
+            if (!shouldProxy)
+            {
+                Log.Debug("直连：{IP}:{Port}", destIP, destPort);
+                return; // 直连，不走代理
+            }
 
             Log.Debug("{SourceIP}:{SourcePort} -> {DestIP}:{DestPort} ({Bytes} bytes)",
                 packet.Header.SourceAddress, packet.SourcePort, destIP, destPort, packet.Payload.Length);

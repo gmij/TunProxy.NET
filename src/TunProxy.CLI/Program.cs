@@ -42,7 +42,29 @@ public class Program
             Log.Information("代理配置：{Host}:{Port} ({Type})", 
                 config.ProxyHost, config.ProxyPort, config.ProxyType);
 
-            var service = new TunProxyService(config.ProxyHost, config.ProxyPort, config.ProxyType, config.Username, config.Password);
+            // 加载路由配置
+            var routeConfig = new RouteConfig();
+            var configPath = "tunproxy.json";
+            if (File.Exists(configPath))
+            {
+                try
+                {
+                    var json = File.ReadAllText(configPath);
+                    var appConfig = System.Text.Json.JsonSerializer.Deserialize<AppConfig>(json);
+                    routeConfig = appConfig?.Route ?? routeConfig;
+                }
+                catch { }
+            }
+
+            var service = new TunProxyService(
+                config.ProxyHost, 
+                config.ProxyPort, 
+                config.ProxyType, 
+                config.Username, 
+                config.Password,
+                routeConfig.GeoProxy,
+                routeConfig.GeoDirect,
+                routeConfig.GeoIpDbPath);
 
             using var cts = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) =>
@@ -176,7 +198,10 @@ public class Program
             {
                 Mode = "whitelist",
                 ProxyDomains = new List<string> { "google.com", "github.com", "stackoverflow.com" },
-                DirectDomains = new List<string> { "cn", "com.cn", "163.com", "qq.com" }
+                DirectDomains = new List<string> { "cn", "com.cn", "163.com", "qq.com" },
+                GeoProxy = new List<string> { "US", "JP", "SG", "HK" }, // 这些国家走代理
+                GeoDirect = new List<string> { "CN" }, // 中国直连
+                GeoIpDbPath = "GeoLite2-Country.mmdb"
             },
             Logging = new LoggingConfig
             {
@@ -311,6 +336,9 @@ public class RouteConfig
     public string Mode { get; set; } = "whitelist"; // whitelist, blacklist, or all
     public List<string> ProxyDomains { get; set; } = new(); // 走代理的域名
     public List<string> DirectDomains { get; set; } = new(); // 直连的域名
+    public List<string> GeoProxy { get; set; } = new(); // 走代理的国家代码
+    public List<string> GeoDirect { get; set; } = new(); // 直连的国家代码
+    public string GeoIpDbPath { get; set; } = "GeoLite2-Country.mmdb"; // GeoIP 数据库路径
 }
 
 public class LoggingConfig

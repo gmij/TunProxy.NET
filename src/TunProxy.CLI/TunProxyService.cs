@@ -4,6 +4,7 @@ using Serilog;
 using TunProxy.Core.Connections;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Wintun;
+using ProxyType = TunProxy.Core.Connections.ProxyType;
 
 namespace TunProxy.CLI;
 

@@ -98,9 +98,9 @@ public class GeoIpService : IDisposable
     public bool ShouldProxy(IPAddress ipAddress, List<string> geoProxy, List<string> geoDirect)
     {
         var country = GetCountryCode(ipAddress);
-        
+
         if (string.IsNullOrEmpty(country))
-            return false; // 无法判断，默认直连
+            return true; // 无法判断，默认走代理（安全起见）
 
         // 如果在直连列表中，不走代理
         if (geoDirect.Contains(country, StringComparer.OrdinalIgnoreCase))
@@ -110,7 +110,8 @@ public class GeoIpService : IDisposable
         if (geoProxy.Contains(country, StringComparer.OrdinalIgnoreCase))
             return true;
 
-        return false; // 默认直连
+        // 默认行为：如果有直连列表但不在其中，走代理；如果没有直连列表，走代理
+        return true;
     }
 
     public void Dispose()

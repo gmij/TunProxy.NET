@@ -117,6 +117,10 @@ public class TunProxyService
             Log.Information("路由模式：{Mode}", "global");
             if (true) // TODO: AutoAddDefaultRoute
             {
+                // 先为代理服务器添加绕过路由，避免循环
+                Log.Information("为代理服务器添加绕过路由：{ProxyHost}", _proxyHost);
+                _routeService?.AddBypassRoute(_proxyHost);
+
                 Log.Information("添加默认路由...");
                 AddDefaultRoute();
             }
@@ -234,6 +238,9 @@ public class TunProxyService
             // 4. 删除路由
             try
             {
+                _routeService?.RemoveBypassRoute(_proxyHost);
+                Log.Information("代理服务器绕过路由已删除");
+
                 _routeService?.RemoveDefaultRoute();
                 Log.Information("默认路由已删除");
             }

@@ -105,6 +105,52 @@ public class WindowsRouteService
     }
 
     /// <summary>
+    /// 获取原始默认网关（非TUN网关）
+    /// </summary>
+    public string? GetOriginalDefaultGateway()
+    {
+        var routes = GetRouteTable();
+
+        // 查找非TUN的默认路由，优先选择metric最小的
+        var originalRoute = routes
+            .Where(r => r.Network == "0.0.0.0" && r.Gateway != _tunIpAddress)
+            .OrderBy(r => int.TryParse(r.Metric, out var m) ? m : 9999)
+            .FirstOrDefault();
+
+        return originalRoute?.Gateway;
+    }
+
+    /// <summary>
+    /// 为指定IP添加绕过TUN的直连路由（通过原始网关）
+    /// </summary>
+    public bool AddBypassRoute(string ipAddress)
+    {
+        var originalGateway = GetOriginalDefaultGateway();
+        if (string.IsNullOrEmpty(originalGateway))
+        {
+            Console.WriteLine($"[ROUTE] 无法获取原始默认网关，跳过绕过路由添加");
+            return false;
+        }
+
+        Console.WriteLine($"[ROUTE] 为 {ipAddress} 添加绕过路由，网关：{originalGateway}");
+        // 添加特定主机路由，使用原始网关
+        return ExecuteNetshCommand($"interface ip add route {ipAddress}/32 {originalGateway}");
+    }
+
+    /// <summary>
+    /// 删除绕过路由
+    /// </summary>
+    public bool RemoveBypassRoute(string ipAddress)
+    {
+        var originalGateway = GetOriginalDefaultGateway();
+        if (string.IsNullOrEmpty(originalGateway))
+            return false;
+
+        Console.WriteLine($"[ROUTE] 删除 {ipAddress} 的绕过路由");
+        return ExecuteNetshCommand($"interface ip delete route {ipAddress}/32 {originalGateway}");
+    }
+
+    /// <summary>
     /// 删除默认路由
     /// </summary>
     public bool RemoveDefaultRoute()

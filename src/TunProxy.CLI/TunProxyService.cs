@@ -34,6 +34,8 @@ public class TunProxyService
     private readonly bool _enableGfwList;
     private readonly ArrayPool<byte> _bufferPool = ArrayPool<byte>.Shared;
     private readonly ProxyMetrics _metrics = new();
+    private int _ipv6PacketLogCount = 0; // 用于限制 IPv6 日志输出
+    private DateTime _lastNonTcpUdpLogTime = DateTime.MinValue; // 用于限制非 TCP/UDP 日志输出
 
     public TunProxyService(
         string proxyHost, 
@@ -174,11 +176,15 @@ public class TunProxyService
                         {
                             if (snapshot.IPv6Packets > 0)
                             {
-                                Log.Warning("检测到 IPv6 流量但暂不支持。建议：在 TUN 适配器上禁用 IPv6，或使用 'netsh interface ipv6 set interface \"TunProxy\" forwarding=disabled'");
+                                Log.Warning("检测到 IPv6 流量但暂不支持。IPv6 已在适配器上禁用，但系统可能仍在尝试使用 IPv6");
                             }
-                            if (snapshot.NonTcpUdpPackets > 0 && snapshot.PortFilteredPackets == 0)
+                            if (snapshot.NonTcpUdpPackets > 0 && snapshot.PortFilteredPackets == 0 && snapshot.DnsQueries == 0)
                             {
-                                Log.Warning("只检测到非 TCP/UDP 流量（如 ICMP ping）。可能原因：1) 路由未生效；2) 应用程序未使用代理；3) 流量走了其他网络接口");
+                                Log.Warning("只检测到非 TCP/UDP 流量（如 ICMP ping）。可能原因：");
+                                Log.Warning("  1) 应用程序（如浏览器、curl）未通过 TUN 适配器发送流量");
+                                Log.Warning("  2) DNS 解析可能绕过了 TUN 适配器（使用系统 DNS 缓存或 DoH）");
+                                Log.Warning("  3) 路由配置可能未生效，流量走了其他网络接口");
+                                Log.Warning("建议：尝试 ping 10.0.0.1 测试 TUN 连通性，或使用 'route print' 检查路由表");
                             }
                         }
                     }
@@ -429,7 +435,15 @@ public class TunProxyService
                     if (version == 6)
                     {
                         _metrics.IncrementIPv6Packets();
-                        Log.Debug("收到 IPv6 数据包（暂不支持），长度：{Length}", data.Length);
+                        // 只记录前 3 个 IPv6 数据包，避免日志刷屏
+                        if (Interlocked.Increment(ref _ipv6PacketLogCount) <= 3)
+                        {
+                            Log.Debug("收到 IPv6 数据包（暂不支持），长度：{Length}", data.Length);
+                            if (_ipv6PacketLogCount == 3)
+                            {
+                                Log.Information("IPv6 数据包将被忽略，不再记录详细日志");
+                            }
+                        }
                     }
                     else if (version != 4)
                     {
@@ -462,6 +476,16 @@ public class TunProxyService
             if (!packet.IsTCP || packet.SourcePort == null || packet.DestinationPort == null)
             {
                 _metrics.IncrementNonTcpUdpPackets();
+
+                // 每 10 秒记录一次非 TCP/UDP 数据包的详细信息，帮助诊断
+                var now = DateTime.UtcNow;
+                if ((now - _lastNonTcpUdpLogTime).TotalSeconds >= 10)
+                {
+                    _lastNonTcpUdpLogTime = now;
+                    var protocol = packet.Header.ProtocolType.ToString();
+                    Log.Debug("收到非 TCP/UDP 数据包：协议 {Protocol}, {Source} -> {Dest}",
+                        protocol, packet.Header.SourceAddress, packet.Header.DestinationAddress);
+                }
                 return;
             }
 

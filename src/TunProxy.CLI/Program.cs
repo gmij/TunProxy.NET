@@ -262,13 +262,8 @@ public class Config
 {
     public string ProxyHost { get; set; } = "127.0.0.1";
     public int ProxyPort { get; set; } = 7890;
-    public ProxyType ProxyType { get; set; } = ProxyType.Socks5;
+    public TunProxy.Core.Connections.ProxyType ProxyType { get; set; } = TunProxy.Core.Connections.ProxyType.Socks5;
     public string? Username { get; set; }
     public string? Password { get; set; }
 }
 
-public enum ProxyType
-{
-    Socks5,
-    Http
-}

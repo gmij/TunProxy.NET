@@ -158,24 +158,24 @@ public class Program
     private static void CreateSampleConfig(string path)
     {
         // AOT 环境下避免使用 JsonSerializer.Serialize 匿名类型
-        var json = """{
-  "Proxy": {
-    "Host": "127.0.0.1",
-    "Port": 7890,
-    "Type": "Socks5",
-    "Username": null,
-    "Password": null
-  },
-  "Tun": {
-    "IpAddress": "10.0.0.1",
-    "SubnetMask": "255.255.255.0",
-    "AddDefaultRoute": true
-  },
-  "Logging": {
-    "MinimumLevel": "Information",
-    "FilePath": "logs/tunproxy-.log"
-  }
-}""";
+        var json = "{" + Environment.NewLine +
+  "  \"Proxy\": {" + Environment.NewLine +
+  "    \"Host\": \"127.0.0.1\"," + Environment.NewLine +
+  "    \"Port\": 7890," + Environment.NewLine +
+  "    \"Type\": \"Socks5\"," + Environment.NewLine +
+  "    \"Username\": null," + Environment.NewLine +
+  "    \"Password\": null" + Environment.NewLine +
+  "  }," + Environment.NewLine +
+  "  \"Tun\": {" + Environment.NewLine +
+  "    \"IpAddress\": \"10.0.0.1\"," + Environment.NewLine +
+  "    \"SubnetMask\": \"255.255.255.0\"," + Environment.NewLine +
+  "    \"AddDefaultRoute\": true" + Environment.NewLine +
+  "  }," + Environment.NewLine +
+  "  \"Logging\": {" + Environment.NewLine +
+  "    \"MinimumLevel\": \"Information\"," + Environment.NewLine +
+  "    \"FilePath\": \"logs/tunproxy-.log\"" + Environment.NewLine +
+  "  }" + Environment.NewLine +
+  "}";
         File.WriteAllText(path, json);
     }
 

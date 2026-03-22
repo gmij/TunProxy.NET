@@ -38,25 +38,47 @@
 - [ ] DNS 请求处理
 - [ ] 路由规则引擎
 
-## 命令行参数
+## 配置方式
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `-p, --proxy <host:port>` | 代理服务器地址 | 127.0.0.1:7890 |
-| `-t, --type <type>` | 代理类型：socks5, http | socks5 |
-| `-h, --help` | 显示帮助 | - |
+### 方式 1：配置文件（推荐）
+
+首次运行时会自动创建 `tunproxy.json` 配置文件：
+
+```json
+{
+  "Proxy": {
+    "Host": "127.0.0.1",
+    "Port": 7890,
+    "Type": "Socks5",
+    "Username": null,
+    "Password": null
+  }
+}
+```
+
+修改后重启程序即可生效。
+
+### 方式 2：命令行参数
+
+命令行参数会覆盖配置文件：
+
+```powershell
+# 临时使用其他代理
+.\TunProxy.CLI.exe -p 192.168.1.100:8080 -t http
+
+# 带认证信息
+.\TunProxy.CLI.exe -p 127.0.0.1:7890 -u username -w password
+```
 
 ## 示例
 
 ```powershell
-# 使用默认配置（SOCKS5 127.0.0.1:7890）
+# 使用配置文件启动
 .\TunProxy.CLI.exe
 
-# 指定 SOCKS5 代理
-.\TunProxy.CLI.exe -p 127.0.0.1:7890 -t socks5
-
-# 指定 HTTP 代理
+# 命令行覆盖配置
 .\TunProxy.CLI.exe -p 192.168.1.100:8080 -t http
+.\TunProxy.CLI.exe -p 127.0.0.1:7890 -u user -w pass
 ```
 
 ## 日志

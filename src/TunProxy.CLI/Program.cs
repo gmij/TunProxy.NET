@@ -77,22 +77,19 @@ public class Program
             try
             {
                 var json = File.ReadAllText(configPath);
-                var doc = JsonSerializer.Deserialize<JsonElement>(json);
-
-                if (doc.TryGetProperty("Proxy", out var proxy))
+                var appConfig = JsonSerializer.Deserialize<AppConfig>(json);
+                if (appConfig?.Proxy != null)
                 {
-                    config.ProxyHost = proxy.GetProperty("Host").GetString() ?? config.ProxyHost;
-                    config.ProxyPort = proxy.TryGetProperty("Port", out var port) ? port.GetInt32() : config.ProxyPort;
-                    config.ProxyType = proxy.TryGetProperty("Type", out var type) 
-                        ? type.GetString()?.ToLower() switch
-                        {
-                            "socks5" => TunProxy.Core.Connections.ProxyType.Socks5,
-                            "http" => TunProxy.Core.Connections.ProxyType.Http,
-                            _ => TunProxy.Core.Connections.ProxyType.Socks5
-                        }
-                        : TunProxy.Core.Connections.ProxyType.Socks5;
-                    config.Username = proxy.GetProperty("Username").GetString();
-                    config.Password = proxy.GetProperty("Password").GetString();
+                    config.ProxyHost = appConfig.Proxy.Host ?? config.ProxyHost;
+                    config.ProxyPort = appConfig.Proxy.Port;
+                    config.ProxyType = appConfig.Proxy.Type?.ToLower() switch
+                    {
+                        "socks5" => TunProxy.Core.Connections.ProxyType.Socks5,
+                        "http" => TunProxy.Core.Connections.ProxyType.Http,
+                        _ => TunProxy.Core.Connections.ProxyType.Socks5
+                    };
+                    config.Username = appConfig.Proxy.Username;
+                    config.Password = appConfig.Proxy.Password;
                 }
 
                 Log.Information("配置文件加载成功：{Path}", configPath);
@@ -157,25 +154,31 @@ public class Program
     /// </summary>
     private static void CreateSampleConfig(string path)
     {
-        // AOT 环境下避免使用 JsonSerializer.Serialize 匿名类型
-        var json = "{" + Environment.NewLine +
-  "  \"Proxy\": {" + Environment.NewLine +
-  "    \"Host\": \"127.0.0.1\"," + Environment.NewLine +
-  "    \"Port\": 7890," + Environment.NewLine +
-  "    \"Type\": \"Socks5\"," + Environment.NewLine +
-  "    \"Username\": null," + Environment.NewLine +
-  "    \"Password\": null" + Environment.NewLine +
-  "  }," + Environment.NewLine +
-  "  \"Tun\": {" + Environment.NewLine +
-  "    \"IpAddress\": \"10.0.0.1\"," + Environment.NewLine +
-  "    \"SubnetMask\": \"255.255.255.0\"," + Environment.NewLine +
-  "    \"AddDefaultRoute\": true" + Environment.NewLine +
-  "  }," + Environment.NewLine +
-  "  \"Logging\": {" + Environment.NewLine +
-  "    \"MinimumLevel\": \"Information\"," + Environment.NewLine +
-  "    \"FilePath\": \"logs/tunproxy-.log\"" + Environment.NewLine +
-  "  }" + Environment.NewLine +
-  "}";
+        var config = new AppConfig
+        {
+            Proxy = new ProxyConfig
+            {
+                Host = "127.0.0.1",
+                Port = 7890,
+                Type = "Socks5",
+                Username = null,
+                Password = null
+            },
+            Tun = new TunConfig
+            {
+                IpAddress = "10.0.0.1",
+                SubnetMask = "255.255.255.0",
+                AddDefaultRoute = true
+            },
+            Logging = new LoggingConfig
+            {
+                MinimumLevel = "Information",
+                FilePath = "logs/tunproxy-.log"
+            }
+        };
+
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        var json = JsonSerializer.Serialize(config, options);
         File.WriteAllText(path, json);
     }
 
@@ -250,7 +253,7 @@ TunProxy - .NET 8 TUN 代理
 }
 
 /// <summary>
-/// 配置类
+/// 运行时配置类
 /// </summary>
 public class Config
 {
@@ -261,3 +264,34 @@ public class Config
     public string? Password { get; set; }
 }
 
+/// <summary>
+/// 配置文件结构（用于序列化）
+/// </summary>
+public class AppConfig
+{
+    public ProxyConfig Proxy { get; set; } = new();
+    public TunConfig Tun { get; set; } = new();
+    public LoggingConfig Logging { get; set; } = new();
+}
+
+public class ProxyConfig
+{
+    public string Host { get; set; } = "127.0.0.1";
+    public int Port { get; set; } = 7890;
+    public string Type { get; set; } = "Socks5";
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+}
+
+public class TunConfig
+{
+    public string IpAddress { get; set; } = "10.0.0.1";
+    public string SubnetMask { get; set; } = "255.255.255.0";
+    public bool AddDefaultRoute { get; set; } = true;
+}
+
+public class LoggingConfig
+{
+    public string MinimumLevel { get; set; } = "Information";
+    public string FilePath { get; set; } = "logs/tunproxy-.log";
+}

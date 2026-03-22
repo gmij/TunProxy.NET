@@ -4,12 +4,13 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text.Json;
 using Serilog;
-using TunProxy.CLI;
 using TunProxy.Core.Connections;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Wintun;
 
 namespace TunProxy.CLI;
+
+public class Program
 {
     public static async Task Main(string[] args)
     {

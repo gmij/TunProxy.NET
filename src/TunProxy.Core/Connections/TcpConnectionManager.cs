@@ -141,6 +141,7 @@ public class TcpConnection : IDisposable
     private readonly string? _username;
     private readonly string? _password;
     private readonly TimeSpan _connectionTimeout;
+    private readonly SemaphoreSlim _connectLock = new(1, 1);
     private TcpClient? _client;
     private NetworkStream? _stream;
     private bool _connected;
@@ -172,60 +173,74 @@ public class TcpConnection : IDisposable
     /// </summary>
     public async Task<bool> ConnectAsync(string destHost, int destPort, CancellationToken ct)
     {
+        // 如果已连接，立即返回
         if (_connected) return true;
 
-        Exception? lastException = null;
-
-        for (int i = 0; i <= MaxRetries; i++)
+        // 使用信号量确保同一连接对象只有一个线程在执行连接
+        // 这防止了 TCP 重传导致的并发连接尝试
+        await _connectLock.WaitAsync(ct);
+        try
         {
-            try
+            // 再次检查连接状态（可能在等待锁期间已连接）
+            if (_connected) return true;
+
+            Exception? lastException = null;
+
+            for (int i = 0; i <= MaxRetries; i++)
             {
-                _client?.Dispose();
-                _client = new TcpClient();
-
-                // 设置连接超时
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cts.CancelAfter(_connectionTimeout);
-
-                await _client.ConnectAsync(_proxyHost, _proxyPort, cts.Token);
-                _stream = _client.GetStream();
-
-                // SOCKS5 握手
-                if (_proxyType == ProxyType.Socks5)
+                try
                 {
-                    await Socks5HandshakeAsync(destHost, destPort, cts.Token);
+                    _client?.Dispose();
+                    _client = new TcpClient();
+
+                    // 设置连接超时
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(_connectionTimeout);
+
+                    await _client.ConnectAsync(_proxyHost, _proxyPort, cts.Token);
+                    _stream = _client.GetStream();
+
+                    // SOCKS5 握手
+                    if (_proxyType == ProxyType.Socks5)
+                    {
+                        await Socks5HandshakeAsync(destHost, destPort, cts.Token);
+                    }
+                    else if (_proxyType == ProxyType.Http)
+                    {
+                        await HttpConnectAsync(destHost, destPort, cts.Token);
+                    }
+
+                    _connected = true;
+                    _retryCount = 0;
+                    HasErrors = false;
+                    LastActivity = DateTime.UtcNow;
+                    return true;
                 }
-                else if (_proxyType == ProxyType.Http)
+                catch (Exception ex) when (i < MaxRetries && !ct.IsCancellationRequested)
                 {
-                    await HttpConnectAsync(destHost, destPort, cts.Token);
+                    lastException = ex;
+                    _retryCount++;
+
+                    // 指数退避：等待 100ms, 200ms, 400ms
+                    var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, i));
+                    await Task.Delay(delay, ct);
                 }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                    break;
+                }
+            }
 
-                _connected = true;
-                _retryCount = 0;
-                HasErrors = false;
-                LastActivity = DateTime.UtcNow;
-                return true;
-            }
-            catch (Exception ex) when (i < MaxRetries && !ct.IsCancellationRequested)
-            {
-                lastException = ex;
-                _retryCount++;
-
-                // 指数退避：等待 100ms, 200ms, 400ms
-                var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, i));
-                await Task.Delay(delay, ct);
-            }
-            catch (Exception ex)
-            {
-                lastException = ex;
-                break;
-            }
+            HasErrors = true;
+            throw new InvalidOperationException(
+                $"Failed to connect after {MaxRetries + 1} attempts",
+                lastException);
         }
-
-        HasErrors = true;
-        throw new InvalidOperationException(
-            $"Failed to connect after {MaxRetries + 1} attempts",
-            lastException);
+        finally
+        {
+            _connectLock.Release();
+        }
     }
 
     /// <summary>
@@ -381,6 +396,7 @@ public class TcpConnection : IDisposable
         {
             _stream?.Dispose();
             _client?.Dispose();
+            _connectLock.Dispose();
             _disposed = true;
         }
     }

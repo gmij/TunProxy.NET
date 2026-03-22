@@ -6,7 +6,6 @@ using Serilog;
 using TunProxy.Core.Connections;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Wintun;
-using ProxyType = TunProxy.Core.Connections.ProxyType;
 
 namespace TunProxy.CLI;
 
@@ -320,12 +319,6 @@ public class TunProxyService
     }
 }
 
-public enum ProxyType
-{
-    Socks5,
-    Http
-}
-
 public class Program
 {
     public static async Task Main(string[] args)
@@ -352,7 +345,7 @@ public class Program
 
             string proxyHost = "127.0.0.1";
             int proxyPort = 7890;
-            var proxyType = ProxyType.Socks5;
+            var proxyType = TunProxy.Core.Connections.ProxyType.Socks5;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -372,8 +365,8 @@ public class Program
                         {
                             proxyType = args[++i].ToLower() switch
                             {
-                                "socks5" => ProxyType.Socks5,
-                                "http" => ProxyType.Http,
+                                "socks5" => TunProxy.Core.Connections.ProxyType.Socks5,
+                                "http" => TunProxy.Core.Connections.ProxyType.Http,
                                 _ => throw new ArgumentException($"Unknown proxy type: {args[i]}")
                             };
                         }

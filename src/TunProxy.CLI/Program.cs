@@ -104,19 +104,28 @@ public class Program
             try
             {
                 var json = File.ReadAllText(configPath);
-                var appConfig = JsonSerializer.Deserialize<AppConfig>(json);
-                if (appConfig?.Proxy != null)
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                
+                if (root.TryGetProperty("Proxy", out var proxy))
                 {
-                    config.ProxyHost = appConfig.Proxy.Host ?? config.ProxyHost;
-                    config.ProxyPort = appConfig.Proxy.Port;
-                    config.ProxyType = appConfig.Proxy.Type?.ToLower() switch
+                    if (proxy.TryGetProperty("Host", out var host))
+                        config.ProxyHost = host.GetString() ?? config.ProxyHost;
+                    if (proxy.TryGetProperty("Port", out var port))
+                        config.ProxyPort = port.GetInt32();
+                    if (proxy.TryGetProperty("Type", out var type))
                     {
-                        "socks5" => TunProxy.Core.Connections.ProxyType.Socks5,
-                        "http" => TunProxy.Core.Connections.ProxyType.Http,
-                        _ => TunProxy.Core.Connections.ProxyType.Socks5
-                    };
-                    config.Username = appConfig.Proxy.Username;
-                    config.Password = appConfig.Proxy.Password;
+                        config.ProxyType = type.GetString()?.ToLower() switch
+                        {
+                            "socks5" => TunProxy.Core.Connections.ProxyType.Socks5,
+                            "http" => TunProxy.Core.Connections.ProxyType.Http,
+                            _ => TunProxy.Core.Connections.ProxyType.Socks5
+                        };
+                    }
+                    if (proxy.TryGetProperty("Username", out var username))
+                        config.Username = username.GetString();
+                    if (proxy.TryGetProperty("Password", out var password))
+                        config.Password = password.GetString();
                 }
 
                 Log.Information("配置文件加载成功：{Path}", configPath);
@@ -187,46 +196,39 @@ public class Program
     /// </summary>
     private static void CreateSampleConfig(string path)
     {
-        var config = new AppConfig
-        {
-            Proxy = new ProxyConfig
-            {
-                Host = "127.0.0.1",
-                Port = 7890,
-                Type = "Socks5",
-                Username = null,
-                Password = null
-            },
-            Tun = new TunConfig
-            {
-                IpAddress = "10.0.0.1",
-                SubnetMask = "255.255.255.0",
-                AddDefaultRoute = true
-            },
-            Route = new RouteConfig
-            {
-                Mode = "whitelist",
-                ProxyDomains = new List<string> { "google.com", "github.com", "stackoverflow.com" },
-                DirectDomains = new List<string> { "cn", "com.cn", "163.com", "qq.com" },
-                GeoProxy = new List<string> { "US", "JP", "SG", "HK" }, // 这些国家走代理
-                GeoDirect = new List<string> { "CN" }, // 中国直连
-                GeoIpDbPath = "GeoLite2-Country.mmdb",
-                EnableGfwList = true, // 启用 GFWList
-                GfwListUrl = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt",
-                GfwListPath = "gfwlist.txt",
-                TunRouteMode = "global", // global, smart, manual
-                TunRouteApps = new List<string> { "chrome.exe", "firefox.exe", "msedge.exe" },
-                AutoAddDefaultRoute = true
-            },
-            Logging = new LoggingConfig
-            {
-                MinimumLevel = "Information",
-                FilePath = "logs/tunproxy-.log"
-            }
-        };
-
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        var json = JsonSerializer.Serialize(config, options);
+        // AOT 环境下直接写 JSON 字符串，避免使用反射序列化
+        var json = @"{
+  ""Proxy"": {
+    ""Host"": ""127.0.0.1"",
+    ""Port"": 7890,
+    ""Type"": ""Socks5"",
+    ""Username"": null,
+    ""Password"": null
+  },
+  ""Tun"": {
+    ""IpAddress"": ""10.0.0.1"",
+    ""SubnetMask"": ""255.255.255.0"",
+    ""AddDefaultRoute"": true
+  },
+  ""Route"": {
+    ""Mode"": ""whitelist"",
+    ""ProxyDomains"": [""google.com"", ""github.com"", ""stackoverflow.com""],
+    ""DirectDomains"": [""cn"", ""com.cn"", ""163.com"", ""qq.com""],
+    ""GeoProxy"": [""US"", ""JP"", ""SG"", ""HK""],
+    ""GeoDirect"": [""CN""],
+    ""GeoIpDbPath"": ""GeoLite2-Country.mmdb"",
+    ""EnableGfwList"": true,
+    ""GfwListUrl"": ""https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt"",
+    ""GfwListPath"": ""gfwlist.txt"",
+    ""TunRouteMode"": ""global"",
+    ""TunRouteApps"": [""chrome.exe"", ""firefox.exe"", ""msedge.exe""],
+    ""AutoAddDefaultRoute"": true
+  },
+  ""Logging"": {
+    ""MinimumLevel"": ""Information"",
+    ""FilePath"": ""logs/tunproxy-.log""
+  }
+}";
         File.WriteAllText(path, json);
     }
 

@@ -8,7 +8,6 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
-    <JsonSerializerIsReflectionEnabled>true</JsonSerializerIsReflectionEnabled>
   </PropertyGroup>
 
   <ItemGroup>

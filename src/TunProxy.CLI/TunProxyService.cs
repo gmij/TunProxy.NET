@@ -46,6 +46,7 @@ public class TunProxyService
     private readonly ConcurrentDictionary<string, bool> _proxyBlockedIps = new(); // 代理封锁的 IP（超时/拒绝），SYN 直接 RST
     private const string BlockedIpCacheFile = "blocked_ip_cache.txt"; // 代理封锁 IP 持久化缓存
     private readonly ConcurrentDictionary<string, string> _ipHostnameCache = new(); // IP → 域名，用于 CONNECT
+    private readonly ConcurrentDictionary<string, DateTime> _connectFailedIps = new(); // CONNECT_FAILED IP 临时记录（5分钟内快速失败）
     private readonly TaskCompletionSource _proxyReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public TunProxyService(
@@ -859,6 +860,14 @@ public class TunProxyService
                 return;
             }
 
+            // RFC1918 私有地址直连（代理无法访问局域网 IP）
+            if (IsPrivateIp(packet.Header.DestinationAddress))
+            {
+                if (packet.TCPHeader.HasValue && packet.TCPHeader.Value.SYN)
+                    await WriteTcpRstResponseAsync(session, packet, ct);
+                return;
+            }
+
             // 只代理 HTTP (80) 和 HTTPS (443)
             if (destPort != 80 && destPort != 443)
             {
@@ -943,6 +952,14 @@ public class TunProxyService
 
                 // 代理封锁 IP：SYN 直接 RST，避免浪费时间等超时
                 if (_proxyBlockedIps.ContainsKey(destIP))
+                {
+                    await WriteTcpRstResponseAsync(session, packet, ct);
+                    return;
+                }
+
+                // CONNECT_FAILED 临时屏蔽：5分钟内连接失败过的 IP 快速 RST
+                if (_connectFailedIps.TryGetValue(destIP, out var failedAt) &&
+                    (DateTime.UtcNow - failedAt).TotalMinutes < 5)
                 {
                     await WriteTcpRstResponseAsync(session, packet, ct);
                     return;
@@ -1060,7 +1077,9 @@ public class TunProxyService
                         _metrics.IncrementFailedConnections();
                         _relayStates.TryRemove(connKey, out _);
                         connectionManager.RemoveConnectionByKey(connKey);
-                        Log.Warning(ex, "连接建立失败：{IP}:{Port}", destIP, destPort);
+                        // 对已知的连接失败（超时/代理拒绝）只记一行，不打冗余堆栈
+                        var failReason = ex.InnerException?.Message ?? ex.Message;
+                        Log.Warning("连接建立失败：{IP}:{Port}（{Reason}）", destIP, destPort, failReason);
                         // 只有代理明确拒绝（4xx/5xx）才加入封锁缓存
                         // 超时（OperationCanceledException）是临时性的，不能永久封锁
                         if (ex.Message.Contains("PROXY_DENIED") &&
@@ -1068,6 +1087,11 @@ public class TunProxyService
                         {
                             Log.Debug("代理封锁 IP 已记录：{IP}（后续 SYN 直接 RST）", destIP);
                             _ = Task.Run(() => AppendBlockedIpCache(destIP));
+                        }
+                        else if (ex.Message.Contains("CONNECT_FAILED"))
+                        {
+                            // 连接超时：5分钟内快速失败，避免重复等待超时
+                            _connectFailedIps[destIP] = DateTime.UtcNow;
                         }
                         await WriteTcpRstResponseAsync(session, packet, ct);
                         return;
@@ -1209,6 +1233,20 @@ public class TunProxyService
     /// </summary>
     private static bool IsSeqBeforeOrEqual(uint seq, uint boundary) =>
         (int)(boundary - seq) >= 0;
+
+    /// <summary>
+    /// 判断是否为 RFC1918 私有地址或回环/本地链路地址
+    /// </summary>
+    private static bool IsPrivateIp(System.Net.IPAddress ip)
+    {
+        if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
+        var b = ip.GetAddressBytes();
+        return b[0] == 127                              // 127.0.0.0/8 回环
+            || b[0] == 10                               // 10.0.0.0/8
+            || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) // 172.16.0.0/12
+            || (b[0] == 192 && b[1] == 168)            // 192.168.0.0/16
+            || (b[0] == 169 && b[1] == 254);           // 169.254.0.0/16 本地链路
+    }
 
     /// <summary>
     /// 发送纯 ACK 到 TUN 客户端（flags=0x10，无载荷）

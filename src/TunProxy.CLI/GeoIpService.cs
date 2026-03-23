@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
 using System.Net;
 using MaxMind.GeoIP2;
@@ -22,6 +23,9 @@ public class GeoIpService : IDisposable
     /// <summary>
     /// 初始化 GeoIP 数据库（若不存在则自动下载，需要 TUN 代理已运行）
     /// </summary>
+    [DynamicDependency(
+        DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors,
+        typeof(MaxMind.Db.Metadata))]
     public async Task InitializeAsync(CancellationToken ct = default, string? proxyUrl = null)
     {
         // 如果数据库不存在，通过代理自动下载

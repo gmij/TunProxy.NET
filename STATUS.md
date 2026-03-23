@@ -1,15 +1,13 @@
 # 🥔 TunProxy.NET 项目状态
 
-**最后更新:** 2026-03-22  
-**状态:** ✅ 代码完成，等待 GitHub Actions 编译
+**最后更新:** 2026-03-23  
+**状态:** ✅ MVP 功能完成，已支持 GEO 规则与直连/代理路由
 
 ---
 
 ## 项目概览
 
-用 .NET 8 实现的 TUN 模式代理，支持 SOCKS5 和 HTTP 代理，可 AOT 编译为单文件。
-
-**替代目标:** Clash for Windows（TUN 模式）
+用 .NET 8 实现的 TUN 模式代理，支持 SOCKS5 / HTTP，GEO 智能路由，直连/代理双通道，并可 AOT 单文件发布。
 
 ---
 
@@ -17,108 +15,39 @@
 
 ### ✅ 核心功能
 
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| **Wintun 封装** | ✅ 完成 | P/Invoke 封装，支持创建/打开适配器、会话管理 |
-| **IP 包解析** | ✅ 完成 | IPv4/TCP/UDP/ICMP解析，支持端口提取 |
-| **SOCKS5 客户端** | ✅ 完成 | 支持无认证和用户名密码认证 |
-| **HTTP 客户端** | ✅ 完成 | 支持 CONNECT 方法和 Basic 认证 |
-| **TUN 代理主程序** | ✅ 完成 | 包接收循环、代理转发、命令行参数 |
+- Wintun 适配器创建/会话管理，启动时自动配置 IP、禁用 IPv6。
+- IPv4/TCP/UDP/ICMP 解析；SYN-ACK/RST 回写，保持 3-way handshake 正常。
+- SOCKS5 / HTTP CONNECT 客户端，支持认证。
+- TCP 连接池 + 重连 + 并发连接加锁，避免 TCP 重传导致 995。
+- GEO 智能路由（直连/代理列表），GEO DB 自动下载，失败时默认走代理；GFWList 预留开关。
+- 直连/代理双连接管理器：直连流量直接拨出，代理流量走上游代理。
+- 路由自动化：默认路由、代理服务器 /32 绕行、防回环。
+- 日志与指标：Serilog 控制台/文件；每 30s 输出字节、连接、失败、原始包/IPv6/解析失败等指标。
+- Native AOT 支持，GeoIP 依赖已声明动态保留，裁剪后可正常加载 mmdb。
 
 ### ✅ 工程化
 
-| 项目 | 状态 | 说明 |
-|------|------|------|
-| **解决方案结构** | ✅ 完成 | 3 个项目（Core/Proxy/CLI）+ 测试 |
-| **GitHub Actions** | ✅ 完成 | 自动编译、测试、发布 AOT |
-| **单元测试** | ✅ 完成 | xUnit，10+ 个测试用例 |
-| **文档** | ✅ 完成 | README/DEPLOY/TESTING/AOT-PUBLISH/GITHUB-ACTIONS |
-| **构建脚本** | ✅ 完成 | build.bat / download-wintun.ps1 |
-
----
-
-## 待完成的功能
-
-### ✅ 已完成的核心功能
-
-| 功能 | 状态 | 说明 |
-|------|------|------|
-| **TCP 长连接管理** | ✅ 完成 | TcpConnectionManager 维护连接池，支持复用 |
-| **响应数据包回写** | ✅ 完成 | 代理响应自动写回 TUN 设备 |
-| **自动下载 wintun.dll** | ✅ 完成 | 启动时自动检测并下载 |
-| **自动配置 TUN 接口** | ✅ 完成 | 调用 netsh 自动配置 |
-
-### 🔄 待完成
-
-| 功能 | 优先级 | 说明 |
-|------|--------|------|
-| **DNS 请求处理** | 🟡 中 | 拦截 DNS 请求（端口 53）并通过代理解析 |
-| **路由规则引擎** | 🟡 中 | 配置文件决定哪些 IP/域名走代理 |
-| **配置文件** | 🟢 低 | JSON 配置（代理、规则、日志） |
-| **Windows 服务** | 🟢 低 | 后台运行、开机自启 |
-
-### 📋 优化项
-
-| 功能 | 优先级 | 说明 |
-|------|--------|------|
-| **性能优化** | 🟡 中 | Span<T>、零拷贝、异步优化 |
-| **Windows 服务** | 🟢 低 | 后台运行、开机自启 |
-| **配置文件** | 🟢 低 | JSON 配置（代理、规则、日志） |
-| **GUI 界面** | 🟢 低 | WPF/WinUI 3 托盘应用 |
+- 解决方案：Core / Proxy / CLI + tests。
+- GitHub Actions：自动构建、测试、AOT 产物上传。
+- 文档：README、DEPLOY、TESTING、AOT-PUBLISH、GITHUB-ACTIONS。
+- 辅助脚本：build.bat、download-wintun.ps1。
 
 ---
 
 ## 测试结果
 
-### 单元测试
-
-```
-✅ IPPacketTests (5 个测试)
-   ✅ Parse_ValidIPv4Packet_ReturnsPacket
-   ✅ Parse_InvalidVersion_ReturnsNull
-   ✅ Parse_TooShort_ReturnsNull
-   ✅ Parse_UDPPacket_ReturnsPacketWithUDPHeader
-   ✅ Parse_ICMPPacket_ReturnsPacketWithoutPort
-
-✅ ProxyClientTests (6 个测试)
-   ✅ Socks5Client 构造函数测试
-   ✅ HttpProxyClient 构造函数测试
-   ✅ 连接异常处理测试
-```
-
-**覆盖率目标:** 70%+
+单元测试：xUnit，`dotnet test` 通过（11 个用例：IP 包解析、代理客户端构造/异常处理）。
 
 ---
 
 ## 下一步行动
 
-### 立即执行（斌哥）
+### 下一步
 
-1. **推送到 GitHub**
-   ```bash
-   cd /root/.openclaw/workspace/TunProxy.NET
-   git remote add origin https://github.com/YOUR_USERNAME/TunProxy.NET.git
-   git push -u origin main
-   ```
-
-2. **等待 Actions 编译**（约 5-10 分钟）
-
-3. **下载编译好的程序**
-   - Actions → 最新 build → 下载 artifacts
-   - 或打 tag 后从 Release 下载
-
-4. **本地测试**
-   ```powershell
-   # 管理员权限运行
-   .\TunProxy.CLI.exe -p 127.0.0.1:7890 -t socks5
-   ```
-
-### 后续优化（等斌哥测试反馈）
-
-- 根据测试结果修复 bug
-- 完善 TCP 连接管理
-- 添加响应回写逻辑
-- 性能优化
+- DNS 拦截/代理化（UDP 53）  
+- GFWList 解析与域名匹配  
+- Windows 服务 / GUI 托盘  
+- 性能优化（Span/零拷贝）
 
 ---
 

@@ -1,6 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
 using System.Net;
 using MaxMind.GeoIP2;
+using Serilog;
 
 namespace TunProxy.CLI;
 
@@ -19,57 +21,70 @@ public class GeoIpService : IDisposable
     }
 
     /// <summary>
-    /// 初始化 GeoIP 数据库
+    /// 初始化 GeoIP 数据库（若不存在则自动下载，需要 TUN 代理已运行）
     /// </summary>
-    public async Task InitializeAsync()
+    [DynamicDependency(
+        DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors,
+        typeof(MaxMind.Db.Metadata))]
+    public async Task InitializeAsync(CancellationToken ct = default, string? proxyUrl = null)
     {
-        // 如果数据库不存在，自动下载
+        // 如果数据库不存在，通过代理自动下载
         if (!File.Exists(_dbPath))
         {
-            await DownloadGeoIpDbAsync();
+            await DownloadGeoIpDbAsync(ct, proxyUrl);
+        }
+
+        if (!File.Exists(_dbPath))
+        {
+            Log.Warning("[GEO] 数据库文件不存在，GEO 路由不可用：{Path}", _dbPath);
+            return;
         }
 
         try
         {
             _reader = new DatabaseReader(_dbPath);
-            Console.WriteLine($"[GEO] GeoIP 数据库加载成功：{_dbPath}");
+            Log.Information("[GEO] 数据库加载成功：{Path}", _dbPath);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[GEO] GeoIP 数据库加载失败：{ex.Message}");
+            Log.Warning(ex, "[GEO] 数据库加载失败：{Path}", _dbPath);
         }
     }
 
     /// <summary>
-    /// 下载 GeoIP 数据库（MaxMind GeoLite2）
+    /// 下载 GeoIP 数据库（通过代理，绕过系统 DNS 限制）
     /// </summary>
-    private async Task DownloadGeoIpDbAsync()
+    private async Task DownloadGeoIpDbAsync(CancellationToken ct = default, string? proxyUrl = null)
     {
-        Console.WriteLine("[GEO] GeoIP 数据库不存在，开始下载...");
-        
+        Log.Information("[GEO] 数据库不存在，开始下载...{Via}",
+            proxyUrl != null ? $"（经由 {proxyUrl}）" : "（直连）");
+
         try
         {
-            using var client = new HttpClient();
-            client.Timeout = TimeSpan.FromMinutes(10);
+            using var handler = new HttpClientHandler();
+            if (proxyUrl != null)
+            {
+                handler.Proxy = new System.Net.WebProxy(proxyUrl);
+                handler.UseProxy = true;
+            }
+            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(10) };
 
-            // MaxMind GeoLite2 Country 数据库
             var downloadUrl = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb";
-            
+
             var tempPath = _dbPath + ".tmp";
-            var data = await client.GetByteArrayAsync(downloadUrl);
-            await File.WriteAllBytesAsync(tempPath, data);
-            
-            // 移动文件
+            var data = await client.GetByteArrayAsync(downloadUrl, ct);
+            await File.WriteAllBytesAsync(tempPath, data, ct);
+
             if (File.Exists(_dbPath))
                 File.Delete(_dbPath);
             File.Move(tempPath, _dbPath);
-            
-            Console.WriteLine($"[GEO] GeoIP 数据库下载完成：{_dbPath} ({data.Length / 1024 / 1024} MB)");
+
+            Log.Information("[GEO] 数据库下载完成：{Path}（{Size} MB）", _dbPath, data.Length / 1024 / 1024);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Console.WriteLine($"[GEO] GeoIP 数据库下载失败：{ex.Message}");
-            Console.WriteLine("[GEO] 请手动下载：https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb");
+            Log.Warning(ex, "[GEO] 数据库下载失败，请手动下载放到程序目录：https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb");
         }
     }
 
@@ -98,9 +113,9 @@ public class GeoIpService : IDisposable
     public bool ShouldProxy(IPAddress ipAddress, List<string> geoProxy, List<string> geoDirect)
     {
         var country = GetCountryCode(ipAddress);
-        
+
         if (string.IsNullOrEmpty(country))
-            return false; // 无法判断，默认直连
+            return true; // 无法判断，默认走代理（安全起见）
 
         // 如果在直连列表中，不走代理
         if (geoDirect.Contains(country, StringComparer.OrdinalIgnoreCase))
@@ -110,7 +125,8 @@ public class GeoIpService : IDisposable
         if (geoProxy.Contains(country, StringComparer.OrdinalIgnoreCase))
             return true;
 
-        return false; // 默认直连
+        // 默认行为：如果有直连列表但不在其中，走代理；如果没有直连列表，走代理
+        return true;
     }
 
     public void Dispose()

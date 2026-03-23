@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TunProxy.Core.Configuration;
 
 namespace TunProxy.CLI;
 
@@ -10,7 +11,6 @@ namespace TunProxy.CLI;
 [JsonSerializable(typeof(TunConfig))]
 [JsonSerializable(typeof(RouteConfig))]
 [JsonSerializable(typeof(LoggingConfig))]
-[JsonSerializable(typeof(Config))]
 public partial class AppJsonContext : JsonSerializerContext
 {
 }

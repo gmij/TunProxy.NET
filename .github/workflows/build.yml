@@ -17,13 +17,13 @@ jobs:
   build-windows:
     name: Build Windows x64
     runs-on: windows-latest
-    
+
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
-      
+      uses: actions/checkout@v6
+
     - name: Setup .NET 8
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
         
@@ -54,12 +54,13 @@ jobs:
       
     - name: Upload Test Results
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: test-results
         path: |
           **/TestResults/*.trx
           **/coverage.cobertura.xml
+        if-no-files-found: ignore
       
     - name: Publish AOT (win-x64)
       run: |
@@ -102,13 +103,13 @@ jobs:
       shell: pwsh
       
     - name: Upload AOT artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: TunProxy.NET-win-x64-AOT
         path: TunProxy.NET-win-x64-AOT.zip
-        
+
     - name: Upload Regular artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: TunProxy.NET-win-x64-regular
         path: TunProxy.NET-win-x64-regular.zip
@@ -127,13 +128,13 @@ jobs:
   build-linux:
     name: Build Linux x64
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
-      
+      uses: actions/checkout@v6
+
     - name: Setup .NET 8
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
         
@@ -150,7 +151,7 @@ jobs:
       run: cd publish/linux-x64 && zip -r ../../TunProxy.NET-linux-x64.zip .
         
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: TunProxy.NET-linux-x64
         path: TunProxy.NET-linux-x64.zip

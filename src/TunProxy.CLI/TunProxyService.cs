@@ -1,272 +1,150 @@
+using System.Buffers;
+using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.IO.Compression;
+using System.Net;
+using System.Net.Sockets;
 using Serilog;
+using TunProxy.Core.Configuration;
 using TunProxy.Core.Connections;
+using TunProxy.Core.Metrics;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Wintun;
-using ProxyType = TunProxy.Core.Connections.ProxyType;
 
 namespace TunProxy.CLI;
 
 /// <summary>
-/// TUN 代理主程序
+/// TUN 代理主服务（精简的协调器）
 /// </summary>
 public class TunProxyService
 {
-    private readonly string _proxyHost;
-    private readonly int _proxyPort;
-    private readonly TunProxy.Core.Connections.ProxyType _proxyType;
-    private readonly string? _username;
-    private readonly string? _password;
+    private readonly AppConfig _config;
     private WintunAdapter? _adapter;
     private TcpConnectionManager? _connectionManager;
+    private TcpConnectionManager? _directConnectionManager;
     private GeoIpService? _geoIpService;
     private GfwListService? _gfwListService;
     private WindowsRouteService? _routeService;
+    private IpCacheManager? _ipCache;
+    private DnsProxyService? _dnsProxy;
     private CancellationTokenSource? _cts;
-    private long _totalBytesSent;
-    private long _totalBytesReceived;
-    private long _packetCount;
-    private readonly List<string> _geoProxy;
-    private readonly List<string> _geoDirect;
-    private readonly bool _enableGfwList;
-    private readonly string _routeMode;
+    private readonly ProxyMetrics _metrics = new();
+    
+    private readonly ConcurrentDictionary<string, TcpRelayState> _relayStates = new();
+    private readonly TaskCompletionSource _proxyReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public TunProxyService(
-        string proxyHost, 
-        int proxyPort, 
-        TunProxy.Core.Connections.ProxyType proxyType, 
-        string? username = null, 
-        string? password = null,
-        List<string>? geoProxy = null,
-        List<string>? geoDirect = null,
-        string geoIpDbPath = "GeoLite2-Country.mmdb",
-        bool enableGfwList = false,
-        string gfwListUrl = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt",
-        string gfwListPath = "gfwlist.txt")
+    public TunProxyService(AppConfig config)
     {
-        _proxyHost = proxyHost;
-        _proxyPort = proxyPort;
-        _proxyType = proxyType;
-        _username = username;
-        _password = password;
-        _geoProxy = geoProxy ?? new List<string>();
-        _geoDirect = geoDirect ?? new List<string>();
-        _geoIpService = new GeoIpService(geoIpDbPath);
-        _enableGfwList = enableGfwList;
-        if (enableGfwList)
-            _gfwListService = new GfwListService(gfwListUrl, gfwListPath);
-        _routeMode = "global"; // TODO: 从配置读取
-        _routeService = new WindowsRouteService();
+        _config = config;
+        
+        if (config.Route.EnableGeo)
+            _geoIpService = new GeoIpService(config.Route.GeoIpDbPath);
+        if (config.Route.EnableGfwList)
+            _gfwListService = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
+        
+        _routeService = new WindowsRouteService(config.Tun.IpAddress, config.Tun.SubnetMask);
+        _ipCache = new IpCacheManager(_routeService);
+        _dnsProxy = new DnsProxyService(config.Proxy.Host, config.Proxy.Port, config.Proxy.GetProxyType(), _ipCache);
     }
+
+    public ServiceStatus GetStatus() => new()
+    {
+        IsRunning = _cts != null && !_cts.IsCancellationRequested,
+        ProxyHost = _config.Proxy.Host,
+        ProxyPort = _config.Proxy.Port,
+        ProxyType = _config.Proxy.Type,
+        ActiveConnections = (_connectionManager?.ActiveConnections ?? 0) + (_directConnectionManager?.ActiveConnections ?? 0),
+        Metrics = _metrics.GetSnapshot()
+    };
 
     public async Task StartAsync(CancellationToken ct)
     {
         Log.Information("TunProxy 启动中...");
-        Log.Information("代理：{Host}:{Port} ({Type})", _proxyHost, _proxyPort, _proxyType);
+        Log.Information("代理：{Host}:{Port} ({Type})", _config.Proxy.Host, _config.Proxy.Port, _config.Proxy.Type);
 
-        // 1. 确保 wintun.dll 存在
-        await EnsureWintunDllAsync(ct);
-
-        // 2. 创建 TUN 适配器
-        Log.Information("创建 TUN 适配器...");
-        _adapter = WintunAdapter.CreateAdapter("TunProxy", "Wintun");
-        Log.Information("TUN 适配器创建成功");
-
-        using var session = _adapter.StartSession(0x400000);
-        Log.Information("会话启动成功");
-
-        // 3. 配置 TUN 接口 IP 和路由
-        Log.Information("配置 TUN 接口 IP...");
-        ConfigureTunInterface();
-        Log.Information("TUN 接口配置完成");
-
-        // 配置路由模式
-        Log.Information("路由模式：{Mode}", "global"); // TODO: 从配置读取
-        if (true) // TODO: AutoAddDefaultRoute
+        try
         {
-            Log.Information("添加默认路由...");
-            AddDefaultRoute();
-        }
+            await EnsureWintunDllAsync(ct);
 
-        // 4. 初始化 GeoIP 服务
-        if (_geoProxy.Count > 0 || _geoDirect.Count > 0)
+            _adapter = WintunAdapter.CreateAdapter("TunProxy", "Wintun");
+            using var session = _adapter.StartSession(0x400000); // 4MB
+
+            ConfigureTunInterface();
+
+            IPAddress? proxyBindAddr = ProbeLocalIpForHost(_config.Proxy.Host, _config.Proxy.Port);
+            
+            if (_config.Route.AutoAddDefaultRoute)
+            {
+                _routeService!.AddBypassRoute(_config.Proxy.Host);
+                AddDnsServersBypassRoutes();
+                _ipCache!.LoadAndApplyDirectIpCache();
+                _ipCache.LoadBlockedIpCache();
+                _routeService.AddDefaultRoute();
+            }
+
+            _connectionManager = new TcpConnectionManager(_config.Proxy.Host, _config.Proxy.Port, _config.Proxy.GetProxyType(), _config.Proxy.Username, _config.Proxy.Password, bindAddress: proxyBindAddr);
+            _directConnectionManager = new TcpConnectionManager(string.Empty, 0, ProxyType.Direct);
+
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            InitializeBackgroundServices();
+            StartMetricsLogger(_cts.Token);
+
+            Log.Information("TunProxy 运行中，按 Ctrl+C 停止");
+            await Task.Run(() => PacketLoop(session, _cts.Token), _cts.Token);
+        }
+        finally
         {
-            Log.Information("初始化 GeoIP 服务...");
-            await _geoIpService!.InitializeAsync();
-            Log.Information("GEO 代理规则：{Proxy}", string.Join(",", _geoProxy));
-            Log.Information("GEO 直连规则：{Direct}", string.Join(",", _geoDirect));
+            await StopAsync();
         }
+    }
 
-        // 5. 初始化 GFWList
-        if (_enableGfwList && _gfwListService != null)
+    public async Task StopAsync()
+    {
+        Log.Information("开始停止服务...");
+        try
         {
-            Log.Information("初始化 GFWList...");
-            await _gfwListService.InitializeAsync();
+            _cts?.Cancel();
+            await Task.Delay(1000); // 留时间给清理
+
+            _connectionManager?.Dispose();
+            _directConnectionManager?.Dispose();
+
+            _routeService?.RemoveBypassRoute(_config.Proxy.Host);
+            _ipCache?.CleanupBypassRoutes();
+            _routeService?.RemoveDefaultRoute();
+
+            _adapter?.Dispose();
         }
+        catch (Exception ex) { Log.Error(ex, "停止服务出错"); }
+    }
 
-        // 5. 创建连接管理器
-        _connectionManager = new TcpConnectionManager(_proxyHost, _proxyPort, _proxyType, _username, _password);
-        Log.Information("连接管理器初始化完成");
+    private void PacketLoop(WintunSession session, CancellationToken ct)
+    {
+        _proxyReady.TrySetResult();
+        var readWaitEvent = session.ReadWaitEvent;
 
-        Log.Information("TunProxy 运行中，按 Ctrl+C 停止");
-        Log.Information("代理目标：{Host}:{Port}", _proxyHost, _proxyPort);
-
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-
-        // 启动流量统计定时器
         _ = Task.Run(async () =>
         {
             var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
             while (await timer.WaitForNextTickAsync(ct))
             {
-                Log.Information("流量统计：发送 {Sent:N0} 字节，接收 {Received:N0} 字节，数据包 {Packets} 个",
-                    Interlocked.Read(ref _totalBytesSent),
-                    Interlocked.Read(ref _totalBytesReceived),
-                    Interlocked.Read(ref _packetCount));
+                _connectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(2));
+                _directConnectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(2));
             }
         }, ct);
 
-        try
-        {
-            await PacketLoop(session, _cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            Log.Information("正在停止...");
-        }
-        finally
-        {
-            _connectionManager?.Dispose();
-            _adapter?.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// 自动下载 wintun.dll
-    /// </summary>
-    private static async Task EnsureWintunDllAsync(CancellationToken ct)
-    {
-        var wintunPath = Path.Combine(AppContext.BaseDirectory, "wintun.dll");
-        if (File.Exists(wintunPath))
-        {
-            Log.Debug("wintun.dll 已存在：{Path}", wintunPath);
-            return;
-        }
-
-        Log.Information("下载 wintun.dll...");
-        
-        using var client = new HttpClient();
-        client.Timeout = TimeSpan.FromMinutes(5);
-        
-        var downloadUrl = "https://www.wintun.net/builds/wintun-0.14.1.zip";
-        var tempZip = Path.Combine(Path.GetTempPath(), "wintun.zip");
-        
-        try
-        {
-            var data = await client.GetByteArrayAsync(downloadUrl, ct);
-            await File.WriteAllBytesAsync(tempZip, data, ct);
-            
-            ZipFile.ExtractToDirectory(tempZip, Path.GetTempPath(), true);
-            
-            var dllFiles = Directory.GetFiles(Path.GetTempPath(), "wintun.dll", SearchOption.AllDirectories);
-            if (dllFiles.Length == 0)
-                throw new Exception("未找到 wintun.dll");
-            
-            File.Copy(dllFiles[0], wintunPath, true);
-            Log.Information("wintun.dll 下载完成：{Path}", wintunPath);
-            
-            File.Delete(tempZip);
-            foreach (var dir in Directory.GetDirectories(Path.GetTempPath(), "wintun*"))
-            {
-                try { Directory.Delete(dir, true); } catch { }
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "wintun.dll 下载失败");
-            Log.Information("请手动下载：https://www.wintun.net/builds/wintun-0.14.1.zip");
-            throw;
-        }
-    }
-
-    private void ConfigureTunInterface()
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "netsh",
-                Arguments = "interface ip set address \"TunProxy\" static 10.0.0.1 255.255.255.0",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var proc = Process.Start(psi);
-            proc?.WaitForExit(5000);
-            
-            Log.Information("TUN 接口配置成功");
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "自动配置 TUN 接口失败");
-            Log.Information("请手动运行：netsh interface ip set address \"TunProxy\" static 10.0.0.1 255.255.255.0");
-        }
-    }
-
-    private void AddDefaultRoute()
-    {
-        try
-        {
-            _routeService?.AddDefaultRoute();
-            Log.Information("默认路由添加成功");
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "添加默认路由失败");
-        }
-    }
-
-    /// <summary>
-    /// 执行路由诊断
-    /// </summary>
-    public void RunRouteDiagnosis()
-    {
-        Log.Information("开始路由诊断...");
-        var result = _routeService?.Diagnose();
-        result?.Print();
-    }
-
-    private async Task PacketLoop(WintunSession session, CancellationToken ct)
-    {
-        var readWaitEvent = session.ReadWaitEvent;
-        var cleanupTimer = new PeriodicTimer(TimeSpan.FromMinutes(5));
-
         while (!ct.IsCancellationRequested)
         {
-            // 清理空闲连接
-            if (await cleanupTimer.WaitForNextTickAsync(ct))
-            {
-                _connectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(10));
-                Log.Information("活跃连接数：{Count}", _connectionManager?.ActiveConnections ?? 0);
-            }
-
             var packet = session.ReceivePacket(out var packetSize);
-
             if (packet != IntPtr.Zero)
             {
                 try
                 {
                     var data = new byte[packetSize];
                     System.Runtime.InteropServices.Marshal.Copy(packet, data, 0, (int)packetSize);
+                    _metrics.IncrementRawPacketsReceived();
                     _ = ProcessPacketAsync(session, data, ct);
                 }
-                finally
-                {
-                    session.ReleaseReceivePacket(packet);
-                }
+                finally { session.ReleaseReceivePacket(packet); }
             }
             else if (WintunNative.ERROR_NO_MORE_ITEMS == System.Runtime.InteropServices.Marshal.GetLastWin32Error())
             {
@@ -280,167 +158,286 @@ public class TunProxyService
         try
         {
             var packet = IPPacket.Parse(data);
-            if (packet == null)
-                return;
+            if (packet == null) { _metrics.IncrementParseFailures(); return; }
 
-            // 处理 DNS 请求（UDP 53）
+            _metrics.IncrementPackets();
+
+            // DNS 处理
             if (packet.IsUDP && packet.DestinationPort == 53)
             {
-                Log.Debug("DNS 请求：{Source} -> {Dest}", packet.Header.SourceAddress, packet.Header.DestinationAddress);
-                // TODO: 实现 DNS over Proxy
+                _metrics.IncrementDnsQueries();
+                await _dnsProxy!.ProcessDnsQueryAsync(session, packet, ct);
                 return;
             }
 
-            // 只处理 TCP 流量
+            // TCP 包及端口过滤
             if (!packet.IsTCP || packet.SourcePort == null || packet.DestinationPort == null)
+            {
+                _metrics.IncrementNonTcpUdpPackets();
                 return;
+            }
 
+            var tcpFlags = packet.TCPHeader!.Value;
             var destPort = packet.DestinationPort.Value;
-            
-            // 只代理 HTTP (80) 和 HTTPS (443)
-            if (destPort != 80 && destPort != 443)
-                return;
-
             var destIP = packet.Header.DestinationAddress.ToString();
-            Interlocked.Increment(ref _packetCount);
 
-            // 路由判断顺序：GFWList > GEO > 默认
+            if (packet.Payload.Length == 0 && !tcpFlags.SYN && !tcpFlags.FIN && !tcpFlags.RST) return;
+            if (ProtocolInspector.IsPrivateIp(packet.Header.DestinationAddress) || (destPort != 80 && destPort != 443))
+            {
+                if (destPort != 80 && destPort != 443) _metrics.IncrementPortFilteredPackets();
+                if (tcpFlags.SYN) TunWriter.WriteRst(session, packet);
+                return;
+            }
+
+            // 路由决策
             bool shouldProxy = true;
+            if (_config.Route.EnableGeo && _geoIpService != null)
+                shouldProxy = _geoIpService.ShouldProxy(packet.Header.DestinationAddress, _config.Route.GeoProxy, _config.Route.GeoDirect);
 
-            // 1. GFWList 判断（优先级最高）
-            if (_enableGfwList && _gfwListService != null)
+            if (!shouldProxy) _metrics.IncrementDirectRoutedPackets();
+
+            var connManager = shouldProxy ? _connectionManager! : _directConnectionManager!;
+            var connKey = ProtocolInspector.MakeConnectionKey(packet);
+
+            // TCP 握手 (SYN)
+            if (tcpFlags.SYN && !tcpFlags.ACK)
             {
-                // TODO: 需要 DNS 解析获取域名
-                // 暂时简化处理，如果有 GFWList 就默认走代理
-                Log.Debug("GFWList 启用：{IP}:{Port}", destIP, destPort);
+                if (!shouldProxy && _routeService != null)
+                {
+                    _ipCache!.TryAddDirectBypass(ProtocolInspector.GetNet24(destIP));
+                    TunWriter.WriteRst(session, packet);
+                    return;
+                }
+                if (_ipCache!.IsProxyBlocked(destIP) || _ipCache.IsConnectFailed(destIP))
+                {
+                    TunWriter.WriteRst(session, packet);
+                    return;
+                }
+
+                TunWriter.WriteSynAck(session, packet, out var serverIsn);
+                _relayStates[connKey] = new TcpRelayState(packet, serverIsn, tcpFlags.SequenceNumber);
+                return;
             }
 
-            // 2. GEO 判断
-            if (_geoIpService != null && (_geoProxy.Count > 0 || _geoDirect.Count > 0))
+            if (!_relayStates.TryGetValue(connKey, out var state))
             {
-                var geoShouldProxy = _geoIpService.ShouldProxy(
-                    packet.Header.DestinationAddress, 
-                    _geoProxy, 
-                    _geoDirect);
-                
-                Log.Debug("GEO 判断：{IP} -> {Country}, 代理：{GeoShouldProxy}", 
-                    destIP, _geoIpService.GetCountryCode(packet.Header.DestinationAddress), geoShouldProxy);
-                
-                shouldProxy = geoShouldProxy;
+                if (packet.Payload.Length > 0) TunWriter.WriteRst(session, packet);
+                else connManager.RemoveConnectionByKey(connKey);
+                return;
             }
 
-            if (!shouldProxy)
+            // TCP 断开连接 (FIN/RST)
+            if (tcpFlags.FIN || tcpFlags.RST)
             {
-                Log.Debug("直连：{IP}:{Port}", destIP, destPort);
-                return; // 直连，不走代理
+                if (_relayStates.TryRemove(connKey, out _))
+                {
+                    (state.ConnectionManager ?? connManager).RemoveConnectionByKey(connKey);
+                    if (state.IsProxyConnected) _metrics.DecrementActiveConnections();
+                }
+                return;
             }
 
-            Log.Debug("{SourceIP}:{SourcePort} -> {DestIP}:{DestPort} ({Bytes} bytes)",
-                packet.Header.SourceAddress, packet.SourcePort, destIP, destPort, packet.Payload.Length);
-
-            // 获取或创建连接
-            var connection = _connectionManager!.GetOrCreateConnection(packet);
-            
-            // 如果连接未建立，先连接
-            if (!connection.IsConnected)
-            {
-                await connection.ConnectAsync(destIP, destPort, ct);
-                Log.Information("连接建立：{IP}:{Port}", destIP, destPort);
-            }
-
-            // 发送数据到代理
+            // TCP 数据转发
             if (packet.Payload.Length > 0)
             {
-                await connection.SendAsync(packet.Payload, ct);
-                
-                // 接收响应
-                var responseBuffer = new byte[4096];
-                var bytesRead = await connection.ReceiveAsync(responseBuffer, ct);
-                
-                if (bytesRead > 0)
+                TcpConnection? conn;
+                if (!state.IsProxyConnected)
                 {
-                    Log.Debug("收到响应 {Bytes} bytes", bytesRead);
-                    
-                    // 回写到 TUN 设备
-                    await WriteResponseToTunAsync(session, packet, responseBuffer.AsSpan(0, bytesRead), ct);
+                    if (Interlocked.CompareExchange(ref state.ConnectStarted, 1, 0) != 0) return;
+                    _metrics.IncrementTotalConnections();
+                    _metrics.IncrementActiveConnections();
+
+                    string connectHost = destPort == 443 
+                        ? (ProtocolInspector.ExtractSni(packet.Payload) ?? _ipCache!.GetCachedHostname(destIP) ?? destIP)
+                        : (ProtocolInspector.ExtractHttpHost(packet.Payload) ?? _ipCache!.GetCachedHostname(destIP) ?? destIP);
+
+                    if (_config.Route.EnableGfwList && _gfwListService != null && connectHost != destIP)
+                    {
+                        bool gfwProxy = _gfwListService.IsInGfwList(connectHost);
+                        if (gfwProxy != shouldProxy) connManager = gfwProxy ? _connectionManager! : _directConnectionManager!;
+                    }
+
+                    conn = connManager.GetOrCreateConnection(packet);
+                    if (conn == null) { HandleConnectionFail(connKey, session, packet); return; }
+
+                    try
+                    {
+                        await conn.ConnectAsync(connectHost, destPort, ct);
+                        state.IsProxyConnected = true;
+                        state.ConnectionManager = connManager;
+                        _ = Task.Run(() => RelayProxyToTunAsync(session, conn, connKey, connManager, ct), ct); // Start receiving
+                    }
+                    catch (Exception ex)
+                    {
+                        if (ex.Message.Contains("PROXY_DENIED")) _ipCache!.TryAddProxyBlocked(destIP);
+                        else if (ex.Message.Contains("CONNECT_FAILED")) _ipCache!.RecordConnectFailed(destIP);
+                        HandleConnectionFail(connKey, session, packet);
+                        return;
+                    }
                 }
+                else
+                {
+                    conn = (state.ConnectionManager ?? connManager).GetExistingConnection(packet);
+                    if (conn == null) return;
+                }
+
+                // 检查丢包/重传
+                uint incomingEnd = tcpFlags.SequenceNumber + (uint)packet.Payload.Length;
+                if (ProtocolInspector.IsSeqBeforeOrEqual(incomingEnd, state.ExpectedClientSeq))
+                {
+                    TunWriter.WriteAck(session, packet, state.NextServerSeq, state.ExpectedClientSeq);
+                    return;
+                }
+
+                state.ExpectedClientSeq = incomingEnd;
+                try
+                {
+                    await conn.SendAsync(packet.Payload, ct);
+                    _metrics.AddBytesSent(packet.Payload.Length);
+                    TunWriter.WriteAck(session, packet, state.NextServerSeq, state.ExpectedClientSeq);
+                }
+                catch { HandleConnectionFail(connKey, session, packet); }
             }
         }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "处理数据包失败");
-        }
+        catch (Exception ex) { Log.Error(ex, "包处理异常"); }
     }
 
-    /// <summary>
-    /// 将响应数据包写回 TUN 设备
-    /// </summary>
-    private static unsafe Task WriteResponseToTunAsync(WintunSession session, IPPacket requestPacket, ReadOnlySpan<byte> responseData, CancellationToken ct)
+    private void HandleConnectionFail(string connKey, WintunSession session, IPPacket packet)
     {
-        var responsePacket = BuildResponsePacket(requestPacket, responseData);
-        
-        if (responsePacket.Length == 0)
-            return Task.CompletedTask;
+        _metrics.DecrementActiveConnections();
+        _metrics.IncrementFailedConnections();
+        if (_relayStates.TryRemove(connKey, out var state))
+            (state.ConnectionManager ?? _connectionManager)?.RemoveConnectionByKey(connKey);
+        TunWriter.WriteRst(session, packet);
+    }
 
-        var sendPacket = session.AllocateSendPacket((uint)responsePacket.Length);
-        if (sendPacket == IntPtr.Zero)
-        {
-            Log.Warning("分配发送缓冲区失败");
-            return Task.CompletedTask;
-        }
-
+    private async Task RelayProxyToTunAsync(WintunSession session, TcpConnection connection, string connKey, TcpConnectionManager connManager, CancellationToken ct)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(16384);
+        bool normalClose = false;
         try
         {
-            System.Runtime.InteropServices.Marshal.Copy(responsePacket, 0, sendPacket, responsePacket.Length);
-            session.SendPacket(sendPacket);
+            while (!ct.IsCancellationRequested && connection.IsConnected)
+            {
+                int bytesRead;
+                try
+                {
+                    using var readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    readCts.CancelAfter(TimeSpan.FromMinutes(2));
+                    bytesRead = await connection.ReceiveAsync(buffer, readCts.Token);
+                }
+                catch { break; }
+
+                if (bytesRead == 0) { normalClose = true; break; }
+                if (!_relayStates.TryGetValue(connKey, out var state)) break;
+
+                _metrics.AddBytesReceived(bytesRead);
+                TunWriter.WriteDataResponse(session, state.SynPacket, buffer.AsSpan(0, bytesRead), state.NextServerSeq, state.ExpectedClientSeq);
+                state.NextServerSeq += (uint)bytesRead;
+            }
         }
         finally
         {
-            // Wintun 会自动管理
+            ArrayPool<byte>.Shared.Return(buffer);
+            if (normalClose && _relayStates.TryGetValue(connKey, out var s))
+                TunWriter.WriteFinAck(session, s.SynPacket, s.NextServerSeq, s.ExpectedClientSeq);
+            
+            if (_relayStates.TryRemove(connKey, out _))
+            {
+                connManager.RemoveConnectionByKey(connKey);
+                _metrics.DecrementActiveConnections();
+            }
         }
-
-        return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// 构建响应 IP 包
-    /// </summary>
-    private static byte[] BuildResponsePacket(IPPacket requestPacket, ReadOnlySpan<byte> responseData)
+    // ---------------- 以下为基础设置 ---------------- //
+
+    private void InitializeBackgroundServices()
     {
-        var sourceIP = requestPacket.Header.DestinationAddress.GetAddressBytes();
-        var destIP = requestPacket.Header.SourceAddress.GetAddressBytes();
+        string? httpUrl = _config.Proxy.GetProxyType() == ProxyType.Http ? $"http://{_config.Proxy.Host}:{_config.Proxy.Port}" : null;
+        if (_config.Route.EnableGeo && _geoIpService != null)
+            _ = Task.Run(async () => { if (httpUrl == null) await _proxyReady.Task; await _geoIpService.InitializeAsync(_cts!.Token, httpUrl); });
+        if (_config.Route.EnableGfwList && _gfwListService != null)
+            _ = Task.Run(async () => { if (httpUrl == null) await _proxyReady.Task; await _gfwListService.InitializeAsync(_cts!.Token, httpUrl); });
+    }
+
+    private void StartMetricsLogger(CancellationToken ct)
+    {
+        _ = Task.Run(async () =>
+        {
+            var timer = new PeriodicTimer(TimeSpan.FromSeconds(60));
+            while (await timer.WaitForNextTickAsync(ct))
+                Log.Information("流量：发 {Sent} B，收 {Received} B，活跃 {Active}",
+                    _metrics.TotalBytesSent, _metrics.TotalBytesReceived, (_connectionManager?.ActiveConnections ?? 0) + (_directConnectionManager?.ActiveConnections ?? 0));
+        }, ct);
+    }
+
+    private static IPAddress? ProbeLocalIpForHost(string host, int port)
+    {
+        try
+        {
+            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            socket.Connect(host, port);
+            return ((IPEndPoint)socket.LocalEndPoint!).Address;
+        }
+        catch { return null; }
+    }
+
+    private void AddDnsServersBypassRoutes()
+    {
+        if (_routeService == null) return;
+        var dnsServers = new HashSet<string> { "8.8.8.8", "8.8.4.4", "1.1.1.1", "114.114.114.114", "223.5.5.5" };
+        foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            if (ni.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+                foreach (var dns in ni.GetIPProperties().DnsAddresses)
+                    if (dns.AddressFamily == AddressFamily.InterNetwork && !dns.ToString().StartsWith("127."))
+                        dnsServers.Add(dns.ToString());
         
-        var sourcePort = requestPacket.DestinationPort!.Value;
-        var destPort = requestPacket.SourcePort!.Value;
+        foreach (var dns in dnsServers) _routeService.AddBypassRoute(dns);
+    }
 
-        // TCP 头部（20 字节）
-        var tcpHeader = new byte[20];
-        tcpHeader[0] = (byte)(sourcePort & 0xFF);
-        tcpHeader[1] = (byte)(sourcePort >> 8);
-        tcpHeader[2] = (byte)(destPort & 0xFF);
-        tcpHeader[3] = (byte)(destPort >> 8);
-        tcpHeader[12] = 0x50;
-        tcpHeader[13] = 0x10;
-        tcpHeader[14] = 0xFF;
-        tcpHeader[15] = 0xFF;
+    private void ConfigureTunInterface()
+    {
+        var runCommand = (string file, string args) =>
+        {
+            var p = Process.Start(new ProcessStartInfo { FileName = file, Arguments = args, CreateNoWindow = true, UseShellExecute = false });
+            p?.WaitForExit(3000);
+        };
+        runCommand("netsh", $"interface ip set address \"TunProxy\" static {_config.Tun.IpAddress} {_config.Tun.SubnetMask}");
+    }
 
-        // IP 头部（20 字节）
-        var ipHeader = new byte[20];
-        ipHeader[0] = 0x45;
-        var totalLength = (ushort)(20 + 20 + responseData.Length);
-        ipHeader[2] = (byte)(totalLength & 0xFF);
-        ipHeader[3] = (byte)(totalLength >> 8);
-        ipHeader[8] = 0x40;
-        ipHeader[9] = 0x06;
+    private static async Task EnsureWintunDllAsync(CancellationToken ct)
+    {
+        var wintunPath = Path.Combine(AppContext.BaseDirectory, "wintun.dll");
+        if (File.Exists(wintunPath)) return;
         
-        Array.Copy(sourceIP, 0, ipHeader, 12, 4);
-        Array.Copy(destIP, 0, ipHeader, 16, 4);
+        var url = Environment.Is64BitProcess ? 
+            "https://git.zx2c4.com/wintun/plain/bin/amd64/wintun.dll" : 
+            "https://git.zx2c4.com/wintun/plain/bin/x86/wintun.dll";
+        
+        try
+        {
+            using var client = new HttpClient();
+            var data = await client.GetByteArrayAsync(url, ct);
+            await File.WriteAllBytesAsync(wintunPath, data, ct);
+        }
+        catch (Exception ex) { Log.Warning("自动下载 Wintun.dll 失败: {Message}", ex.Message); }
+    }
+}
 
-        var packet = new byte[20 + 20 + responseData.Length];
-        Array.Copy(ipHeader, 0, packet, 0, 20);
-        Array.Copy(tcpHeader, 0, packet, 20, 20);
-        responseData.CopyTo(packet.AsSpan(40));
+internal class TcpRelayState
+{
+    public uint NextServerSeq;
+    public uint ExpectedClientSeq;
+    public readonly IPPacket SynPacket;
+    public bool IsProxyConnected;
+    public int ConnectStarted;
+    public TcpConnectionManager? ConnectionManager;
 
-        return packet;
+    public TcpRelayState(IPPacket synPacket, uint serverIsn, uint clientIsn)
+    {
+        SynPacket = synPacket;
+        NextServerSeq = serverIsn + 1;
+        ExpectedClientSeq = clientIsn + 1;
     }
 }

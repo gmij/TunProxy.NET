@@ -17,7 +17,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TunProxy.Core\TunProxy.Core.csproj" />
-    <ProjectReference Include="..\..\src\TunProxy.Proxy\TunProxy.Proxy.csproj" />
   </ItemGroup>
 
   <ItemGroup>

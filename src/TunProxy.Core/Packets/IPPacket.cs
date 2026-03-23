@@ -74,7 +74,7 @@ public class IPPacket
         {
             Version = version,
             IHL = ihl,
-            TotalLength = BitConverter.ToUInt16(data.Slice(2, 2)),
+            TotalLength = NetworkHelper.ReadUInt16BigEndian(data.Slice(2, 2)),
             Protocol = data[9],
             SourceAddress = new IPAddress(data.Slice(12, 4)),
             DestinationAddress = new IPAddress(data.Slice(16, 4))
@@ -89,8 +89,11 @@ public class IPPacket
         {
             tcpHeader = new TCPHeaderInfo
             {
-                SourcePort = BitConverter.ToUInt16(data.Slice(headerLength, 2)),
-                DestinationPort = BitConverter.ToUInt16(data.Slice(headerLength + 2, 2))
+                SourcePort = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength, 2)),
+                DestinationPort = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength + 2, 2)),
+                SequenceNumber = NetworkHelper.ReadUInt32BigEndian(data.Slice(headerLength + 4, 4)),
+                AckNumber = NetworkHelper.ReadUInt32BigEndian(data.Slice(headerLength + 8, 4)),
+                Flags = data[headerLength + 13]
             };
             // TCP 数据偏移（以 4 字节为单位）
             byte dataOffset = data[headerLength + 12];
@@ -101,9 +104,9 @@ public class IPPacket
         {
             udpHeader = new UDPHeaderInfo
             {
-                SourcePort = BitConverter.ToUInt16(data.Slice(headerLength, 2)),
-                DestinationPort = BitConverter.ToUInt16(data.Slice(headerLength + 2, 2)),
-                Length = BitConverter.ToUInt16(data.Slice(headerLength + 4, 2))
+                SourcePort = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength, 2)),
+                DestinationPort = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength + 2, 2)),
+                Length = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength + 4, 2))
             };
             transportHeaderLength = 8; // UDP 头部固定 8 字节
         }
@@ -144,6 +147,17 @@ public struct TCPHeaderInfo
 {
     public ushort SourcePort { get; set; }
     public ushort DestinationPort { get; set; }
+    public uint SequenceNumber { get; set; }
+    public uint AckNumber { get; set; }
+    public byte Flags { get; set; }
+
+    // TCP 标志位
+    public bool FIN => (Flags & 0x01) != 0;
+    public bool SYN => (Flags & 0x02) != 0;
+    public bool RST => (Flags & 0x04) != 0;
+    public bool PSH => (Flags & 0x08) != 0;
+    public bool ACK => (Flags & 0x10) != 0;
+    public bool URG => (Flags & 0x20) != 0;
 }
 
 /// <summary>

@@ -6,8 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Serilog;
 using TunProxy.Core.Connections;
-using TunProxy.Core.Packets;
-using TunProxy.Core.Wintun;
+using TunProxy.Core.Configuration;
 
 namespace TunProxy.CLI;
 
@@ -24,15 +23,12 @@ public class Program
 
         try
         {
-            // 检查操作系统支持
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 Log.Error("当前版本仅支持 Windows 系统");
-                Log.Information("Linux 支持正在开发中");
                 return;
             }
 
-            // 检查管理员权限
             if (!IsAdministrator())
             {
                 Log.Information("未检测到管理员权限，尝试自动提权...");
@@ -45,11 +41,11 @@ public class Program
             Log.Information("版本：{Version}", typeof(Program).Assembly.GetName().Version);
             Log.Information("========================================");
 
-            // 加载配置文件
+            // 加载配置
             var config = LoadConfig(args);
 
-            // 根据配置更新日志级别（支持 Debug/Information/Warning/Error）
-            var logLevel = config.LogMinimumLevel?.ToLower() switch
+            // 更新日志配置
+            var logLevel = config.Logging.MinimumLevel?.ToLower() switch
             {
                 "debug"   => Serilog.Events.LogEventLevel.Debug,
                 "warning" => Serilog.Events.LogEventLevel.Warning,
@@ -60,39 +56,11 @@ public class Program
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Is(logLevel)
                 .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-                .WriteTo.File(config.LogFilePath ?? "logs/tunproxy-.log", rollingInterval: RollingInterval.Day)
+                .WriteTo.File(config.Logging.FilePath ?? "logs/tunproxy-.log", rollingInterval: RollingInterval.Day)
                 .CreateLogger();
 
-            Log.Information("代理配置：{Host}:{Port} ({Type})", 
-                config.ProxyHost, config.ProxyPort, config.ProxyType);
-
-            // 加载路由配置
-            var routeConfig = new RouteConfig();
-            var configPath = "tunproxy.json";
-            if (File.Exists(configPath))
-            {
-                try
-                {
-                    var json = File.ReadAllText(configPath);
-                    var appConfig = JsonSerializer.Deserialize(json, AppJsonContext.Default.AppConfig);
-                    routeConfig = appConfig?.Route ?? routeConfig;
-                }
-                catch { }
-            }
-
-            var service = new TunProxyService(
-                config.ProxyHost,
-                config.ProxyPort,
-                config.ProxyType,
-                config.Username,
-                config.Password,
-                routeConfig.GeoProxy,
-                routeConfig.GeoDirect,
-                routeConfig.GeoIpDbPath,
-                routeConfig.EnableGeo,
-                routeConfig.EnableGfwList,
-                routeConfig.GfwListUrl,
-                routeConfig.GfwListPath);
+            // 因为我们重构了 TunProxyService 构造函数接受 AppConfig
+            var service = new TunProxyService(config);
 
             using var cts = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) =>
@@ -118,38 +86,18 @@ public class Program
     /// <summary>
     /// 加载配置（配置文件 + 命令行参数）
     /// </summary>
-    private static Config LoadConfig(string[] args)
+    private static AppConfig LoadConfig(string[] args)
     {
-        var config = new Config();
-
-        // 1. 读取配置文件
+        var config = new AppConfig();
         var configPath = "tunproxy.json";
+
         if (File.Exists(configPath))
         {
             try
             {
                 var json = File.ReadAllText(configPath);
-                var appConfig = JsonSerializer.Deserialize(json, AppJsonContext.Default.AppConfig);
-                if (appConfig?.Proxy != null)
-                {
-                    config.ProxyHost = appConfig.Proxy.Host ?? config.ProxyHost;
-                    config.ProxyPort = appConfig.Proxy.Port;
-                    config.ProxyType = appConfig.Proxy.Type?.ToLower() switch
-                    {
-                        "socks5" => TunProxy.Core.Connections.ProxyType.Socks5,
-                        "http" => TunProxy.Core.Connections.ProxyType.Http,
-                        _ => TunProxy.Core.Connections.ProxyType.Socks5
-                    };
-                    config.Username = appConfig.Proxy.Username;
-                    config.Password = appConfig.Proxy.Password;
-                }
-
-                if (appConfig?.Logging != null)
-                {
-                    config.LogMinimumLevel = appConfig.Logging.MinimumLevel ?? config.LogMinimumLevel;
-                    config.LogFilePath = appConfig.Logging.FilePath ?? config.LogFilePath;
-                }
-
+                var loaded = JsonSerializer.Deserialize(json, AppJsonContext.Default.AppConfig);
+                if (loaded != null) config = loaded;
                 Log.Information("配置文件加载成功：{Path}", configPath);
             }
             catch (Exception ex)
@@ -159,12 +107,12 @@ public class Program
         }
         else
         {
-            Log.Information("未找到配置文件，使用默认配置");
-            Log.Information("创建示例配置文件：{Path}", configPath);
-            CreateSampleConfig(configPath);
+            Log.Information("未找到配置文件，创建示例配置：{Path}", configPath);
+            var json = JsonSerializer.Serialize(config, AppJsonContext.Default.AppConfig);
+            File.WriteAllText(configPath, json);
         }
 
-        // 2. 命令行参数覆盖配置文件
+        // 命令行参数覆盖配置文件
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -173,38 +121,21 @@ public class Program
                     if (i + 1 < args.Length)
                     {
                         var parts = args[++i].Split(':');
-                        config.ProxyHost = parts[0];
-                        if (parts.Length > 1)
-                            config.ProxyPort = int.Parse(parts[1]);
+                        config.Proxy.Host = parts[0];
+                        if (parts.Length > 1) config.Proxy.Port = int.Parse(parts[1]);
                     }
                     break;
                 case "--type" or "-t":
-                    if (i + 1 < args.Length)
-                    {
-                        config.ProxyType = args[++i].ToLower() switch
-                        {
-                            "socks5" => TunProxy.Core.Connections.ProxyType.Socks5,
-                            "http" => TunProxy.Core.Connections.ProxyType.Http,
-                            _ => TunProxy.Core.Connections.ProxyType.Socks5
-                        };
-                    }
+                    if (i + 1 < args.Length) config.Proxy.Type = args[++i];
                     break;
                 case "--username" or "-u":
-                    if (i + 1 < args.Length)
-                        config.Username = args[++i];
+                    if (i + 1 < args.Length) config.Proxy.Username = args[++i];
                     break;
                 case "--password" or "-w":
-                    if (i + 1 < args.Length)
-                        config.Password = args[++i];
+                    if (i + 1 < args.Length) config.Proxy.Password = args[++i];
                     break;
                 case "--help" or "-h":
                     PrintHelp();
-                    Environment.Exit(0);
-                    break;
-                case "--diagnose" or "-d":
-                    // 路由诊断模式 - 单独运行诊断工具
-                    Console.WriteLine("路由诊断模式 - 请使用独立命令运行");
-                    Console.WriteLine("用法：TunProxy.CLI.exe diagnose");
                     Environment.Exit(0);
                     break;
             }
@@ -213,81 +144,17 @@ public class Program
         return config;
     }
 
-    /// <summary>
-    /// 创建示例配置文件
-    /// </summary>
-    private static void CreateSampleConfig(string path)
-    {
-        var config = new AppConfig
-        {
-            Proxy = new ProxyConfig
-            {
-                Host = "127.0.0.1",
-                Port = 7890,
-                Type = "Socks5",
-                Username = null,
-                Password = null
-            },
-            Tun = new TunConfig
-            {
-                IpAddress = "10.0.0.1",
-                SubnetMask = "255.255.255.0",
-                AddDefaultRoute = true
-            },
-            Route = new RouteConfig
-            {
-                Mode = "whitelist",
-                ProxyDomains = new List<string> { "google.com", "github.com", "stackoverflow.com" },
-                DirectDomains = new List<string> { "cn", "com.cn", "163.com", "qq.com" },
-                EnableGeo = false,  // 需要 GeoLite2-Country.mmdb 才能启用
-                GeoProxy = new List<string> { "US", "JP", "SG", "HK" },
-                GeoDirect = new List<string> { "CN" },
-                GeoIpDbPath = "GeoLite2-Country.mmdb",
-                EnableGfwList = false,
-                GfwListUrl = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt",
-                GfwListPath = "gfwlist.txt",
-                TunRouteMode = "global",
-                TunRouteApps = new List<string> { "chrome.exe", "firefox.exe", "msedge.exe" },
-                AutoAddDefaultRoute = true
-            },
-            Logging = new LoggingConfig
-            {
-                MinimumLevel = "Information",
-                FilePath = "logs/tunproxy-.log"
-            }
-        };
-
-        var json = JsonSerializer.Serialize(config, AppJsonContext.Default.AppConfig);
-        File.WriteAllText(path, json);
-    }
-
-    /// <summary>
-    /// 检查是否为管理员
-    /// </summary>
     private static bool IsAdministrator()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return false;
-
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return false;
         using var identity = WindowsIdentity.GetCurrent();
-        var principal = new WindowsPrincipal(identity);
-        return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    /// <summary>
-    /// 以管理员身份重新启动
-    /// </summary>
     private static void RunAsAdministrator()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            Log.Error("自动提权仅在 Windows 上支持");
-            return;
-        }
-
         var exePath = Environment.ProcessPath!;
         var args = Environment.GetCommandLineArgs().Skip(1).ToArray();
-
         var psi = new ProcessStartInfo
         {
             FileName = exePath,
@@ -295,19 +162,8 @@ public class Program
             UseShellExecute = true,
             Verb = "runas"
         };
-
-        try
-        {
-            Process.Start(psi);
-            Log.Information("已启动管理员进程");
-            Environment.Exit(0);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "提权失败，请手动以管理员身份运行");
-            Console.WriteLine("提权失败，请手动以管理员身份运行本程序");
-            Environment.Exit(1);
-        }
+        try { Process.Start(psi); Environment.Exit(0); }
+        catch { Console.WriteLine("提权失败，请手动以管理员身份运行本程序"); Environment.Exit(1); }
     }
 
     private static void PrintHelp()
@@ -326,87 +182,6 @@ TunProxy - .NET 8 TUN 代理
   -u, --username <username>   代理用户名 (可选)
   -w, --password <password>   代理密码 (可选)
   -h, --help                  显示帮助
-
-示例:
-  # 使用配置文件启动
-  TunProxy.CLI.exe
-
-  # 命令行覆盖配置
-  TunProxy.CLI.exe -p 192.168.1.100:8080 -t http
-  TunProxy.CLI.exe -p 127.0.0.1:7890 -t socks5 -u user -w pass
-
-注意：需要管理员权限运行
 ");
     }
-}
-
-/// <summary>
-/// 运行时配置类
-/// </summary>
-public class Config
-{
-    public string ProxyHost { get; set; } = "127.0.0.1";
-    public int ProxyPort { get; set; } = 7890;
-    public TunProxy.Core.Connections.ProxyType ProxyType { get; set; } = TunProxy.Core.Connections.ProxyType.Socks5;
-    public string? Username { get; set; }
-    public string? Password { get; set; }
-    public string? LogMinimumLevel { get; set; } = "Information";
-    public string? LogFilePath { get; set; } = "logs/tunproxy-.log";
-}
-
-/// <summary>
-/// 配置文件结构（用于序列化）
-/// </summary>
-public class AppConfig
-{
-    public ProxyConfig Proxy { get; set; } = new();
-    public TunConfig Tun { get; set; } = new();
-    public RouteConfig Route { get; set; } = new();
-    public LoggingConfig Logging { get; set; } = new();
-}
-
-public class ProxyConfig
-{
-    public string Host { get; set; } = "127.0.0.1";
-    public int Port { get; set; } = 7890;
-    public string Type { get; set; } = "Socks5";
-    public string? Username { get; set; }
-    public string? Password { get; set; }
-}
-
-public class RouteRule
-{
-    public string Mode { get; set; } = "whitelist"; // whitelist or blacklist
-    public List<string> Domains { get; set; } = new();
-    public List<string> IpRanges { get; set; } = new();
-}
-
-public class TunConfig
-{
-    public string IpAddress { get; set; } = "10.0.0.1";
-    public string SubnetMask { get; set; } = "255.255.255.0";
-    public bool AddDefaultRoute { get; set; } = true;
-}
-
-public class RouteConfig
-{
-    public string Mode { get; set; } = "whitelist"; // whitelist, blacklist, or all
-    public List<string> ProxyDomains { get; set; } = new(); // 走代理的域名
-    public List<string> DirectDomains { get; set; } = new(); // 直连的域名
-    public bool EnableGeo { get; set; } = false; // 是否启用 GEO 路由（需要 GeoLite2 数据库）
-    public List<string> GeoProxy { get; set; } = new(); // 走代理的国家代码
-    public List<string> GeoDirect { get; set; } = new(); // 直连的国家代码
-    public string GeoIpDbPath { get; set; } = "GeoLite2-Country.mmdb"; // GeoIP 数据库路径
-    public bool EnableGfwList { get; set; } = false; // 是否启用 GFWList
-    public string GfwListUrl { get; set; } = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt";
-    public string GfwListPath { get; set; } = "gfwlist.txt";
-    public string TunRouteMode { get; set; } = "global"; // global, smart, manual
-    public List<string> TunRouteApps { get; set; } = new(); // 指定应用（进程名）
-    public bool AutoAddDefaultRoute { get; set; } = true; // 是否自动添加默认路由
-}
-
-public class LoggingConfig
-{
-    public string MinimumLevel { get; set; } = "Information";
-    public string FilePath { get; set; } = "logs/tunproxy-.log";
 }

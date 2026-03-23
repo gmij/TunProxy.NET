@@ -18,7 +18,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TunProxy.Core\TunProxy.Core.csproj" />
-    <ProjectReference Include="..\TunProxy.Proxy\TunProxy.Proxy.csproj" />
   </ItemGroup>
 
   <!-- 复制配置文件到输出目录 -->

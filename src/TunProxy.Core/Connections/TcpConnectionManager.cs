@@ -114,7 +114,7 @@ public class TcpConnectionManager : IDisposable
     /// </summary>
     private static string MakeConnectionKey(IPPacket packet)
     {
-        return $"{packet.Header.SourceAddress}:{packet.SourcePort}-{packet.Header.DestinationAddress}:{packet.DestinationPort}";
+        return ProtocolInspector.MakeConnectionKey(packet);
     }
 
     /// <summary>

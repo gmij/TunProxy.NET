@@ -15,9 +15,9 @@ public class Program
 {
     public static async Task Main(string[] args)
     {
-        // 配置 Serilog
+        // 先用 Information 级别初始化日志，读取配置后再更新
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Debug()
+            .MinimumLevel.Information()
             .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
             .WriteTo.File("logs/tunproxy-.log", rollingInterval: RollingInterval.Day)
             .CreateLogger();
@@ -48,6 +48,21 @@ public class Program
             // 加载配置文件
             var config = LoadConfig(args);
 
+            // 根据配置更新日志级别（支持 Debug/Information/Warning/Error）
+            var logLevel = config.LogMinimumLevel?.ToLower() switch
+            {
+                "debug"   => Serilog.Events.LogEventLevel.Debug,
+                "warning" => Serilog.Events.LogEventLevel.Warning,
+                "error"   => Serilog.Events.LogEventLevel.Error,
+                _         => Serilog.Events.LogEventLevel.Information
+            };
+            await Log.CloseAndFlushAsync();
+            Log.Logger = new LoggerConfiguration()
+                .MinimumLevel.Is(logLevel)
+                .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+                .WriteTo.File(config.LogFilePath ?? "logs/tunproxy-.log", rollingInterval: RollingInterval.Day)
+                .CreateLogger();
+
             Log.Information("代理配置：{Host}:{Port} ({Type})", 
                 config.ProxyHost, config.ProxyPort, config.ProxyType);
 
@@ -66,14 +81,15 @@ public class Program
             }
 
             var service = new TunProxyService(
-                config.ProxyHost, 
-                config.ProxyPort, 
-                config.ProxyType, 
-                config.Username, 
+                config.ProxyHost,
+                config.ProxyPort,
+                config.ProxyType,
+                config.Username,
                 config.Password,
                 routeConfig.GeoProxy,
                 routeConfig.GeoDirect,
                 routeConfig.GeoIpDbPath,
+                routeConfig.EnableGeo,
                 routeConfig.EnableGfwList,
                 routeConfig.GfwListUrl,
                 routeConfig.GfwListPath);
@@ -126,6 +142,12 @@ public class Program
                     };
                     config.Username = appConfig.Proxy.Username;
                     config.Password = appConfig.Proxy.Password;
+                }
+
+                if (appConfig?.Logging != null)
+                {
+                    config.LogMinimumLevel = appConfig.Logging.MinimumLevel ?? config.LogMinimumLevel;
+                    config.LogFilePath = appConfig.Logging.FilePath ?? config.LogFilePath;
                 }
 
                 Log.Information("配置文件加载成功：{Path}", configPath);
@@ -217,10 +239,11 @@ public class Program
                 Mode = "whitelist",
                 ProxyDomains = new List<string> { "google.com", "github.com", "stackoverflow.com" },
                 DirectDomains = new List<string> { "cn", "com.cn", "163.com", "qq.com" },
+                EnableGeo = false,  // 需要 GeoLite2-Country.mmdb 才能启用
                 GeoProxy = new List<string> { "US", "JP", "SG", "HK" },
                 GeoDirect = new List<string> { "CN" },
                 GeoIpDbPath = "GeoLite2-Country.mmdb",
-                EnableGfwList = true,
+                EnableGfwList = false,
                 GfwListUrl = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt",
                 GfwListPath = "gfwlist.txt",
                 TunRouteMode = "global",
@@ -327,6 +350,8 @@ public class Config
     public TunProxy.Core.Connections.ProxyType ProxyType { get; set; } = TunProxy.Core.Connections.ProxyType.Socks5;
     public string? Username { get; set; }
     public string? Password { get; set; }
+    public string? LogMinimumLevel { get; set; } = "Information";
+    public string? LogFilePath { get; set; } = "logs/tunproxy-.log";
 }
 
 /// <summary>
@@ -368,6 +393,7 @@ public class RouteConfig
     public string Mode { get; set; } = "whitelist"; // whitelist, blacklist, or all
     public List<string> ProxyDomains { get; set; } = new(); // 走代理的域名
     public List<string> DirectDomains { get; set; } = new(); // 直连的域名
+    public bool EnableGeo { get; set; } = false; // 是否启用 GEO 路由（需要 GeoLite2 数据库）
     public List<string> GeoProxy { get; set; } = new(); // 走代理的国家代码
     public List<string> GeoDirect { get; set; } = new(); // 直连的国家代码
     public string GeoIpDbPath { get; set; } = "GeoLite2-Country.mmdb"; // GeoIP 数据库路径

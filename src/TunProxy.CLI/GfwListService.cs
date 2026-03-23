@@ -1,4 +1,5 @@
 using System.Text;
+using Serilog;
 
 namespace TunProxy.CLI;
 
@@ -19,47 +20,56 @@ public class GfwListService
     }
 
     /// <summary>
-    /// 初始化 GFWList
+    /// 初始化 GFWList（若不存在则自动下载，需要 TUN 代理已运行）
     /// </summary>
-    public async Task InitializeAsync()
+    public async Task InitializeAsync(CancellationToken ct = default, string? proxyUrl = null)
     {
         if (_initialized)
             return;
 
-        // 如果本地文件不存在，下载
         if (!File.Exists(_gfwListPath))
         {
-            await DownloadGfwListAsync();
+            await DownloadGfwListAsync(ct, proxyUrl);
         }
 
-        // 解析 GFWList
+        if (!File.Exists(_gfwListPath))
+        {
+            Log.Warning("[GFW] 列表文件不存在，GFWList 路由不可用：{Path}", _gfwListPath);
+            return;
+        }
+
         await ParseGfwListAsync();
-        
-        Console.WriteLine($"[GFW] GFWList 加载完成，共 {_domains.Count} 条规则");
+        Log.Information("[GFW] 加载完成，共 {Count} 条规则", _domains.Count);
         _initialized = true;
     }
 
     /// <summary>
-    /// 下载 GFWList
+    /// 下载 GFWList（通过代理，绕过系统 DNS 限制）
     /// </summary>
-    private async Task DownloadGfwListAsync()
+    private async Task DownloadGfwListAsync(CancellationToken ct = default, string? proxyUrl = null)
     {
-        Console.WriteLine("[GFW] GFWList 不存在，开始下载...");
-        
+        Log.Information("[GFW] 列表不存在，开始下载...{Via}",
+            proxyUrl != null ? $"（经由 {proxyUrl}）" : "（直连）");
+
         try
         {
-            using var client = new HttpClient();
-            client.Timeout = TimeSpan.FromMinutes(5);
-            
-            var data = await client.GetByteArrayAsync(_gfwListUrl);
-            await File.WriteAllBytesAsync(_gfwListPath, data);
-            
-            Console.WriteLine($"[GFW] GFWList 下载完成：{_gfwListPath}");
+            using var handler = new HttpClientHandler();
+            if (proxyUrl != null)
+            {
+                handler.Proxy = new System.Net.WebProxy(proxyUrl);
+                handler.UseProxy = true;
+            }
+            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(5) };
+
+            var data = await client.GetByteArrayAsync(_gfwListUrl, ct);
+            await File.WriteAllBytesAsync(_gfwListPath, data, ct);
+
+            Log.Information("[GFW] 下载完成：{Path}", _gfwListPath);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Console.WriteLine($"[GFW] GFWList 下载失败：{ex.Message}");
-            Console.WriteLine($"[GFW] 请手动下载：{_gfwListUrl}");
+            Log.Warning(ex, "[GFW] 下载失败，请手动下载：{Url}", _gfwListUrl);
         }
     }
 
@@ -158,10 +168,10 @@ public class GfwListService
     /// <summary>
     /// 重新加载 GFWList
     /// </summary>
-    public async Task ReloadAsync()
+    public async Task ReloadAsync(CancellationToken ct = default, string? proxyUrl = null)
     {
         _domains.Clear();
         _initialized = false;
-        await InitializeAsync();
+        await InitializeAsync(ct, proxyUrl);
     }
 }

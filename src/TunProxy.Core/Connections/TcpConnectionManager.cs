@@ -19,6 +19,7 @@ public class TcpConnectionManager : IDisposable
     private readonly string? _password;
     private readonly int _maxConnections;
     private readonly TimeSpan _connectionTimeout;
+    private readonly IPAddress? _bindAddress; // 强制绑定的本地 IP（防止走 TUN 接口）
     private bool _disposed;
 
     public TcpConnectionManager(
@@ -27,8 +28,9 @@ public class TcpConnectionManager : IDisposable
         ProxyType proxyType,
         string? username = null,
         string? password = null,
-        int maxConnections = 1000,
-        TimeSpan? connectionTimeout = null)
+        int maxConnections = 10000,
+        TimeSpan? connectionTimeout = null,
+        IPAddress? bindAddress = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
@@ -37,6 +39,7 @@ public class TcpConnectionManager : IDisposable
         _password = password;
         _maxConnections = maxConnections;
         _connectionTimeout = connectionTimeout ?? TimeSpan.FromSeconds(30);
+        _bindAddress = bindAddress;
     }
 
     /// <summary>
@@ -64,10 +67,22 @@ public class TcpConnectionManager : IDisposable
                 }
             }
 
-            connection = new TcpConnection(_proxyHost, _proxyPort, _proxyType, _username, _password, _connectionTimeout);
+            connection = new TcpConnection(_proxyHost, _proxyPort, _proxyType, _username, _password, _connectionTimeout, _bindAddress);
             _connections[connKey] = connection;
         }
 
+        return connection;
+    }
+
+    /// <summary>
+    /// 仅查找已有连接（不创建新连接），用于非 SYN 包
+    /// </summary>
+    public TcpConnection? GetExistingConnection(IPPacket packet)
+    {
+        if (packet.SourcePort == null || packet.DestinationPort == null)
+            return null;
+        var connKey = MakeConnectionKey(packet);
+        _connections.TryGetValue(connKey, out var connection);
         return connection;
     }
 
@@ -77,6 +92,17 @@ public class TcpConnectionManager : IDisposable
     public void RemoveConnection(IPPacket packet)
     {
         var connKey = MakeConnectionKey(packet);
+        if (_connections.TryRemove(connKey, out var connection))
+        {
+            connection.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 按连接键移除连接（供中继任务结束时使用）
+    /// </summary>
+    public void RemoveConnectionByKey(string connKey)
+    {
         if (_connections.TryRemove(connKey, out var connection))
         {
             connection.Dispose();
@@ -141,6 +167,7 @@ public class TcpConnection : IDisposable
     private readonly string? _username;
     private readonly string? _password;
     private readonly TimeSpan _connectionTimeout;
+    private readonly IPAddress? _bindAddress;
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     private TcpClient? _client;
     private NetworkStream? _stream;
@@ -148,6 +175,9 @@ public class TcpConnection : IDisposable
     private bool _disposed;
     private int _retryCount;
     private const int MaxRetries = 3;
+    private bool _isHttpPlainMode;   // HTTP 代理 + port 80：直转发模式（不用 CONNECT）
+    private bool _needsHttpRewrite;  // 第一次发送时改写请求行
+    private string _destHost = string.Empty;   // 目标主机（用于改写 HTTP 请求行）
 
     public DateTime LastActivity { get; private set; } = DateTime.UtcNow;
     public bool HasErrors { get; private set; }
@@ -158,7 +188,8 @@ public class TcpConnection : IDisposable
         ProxyType proxyType,
         string? username = null,
         string? password = null,
-        TimeSpan? connectionTimeout = null)
+        TimeSpan? connectionTimeout = null,
+        IPAddress? bindAddress = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
@@ -166,6 +197,7 @@ public class TcpConnection : IDisposable
         _username = username;
         _password = password;
         _connectionTimeout = connectionTimeout ?? TimeSpan.FromSeconds(30);
+        _bindAddress = bindAddress;
     }
 
     /// <summary>
@@ -175,6 +207,7 @@ public class TcpConnection : IDisposable
     {
         // 如果已连接，立即返回
         if (_connected) return true;
+        if (_disposed) throw new ObjectDisposedException(nameof(TcpConnection));
 
         // 使用信号量确保同一连接对象只有一个线程在执行连接
         // 这防止了 TCP 重传导致的并发连接尝试
@@ -193,6 +226,10 @@ public class TcpConnection : IDisposable
                     _client?.Dispose();
                     _client = new TcpClient();
 
+                    // 绑定到物理网卡 IP，防止连接通过 TUN 接口路由（导致环路）
+                    if (_bindAddress != null)
+                        _client.Client.Bind(new IPEndPoint(_bindAddress, 0));
+
                     // 设置连接超时
                     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     cts.CancelAfter(_connectionTimeout);
@@ -210,7 +247,18 @@ public class TcpConnection : IDisposable
                     }
                     else if (_proxyType == ProxyType.Http)
                     {
-                        await HttpConnectAsync(destHost, destPort, cts.Token);
+                        if (destPort == 443)
+                        {
+                            await HttpConnectAsync(destHost, destPort, cts.Token);
+                        }
+                        else
+                        {
+                            // HTTP 代理 + port 80：直转发模式，不用 CONNECT
+                            // 第一个请求包需改写请求行加上完整 URL
+                            _isHttpPlainMode = true;
+                            _needsHttpRewrite = true;
+                            _destHost = destHost;
+                        }
                     }
 
                     _connected = true;
@@ -219,7 +267,8 @@ public class TcpConnection : IDisposable
                     LastActivity = DateTime.UtcNow;
                     return true;
                 }
-                catch (Exception ex) when (i < MaxRetries && !ct.IsCancellationRequested)
+                catch (Exception ex) when (i < MaxRetries && !ct.IsCancellationRequested
+                    && !IsProxyDeniedError(ex))  // 代理 4xx/5xx 错误不重试
                 {
                     lastException = ex;
                     _retryCount++;
@@ -236,13 +285,18 @@ public class TcpConnection : IDisposable
             }
 
             HasErrors = true;
+            // 在消息中标记是否为代理明确拒绝（4xx/5xx），让上层决定是否加入封锁缓存
+            var reason = lastException != null && IsProxyDeniedError(lastException) ? "PROXY_DENIED" : "CONNECT_FAILED";
             throw new InvalidOperationException(
-                $"Failed to connect after {MaxRetries + 1} attempts",
+                $"Failed to connect after {MaxRetries + 1} attempts [{reason}]",
                 lastException);
         }
         finally
         {
-            _connectLock.Release();
+            // Dispose() 可能在 ConnectAsync 运行期间被 CleanupIdleConnections 调用
+            // _disposed 已提前置 true，此处安全跳过 Release
+            if (!_disposed)
+                _connectLock.Release();
         }
     }
 
@@ -374,8 +428,40 @@ public class TcpConnection : IDisposable
         if (_stream == null || !_connected)
             throw new InvalidOperationException("Not connected");
 
+        // HTTP 直转发模式：第一次发送时改写请求行，将 GET /path 改成 GET http://host/path
+        if (_isHttpPlainMode && _needsHttpRewrite && data.Length > 0)
+        {
+            _needsHttpRewrite = false;
+            data = RewriteHttpRequestLine(data, _destHost);
+        }
+
         await _stream.WriteAsync(data, ct);
         LastActivity = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// 将 HTTP 请求行的绝对路径改写为完整 URL，使其符合代理格式
+    /// 例：GET /path HTTP/1.1  →  GET http://host/path HTTP/1.1
+    /// </summary>
+    private static byte[] RewriteHttpRequestLine(byte[] data, string host)
+    {
+        try
+        {
+            var text = System.Text.Encoding.UTF8.GetString(data);
+            var lineEnd = text.IndexOf("\r\n", StringComparison.Ordinal);
+            if (lineEnd < 0) return data;
+
+            var firstLine = text[..lineEnd];
+            var parts = firstLine.Split(' ', 3);
+            if (parts.Length == 3 && parts[1].StartsWith('/'))
+            {
+                // 改写路径为完整 URL
+                var rewritten = $"{parts[0]} http://{host}{parts[1]} {parts[2]}\r\n" + text[(lineEnd + 2)..];
+                return System.Text.Encoding.UTF8.GetBytes(rewritten);
+            }
+        }
+        catch { /* 解析失败，原样发送 */ }
+        return data;
     }
 
     /// <summary>
@@ -393,14 +479,21 @@ public class TcpConnection : IDisposable
 
     public bool IsConnected => _connected && _client?.Connected == true;
 
+    /// <summary>
+    /// 判断是否为代理拒绝错误（4xx/5xx），这类错误不需要重试
+    /// </summary>
+    private static bool IsProxyDeniedError(Exception ex) =>
+        ex.Message.Contains("HTTP Proxy error: HTTP/1.1 4") ||
+        ex.Message.Contains("HTTP Proxy error: HTTP/1.1 5");
+
     public void Dispose()
     {
         if (!_disposed)
         {
+            _disposed = true; // 先置 true，阻止 ConnectAsync finally 块 Release 已销毁的锁
             _stream?.Dispose();
             _client?.Dispose();
             _connectLock.Dispose();
-            _disposed = true;
         }
     }
 }

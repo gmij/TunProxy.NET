@@ -134,7 +134,7 @@ jobs:
         path: TunProxy.NET-linux-x64.tar.gz
 
   # ─────────────────────────────────────────────────────────────
-  # macOS  osx-arm64   CLI (AOT) + Tray (AOT, net8.0-macos)
+  # macOS  osx-arm64   CLI (AOT) + Tray (AOT)
   # ─────────────────────────────────────────────────────────────
   publish-macos:
     name: Publish · macOS arm64
@@ -143,23 +143,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup .NET 9
+    - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '9.0.x'
-
-    - name: Pin SDK to 9.0 for this job
-      # Prevents dotnet host from selecting SDK 10 (pre-installed on the runner),
-      # which would install macOS SDK packs that require Xcode 26.3 (not available).
-      # version 9.0.100 + latestFeature matches any 9.0.xxx SDK (e.g. 9.0.313)
-      # without rolling forward to major 10.
-      run: echo '{"sdk":{"version":"9.0.100","rollForward":"latestFeature"}}' > global.json
-
-    - name: Install macOS workload (net8.0-macos)
-      run: |
-        echo "Resolved SDK: $(dotnet --version)"
-        sudo env "PATH=$PATH" DOTNET_ROOT="$DOTNET_ROOT" dotnet workload install macos
-        sudo chown -R "$(id -un)" ~/.local/share/NuGet ~/.nuget 2>/dev/null || true
+        dotnet-version: '8.0.x'
 
     - name: Publish CLI (AOT)
       run: |

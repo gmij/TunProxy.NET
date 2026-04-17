@@ -153,10 +153,8 @@ jobs:
         sudo env "PATH=$PATH" dotnet workload install macos
         sudo chown -R "$(id -un)" ~/.local/share/NuGet ~/.nuget 2>/dev/null || true
 
-    - name: Restore (CLI + macOS Tray)
-      run: |
-        dotnet restore src/TunProxy.CLI/TunProxy.CLI.csproj
-        dotnet restore src/TunProxy.Tray.macOS/TunProxy.Tray.macOS.csproj -r osx-arm64
+    - name: Restore CLI
+      run: dotnet restore src/TunProxy.CLI/TunProxy.CLI.csproj
 
     - name: Publish CLI (AOT)
       run: |
@@ -168,7 +166,7 @@ jobs:
     - name: Publish macOS Tray (AOT)
       run: |
         dotnet publish src/TunProxy.Tray.macOS/TunProxy.Tray.macOS.csproj \
-          -c Release -r osx-arm64 --no-restore \
+          -c Release -r osx-arm64 \
           -p:DebugType=none -p:DebugSymbols=false \
           -o dist/osx-arm64 --nologo
 

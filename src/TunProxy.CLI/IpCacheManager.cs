@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Serilog;
+using TunProxy.Core.Route;
 
 namespace TunProxy.CLI;
 
@@ -17,10 +18,12 @@ public class IpCacheManager
 
     private const string DirectIpCacheFile = "direct_ip_cache.txt";
     private const string BlockedIpCacheFile = "blocked_ip_cache.txt";
+    private static string DirectIpCachePath => AppPathResolver.ResolveAppFilePath(DirectIpCacheFile);
+    private static string BlockedIpCachePath => AppPathResolver.ResolveAppFilePath(BlockedIpCacheFile);
 
-    private readonly WindowsRouteService? _routeService;
+    private readonly IRouteService? _routeService;
 
-    public IpCacheManager(WindowsRouteService? routeService)
+    public IpCacheManager(IRouteService? routeService)
     {
         _routeService = routeService;
     }
@@ -30,10 +33,10 @@ public class IpCacheManager
     /// </summary>
     public void LoadAndApplyDirectIpCache()
     {
-        if (!File.Exists(DirectIpCacheFile)) return;
+        if (!File.Exists(DirectIpCachePath)) return;
         try
         {
-            var ips = File.ReadAllLines(DirectIpCacheFile)
+            var ips = File.ReadAllLines(DirectIpCachePath)
                 .Select(l => l.Trim())
                 .Where(l => l.Length > 0 && !l.StartsWith('#'))
                 .Distinct()
@@ -67,10 +70,10 @@ public class IpCacheManager
     /// </summary>
     public void LoadBlockedIpCache()
     {
-        if (!File.Exists(BlockedIpCacheFile)) return;
+        if (!File.Exists(BlockedIpCachePath)) return;
         try
         {
-            var ips = File.ReadAllLines(BlockedIpCacheFile)
+            var ips = File.ReadAllLines(BlockedIpCachePath)
                 .Select(l => l.Trim())
                 .Where(l => l.Length > 0 && !l.StartsWith('#'))
                 .Distinct()
@@ -170,13 +173,21 @@ public class IpCacheManager
 
     private static void AppendDirectIpCache(string ip)
     {
-        try { File.AppendAllText(DirectIpCacheFile, ip + Environment.NewLine); }
+        try { File.AppendAllText(DirectIpCachePath, ip + Environment.NewLine); }
         catch { }
     }
 
     private static void AppendBlockedIpCache(string ip)
     {
-        try { File.AppendAllText(BlockedIpCacheFile, ip + Environment.NewLine); }
+        try { File.AppendAllText(BlockedIpCachePath, ip + Environment.NewLine); }
         catch { }
     }
+
+    /// <summary>获取 IP→域名 缓存快照（供 Dashboard 展示）</summary>
+    public IReadOnlyDictionary<string, string> GetHostnameCacheSnapshot() =>
+        new Dictionary<string, string>(_ipHostnameCache);
+
+    /// <summary>获取直连 IP 列表快照</summary>
+    public IReadOnlyList<string> GetDirectIpSnapshot() =>
+        _directBypassedIps.Keys.ToList();
 }

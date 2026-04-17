@@ -1,11 +1,7 @@
 using System.Net;
-using System.Runtime.InteropServices;
 
 namespace TunProxy.Core.Packets;
 
-/// <summary>
-/// IP 协议类型
-/// </summary>
 public enum IPProtocol : byte
 {
     ICMP = 1,
@@ -13,9 +9,6 @@ public enum IPProtocol : byte
     UDP = 17
 }
 
-/// <summary>
-/// IP 数据包解析器
-/// </summary>
 public class IPPacket
 {
     public IPv4HeaderInfo Header { get; private set; }
@@ -36,8 +29,10 @@ public class IPPacket
     {
         get
         {
-            if (TCPHeader.HasValue) return TCPHeader.Value.SourcePort;
-            if (UDPHeader.HasValue) return UDPHeader.Value.SourcePort;
+            if (TCPHeader.HasValue)
+                return TCPHeader.Value.SourcePort;
+            if (UDPHeader.HasValue)
+                return UDPHeader.Value.SourcePort;
             return null;
         }
     }
@@ -46,8 +41,10 @@ public class IPPacket
     {
         get
         {
-            if (TCPHeader.HasValue) return TCPHeader.Value.DestinationPort;
-            if (UDPHeader.HasValue) return UDPHeader.Value.DestinationPort;
+            if (TCPHeader.HasValue)
+                return TCPHeader.Value.DestinationPort;
+            if (UDPHeader.HasValue)
+                return UDPHeader.Value.DestinationPort;
             return null;
         }
     }
@@ -57,63 +54,80 @@ public class IPPacket
         if (data.Length < 20)
             return null;
 
-        // 解析 IPv4 头部
         byte versionAndIhl = data[0];
         byte version = (byte)((versionAndIhl >> 4) & 0x0F);
-        
         if (version != 4)
             return null;
 
         byte ihl = (byte)(versionAndIhl & 0x0F);
-        byte headerLength = (byte)(ihl * 4);
+        if (ihl < 5)
+            return null;
 
+        byte headerLength = (byte)(ihl * 4);
         if (data.Length < headerLength)
             return null;
 
+        ushort totalLength = NetworkHelper.ReadUInt16BigEndian(data.Slice(2, 2));
+        if (totalLength < headerLength || totalLength > data.Length)
+            return null;
+
+        var packetData = data[..totalLength];
         var header = new IPv4HeaderInfo
         {
             Version = version,
             IHL = ihl,
-            TotalLength = NetworkHelper.ReadUInt16BigEndian(data.Slice(2, 2)),
-            Protocol = data[9],
-            SourceAddress = new IPAddress(data.Slice(12, 4)),
-            DestinationAddress = new IPAddress(data.Slice(16, 4))
+            TotalLength = totalLength,
+            Protocol = packetData[9],
+            SourceAddress = new IPAddress(packetData.Slice(12, 4)),
+            DestinationAddress = new IPAddress(packetData.Slice(16, 4))
         };
 
-        // 先解析 TCP/UDP 头部，确定传输层头部长度
         int transportHeaderLength = 0;
         TCPHeaderInfo? tcpHeader = null;
         UDPHeaderInfo? udpHeader = null;
 
-        if (header.ProtocolType == IPProtocol.TCP && data.Length >= headerLength + 20)
+        if (header.ProtocolType == IPProtocol.TCP)
         {
+            if (totalLength < headerLength + 20)
+                return null;
+
             tcpHeader = new TCPHeaderInfo
             {
-                SourcePort = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength, 2)),
-                DestinationPort = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength + 2, 2)),
-                SequenceNumber = NetworkHelper.ReadUInt32BigEndian(data.Slice(headerLength + 4, 4)),
-                AckNumber = NetworkHelper.ReadUInt32BigEndian(data.Slice(headerLength + 8, 4)),
-                Flags = data[headerLength + 13]
+                SourcePort = NetworkHelper.ReadUInt16BigEndian(packetData.Slice(headerLength, 2)),
+                DestinationPort = NetworkHelper.ReadUInt16BigEndian(packetData.Slice(headerLength + 2, 2)),
+                SequenceNumber = NetworkHelper.ReadUInt32BigEndian(packetData.Slice(headerLength + 4, 4)),
+                AckNumber = NetworkHelper.ReadUInt32BigEndian(packetData.Slice(headerLength + 8, 4)),
+                Flags = packetData[headerLength + 13]
             };
-            // TCP 数据偏移（以 4 字节为单位）
-            byte dataOffset = data[headerLength + 12];
+
+            byte dataOffset = packetData[headerLength + 12];
             byte tcpHeaderLen = (byte)((dataOffset >> 4) * 4);
+            if (tcpHeaderLen < 20 || headerLength + tcpHeaderLen > totalLength)
+                return null;
+
             transportHeaderLength = tcpHeaderLen;
         }
-        else if (header.ProtocolType == IPProtocol.UDP && data.Length >= headerLength + 8)
+        else if (header.ProtocolType == IPProtocol.UDP)
         {
+            if (totalLength < headerLength + 8)
+                return null;
+
             udpHeader = new UDPHeaderInfo
             {
-                SourcePort = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength, 2)),
-                DestinationPort = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength + 2, 2)),
-                Length = NetworkHelper.ReadUInt16BigEndian(data.Slice(headerLength + 4, 2))
+                SourcePort = NetworkHelper.ReadUInt16BigEndian(packetData.Slice(headerLength, 2)),
+                DestinationPort = NetworkHelper.ReadUInt16BigEndian(packetData.Slice(headerLength + 2, 2)),
+                Length = NetworkHelper.ReadUInt16BigEndian(packetData.Slice(headerLength + 4, 2))
             };
-            transportHeaderLength = 8; // UDP 头部固定 8 字节
+            if (udpHeader.Value.Length < 8 || headerLength + udpHeader.Value.Length > totalLength)
+                return null;
+
+            transportHeaderLength = 8;
         }
 
-        // Payload = IP payload - 传输层头部 = 应用层数据
         int payloadStart = headerLength + transportHeaderLength;
-        byte[] payload = data.Length > payloadStart ? data.Slice(payloadStart).ToArray() : Array.Empty<byte>();
+        byte[] payload = totalLength > payloadStart
+            ? packetData.Slice(payloadStart, totalLength - payloadStart).ToArray()
+            : Array.Empty<byte>();
 
         return new IPPacket
         {
@@ -125,9 +139,6 @@ public class IPPacket
     }
 }
 
-/// <summary>
-/// IPv4 头部信息
-/// </summary>
 public struct IPv4HeaderInfo
 {
     public byte Version { get; set; }
@@ -140,9 +151,6 @@ public struct IPv4HeaderInfo
     public IPProtocol ProtocolType => (IPProtocol)Protocol;
 }
 
-/// <summary>
-/// TCP 头部信息
-/// </summary>
 public struct TCPHeaderInfo
 {
     public ushort SourcePort { get; set; }
@@ -151,7 +159,6 @@ public struct TCPHeaderInfo
     public uint AckNumber { get; set; }
     public byte Flags { get; set; }
 
-    // TCP 标志位
     public bool FIN => (Flags & 0x01) != 0;
     public bool SYN => (Flags & 0x02) != 0;
     public bool RST => (Flags & 0x04) != 0;
@@ -160,9 +167,6 @@ public struct TCPHeaderInfo
     public bool URG => (Flags & 0x20) != 0;
 }
 
-/// <summary>
-/// UDP 头部信息
-/// </summary>
 public struct UDPHeaderInfo
 {
     public ushort SourcePort { get; set; }

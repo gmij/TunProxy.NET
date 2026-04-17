@@ -1,0 +1,436 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Api.InvalidConfigJson" xml:space="preserve">
+    <value>无效的配置 JSON。</value>
+  </data>
+  <data name="Api.WindowsOnly" xml:space="preserve">
+    <value>仅支持 Windows。</value>
+  </data>
+  <data name="Mode.Proxy" xml:space="preserve">
+    <value>本地代理</value>
+  </data>
+  <data name="Mode.Tun" xml:space="preserve">
+    <value>TUN</value>
+  </data>
+  <data name="Nav.Config" xml:space="preserve">
+    <value>配置</value>
+  </data>
+  <data name="Nav.Dns" xml:space="preserve">
+    <value>DNS</value>
+  </data>
+  <data name="Nav.Language" xml:space="preserve">
+    <value>语言</value>
+  </data>
+  <data name="Nav.Logs" xml:space="preserve">
+    <value>日志</value>
+  </data>
+  <data name="Nav.Status" xml:space="preserve">
+    <value>状态</value>
+  </data>
+  <data name="Page.Config.ActionFailed" xml:space="preserve">
+    <value>操作失败。</value>
+  </data>
+  <data name="Page.Config.AlertRestarting" xml:space="preserve">
+    <value>服务正在重启，{0} 秒后自动刷新页面...</value>
+  </data>
+  <data name="Page.Config.AlertSavedHtml" xml:space="preserve">
+    <value>配置已保存。&lt;strong&gt;重启服务后生效。&lt;/strong&gt;</value>
+  </data>
+  <data name="Page.Config.ConfigPath" xml:space="preserve">
+    <value>配置文件路径：&lt;code&gt;tunproxy.json&lt;/code&gt;</value>
+  </data>
+  <data name="Page.Config.CopyAddress" xml:space="preserve">
+    <value>复制地址</value>
+  </data>
+  <data name="Page.Config.CurrentMode" xml:space="preserve">
+    <value>当前模式：</value>
+  </data>
+  <data name="Page.Config.DirectDomains" xml:space="preserve">
+    <value>直连域名（每行一个）</value>
+  </data>
+  <data name="Page.Config.EnableGeo" xml:space="preserve">
+    <value>启用 GeoIP 路由</value>
+  </data>
+  <data name="Page.Config.EnableGfw" xml:space="preserve">
+    <value>启用 GFWList 路由</value>
+  </data>
+  <data name="Page.Config.LocalProxyPort" xml:space="preserve">
+    <value>本地代理端口</value>
+  </data>
+  <data name="Page.Config.ModeHintProxyHtml" xml:space="preserve">
+    <value>&lt;strong&gt;本地代理模式&lt;/strong&gt;监听本机端口，并可自动设置系统代理，无需管理员权限。&lt;br&gt;如需切换到 TUN 模式，请通过托盘菜单安装系统服务。</value>
+  </data>
+  <data name="Page.Config.ModeHintTunHtml" xml:space="preserve">
+    <value>&lt;strong&gt;TUN 模式&lt;/strong&gt;通过虚拟网卡透明接管 TCP 流量。&lt;br&gt;如需切回本地代理模式，请通过托盘菜单卸载系统服务。</value>
+  </data>
+  <data name="Page.Config.ModeUnknown" xml:space="preserve">
+    <value>未知（服务未运行）</value>
+  </data>
+  <data name="Page.Config.PacCleared" xml:space="preserve">
+    <value>PAC 已清除。</value>
+  </data>
+  <data name="Page.Config.PacDescriptionHtml" xml:space="preserve">
+    <value>PAC（Proxy Auto-Config）会根据域名规则自动决定走代理还是直连。启用 GFWList 后，相关域名会自动合并进 PAC。</value>
+  </data>
+  <data name="Page.Config.PacHeading" xml:space="preserve">
+    <value>PAC 自动代理</value>
+  </data>
+  <data name="Page.Config.PacSet" xml:space="preserve">
+    <value>已设置：{0}</value>
+  </data>
+  <data name="Page.Config.PacSetFailed" xml:space="preserve">
+    <value>设置 PAC 失败，仅支持 Windows。</value>
+  </data>
+  <data name="Page.Config.PreviewPac" xml:space="preserve">
+    <value>预览 PAC</value>
+  </data>
+  <data name="Page.Config.ProxyDomains" xml:space="preserve">
+    <value>代理域名（每行一个）</value>
+  </data>
+  <data name="Page.Config.ProxyHost" xml:space="preserve">
+    <value>代理地址</value>
+  </data>
+  <data name="Page.Config.ProxyPassword" xml:space="preserve">
+    <value>密码（可选）</value>
+  </data>
+  <data name="Page.Config.ProxyPort" xml:space="preserve">
+    <value>端口</value>
+  </data>
+  <data name="Page.Config.ProxyServer" xml:space="preserve">
+    <value>上游代理</value>
+  </data>
+  <data name="Page.Config.ProxyType" xml:space="preserve">
+    <value>类型</value>
+  </data>
+  <data name="Page.Config.ProxyUsername" xml:space="preserve">
+    <value>用户名（可选）</value>
+  </data>
+  <data name="Page.Config.Route.Blacklist" xml:space="preserve">
+    <value>黑名单</value>
+  </data>
+  <data name="Page.Config.Route.Global" xml:space="preserve">
+    <value>全局代理</value>
+  </data>
+  <data name="Page.Config.Route.Whitelist" xml:space="preserve">
+    <value>白名单</value>
+  </data>
+  <data name="Page.Config.RouteMode" xml:space="preserve">
+    <value>路由模式</value>
+  </data>
+  <data name="Page.Config.RoutingRules" xml:space="preserve">
+    <value>路由规则</value>
+  </data>
+  <data name="Page.Config.Save" xml:space="preserve">
+    <value>保存配置</value>
+  </data>
+  <data name="Page.Config.SaveFailed" xml:space="preserve">
+    <value>保存配置失败：{0}</value>
+  </data>
+  <data name="Page.Config.SetSystemProxy" xml:space="preserve">
+    <value>自动设置系统代理</value>
+  </data>
+  <data name="Page.Config.ApplyPac" xml:space="preserve">
+    <value>设为系统 PAC</value>
+  </data>
+  <data name="Page.Config.ClearPac" xml:space="preserve">
+    <value>清除系统 PAC</value>
+  </data>
+  <data name="Page.Config.Title" xml:space="preserve">
+    <value>配置</value>
+  </data>
+  <data name="Page.Dns.ClearSearch" xml:space="preserve">
+    <value>清除</value>
+  </data>
+  <data name="Page.Dns.DirectHeading" xml:space="preserve">
+    <value>直连 IP 路由</value>
+  </data>
+  <data name="Page.Dns.DirectHint" xml:space="preserve">
+    <value>以下 IP 段绕过 TUN，直接走原始网关。</value>
+  </data>
+  <data name="Page.Dns.Empty" xml:space="preserve">
+    <value>暂无记录。服务运行后会随流量自动填充。</value>
+  </data>
+  <data name="Page.Dns.Heading" xml:space="preserve">
+    <value>DNS 解析记录</value>
+  </data>
+  <data name="Page.Dns.IpAddress" xml:space="preserve">
+    <value>IP 地址</value>
+  </data>
+  <data name="Page.Dns.MoreEntries" xml:space="preserve">
+    <value>... 还有 {0} 条</value>
+  </data>
+  <data name="Page.Dns.ProxyModeNoticeHtml" xml:space="preserve">
+    <value>&lt;strong&gt;本地代理模式&lt;/strong&gt;不需要 DNS 拦截，浏览器会直接把域名交给上游代理。此页面仅在 &lt;strong&gt;TUN 模式&lt;/strong&gt;下有数据。</value>
+  </data>
+  <data name="Page.Dns.ResolvedDomain" xml:space="preserve">
+    <value>解析域名</value>
+  </data>
+  <data name="Page.Dns.SearchPlaceholder" xml:space="preserve">
+    <value>搜索 IP 或域名...</value>
+  </data>
+  <data name="Page.Dns.Title" xml:space="preserve">
+    <value>DNS</value>
+  </data>
+  <data name="Page.Logs.Clear" xml:space="preserve">
+    <value>清空</value>
+  </data>
+  <data name="Page.Logs.EmptyHtml" xml:space="preserve">
+    <value>暂无日志。服务启动后会自动出现。&lt;br&gt;TUN 模式：[CONN] 显示 TCP 路由决策，[DNS] 显示 DNS 解析结果。&lt;br&gt;本地代理模式：[CONN] 显示 CONNECT 和 HTTP 请求的路由决策。</value>
+  </data>
+  <data name="Page.Logs.FilterAll" xml:space="preserve">
+    <value>全部</value>
+  </data>
+  <data name="Page.Logs.FilterConnections" xml:space="preserve">
+    <value>连接</value>
+  </data>
+  <data name="Page.Logs.FilterDns" xml:space="preserve">
+    <value>DNS</value>
+  </data>
+  <data name="Page.Logs.FilterErrors" xml:space="preserve">
+    <value>错误</value>
+  </data>
+  <data name="Page.Logs.FilterPlaceholder" xml:space="preserve">
+    <value>过滤关键词...</value>
+  </data>
+  <data name="Page.Logs.FilterWarnings" xml:space="preserve">
+    <value>警告</value>
+  </data>
+  <data name="Page.Logs.Heading" xml:space="preserve">
+    <value>实时日志</value>
+  </data>
+  <data name="Page.Logs.Pause" xml:space="preserve">
+    <value>暂停</value>
+  </data>
+  <data name="Page.Logs.Reconnecting" xml:space="preserve">
+    <value>连接失败，正在重试...</value>
+  </data>
+  <data name="Page.Logs.Resume" xml:space="preserve">
+    <value>继续</value>
+  </data>
+  <data name="Page.Logs.ScrollToLatest" xml:space="preserve">
+    <value>滚到最新</value>
+  </data>
+  <data name="Page.Logs.Title" xml:space="preserve">
+    <value>日志</value>
+  </data>
+  <data name="Page.Logs.UpdatedAt" xml:space="preserve">
+    <value>最后更新：{0}</value>
+  </data>
+  <data name="Page.Logs.Waiting" xml:space="preserve">
+    <value>等待日志...</value>
+  </data>
+  <data name="Page.Status.ActiveConnections" xml:space="preserve">
+    <value>活跃连接</value>
+  </data>
+  <data name="Page.Status.Badge.Downloading" xml:space="preserve">
+    <value>规则下载中</value>
+  </data>
+  <data name="Page.Status.Badge.Loading" xml:space="preserve">
+    <value>加载中</value>
+  </data>
+  <data name="Page.Status.Badge.Running" xml:space="preserve">
+    <value>运行中</value>
+  </data>
+  <data name="Page.Status.Badge.Stopped" xml:space="preserve">
+    <value>已停止</value>
+  </data>
+  <data name="Page.Status.Badge.Unreachable" xml:space="preserve">
+    <value>无法连接</value>
+  </data>
+  <data name="Page.Status.BytesReceived" xml:space="preserve">
+    <value>接收</value>
+  </data>
+  <data name="Page.Status.BytesSent" xml:space="preserve">
+    <value>发送</value>
+  </data>
+  <data name="Page.Status.DirectRouted" xml:space="preserve">
+    <value>直连路由</value>
+  </data>
+  <data name="Page.Status.DnsFailures" xml:space="preserve">
+    <value>DNS 失败</value>
+  </data>
+  <data name="Page.Status.DnsQueries" xml:space="preserve">
+    <value>DNS 查询</value>
+  </data>
+  <data name="Page.Status.FailedConnections" xml:space="preserve">
+    <value>失败连接</value>
+  </data>
+  <data name="Page.Status.Heading" xml:space="preserve">
+    <value>服务状态</value>
+  </data>
+  <data name="Page.Status.ParseFailures" xml:space="preserve">
+    <value>解析失败</value>
+  </data>
+  <data name="Page.Status.PortFiltered" xml:space="preserve">
+    <value>端口过滤（非 80/443）</value>
+  </data>
+  <data name="Page.Status.ProxyServer" xml:space="preserve">
+    <value>代理服务器</value>
+  </data>
+  <data name="Page.Status.RawPackets" xml:space="preserve">
+    <value>接收原始包</value>
+  </data>
+  <data name="Page.Status.Title" xml:space="preserve">
+    <value>状态</value>
+  </data>
+  <data name="Page.Status.TotalConnections" xml:space="preserve">
+    <value>总连接</value>
+  </data>
+  <data name="Page.Status.Traffic" xml:space="preserve">
+    <value>流量统计</value>
+  </data>
+  <data name="Page.Status.TunDiagnostics" xml:space="preserve">
+    <value>TUN 诊断</value>
+  </data>
+  <data name="Page.Status.Uptime" xml:space="preserve">
+    <value>运行时间</value>
+  </data>
+  <data name="Shared.Loading" xml:space="preserve">
+    <value>加载中...</value>
+  </data>
+  <data name="Shared.None" xml:space="preserve">
+    <value>无</value>
+  </data>
+  <data name="Shared.RefreshAt" xml:space="preserve">
+    <value>每 {0} 秒自动刷新 | 上次更新：{1}</value>
+  </data>
+  <data name="Shared.Unknown" xml:space="preserve">
+    <value>未知</value>
+  </data>
+  <data name="Tray.Caption.ConfirmUninstall" xml:space="preserve">
+    <value>确认卸载</value>
+  </data>
+  <data name="Tray.Caption.Error" xml:space="preserve">
+    <value>错误</value>
+  </data>
+  <data name="Tray.Caption.Info" xml:space="preserve">
+    <value>提示</value>
+  </data>
+  <data name="Tray.Caption.InstallComplete" xml:space="preserve">
+    <value>安装完成</value>
+  </data>
+  <data name="Tray.Caption.RepairFailed" xml:space="preserve">
+    <value>修复失败</value>
+  </data>
+  <data name="Tray.Caption.RepairSuccess" xml:space="preserve">
+    <value>修复成功</value>
+  </data>
+  <data name="Tray.FileMissing" xml:space="preserve">
+    <value>找不到服务程序：
+{0}</value>
+  </data>
+  <data name="Tray.FixTun.ApiError" xml:space="preserve">
+    <value>修复接口返回错误：{0}</value>
+  </data>
+  <data name="Tray.FixTun.CannotConnectApi" xml:space="preserve">
+    <value>无法连接服务 API：{0}
+
+请确认服务正在运行。</value>
+  </data>
+  <data name="Tray.FixTun.Menu" xml:space="preserve">
+    <value>修复：切换到 TUN 模式（配置已被覆盖）</value>
+  </data>
+  <data name="Tray.FixTun.SuccessMessage" xml:space="preserve">
+    <value>已写回 TUN 配置，服务即将自动重启。</value>
+  </data>
+  <data name="Tray.Install.Failed" xml:space="preserve">
+    <value>安装失败：{0}</value>
+  </data>
+  <data name="Tray.Install.Menu" xml:space="preserve">
+    <value>安装为系统服务</value>
+  </data>
+  <data name="Tray.Install.MenuInstalled" xml:space="preserve">
+    <value>已安装为系统服务</value>
+  </data>
+  <data name="Tray.Install.SuccessMessage" xml:space="preserve">
+    <value>服务安装成功，已自动启用 TUN 模式并启动服务。</value>
+  </data>
+  <data name="Tray.Menu.Exit" xml:space="preserve">
+    <value>退出</value>
+  </data>
+  <data name="Tray.Menu.OpenConsole" xml:space="preserve">
+    <value>打开控制台</value>
+  </data>
+  <data name="Tray.Menu.StartService" xml:space="preserve">
+    <value>启动服务</value>
+  </data>
+  <data name="Tray.Menu.StopService" xml:space="preserve">
+    <value>停止服务</value>
+  </data>
+  <data name="Tray.Mode.Proxy" xml:space="preserve">
+    <value>本地代理</value>
+  </data>
+  <data name="Tray.Mode.Tun" xml:space="preserve">
+    <value>TUN</value>
+  </data>
+  <data name="Tray.NoRunningCli" xml:space="preserve">
+    <value>未发现运行中的 TunProxy CLI 进程。</value>
+  </data>
+  <data name="Tray.OpenBrowserFailed" xml:space="preserve">
+    <value>无法打开浏览器：{0}</value>
+  </data>
+  <data name="Tray.Start.Failed" xml:space="preserve">
+    <value>启动失败：{0}</value>
+  </data>
+  <data name="Tray.StartupFailed" xml:space="preserve">
+    <value>TunProxy 启动失败</value>
+  </data>
+  <data name="Tray.Status.Downloading" xml:space="preserve">
+    <value>规则下载中...</value>
+  </data>
+  <data name="Tray.Status.Error" xml:space="preserve">
+    <value>服务异常</value>
+  </data>
+  <data name="Tray.Status.ResponseParseFailed" xml:space="preserve">
+    <value>响应解析失败</value>
+  </data>
+  <data name="Tray.Status.RunningState" xml:space="preserve">
+    <value>运行中</value>
+  </data>
+  <data name="Tray.Status.RunningSummary" xml:space="preserve">
+    <value>运行中（{0}）| {1} 个连接</value>
+  </data>
+  <data name="Tray.Status.ServiceInstalledStopped" xml:space="preserve">
+    <value>服务已安装，未启动</value>
+  </data>
+  <data name="Tray.Status.ServiceNoResponse" xml:space="preserve">
+    <value>服务已安装，无响应</value>
+  </data>
+  <data name="Tray.Status.ServiceNotStarted" xml:space="preserve">
+    <value>服务未启动</value>
+  </data>
+  <data name="Tray.Status.StoppedState" xml:space="preserve">
+    <value>已停止</value>
+  </data>
+  <data name="Tray.Status.Unknown" xml:space="preserve">
+    <value>未知</value>
+  </data>
+  <data name="Tray.Stop.Failed" xml:space="preserve">
+    <value>停止失败：{0}</value>
+  </data>
+  <data name="Tray.Tooltip" xml:space="preserve">
+    <value>TunProxy - {0}</value>
+  </data>
+  <data name="Tray.Uninstall.ConfirmMessage" xml:space="preserve">
+    <value>确定要卸载 TunProxy 系统服务吗？
+卸载后会自动切回本地代理模式。</value>
+  </data>
+  <data name="Tray.Uninstall.Failed" xml:space="preserve">
+    <value>卸载失败：{0}</value>
+  </data>
+  <data name="Tray.Uninstall.Menu" xml:space="preserve">
+    <value>卸载系统服务</value>
+  </data>
+</root>

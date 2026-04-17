@@ -1,0 +1,436 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Api.InvalidConfigJson" xml:space="preserve">
+    <value>Invalid configuration JSON.</value>
+  </data>
+  <data name="Api.WindowsOnly" xml:space="preserve">
+    <value>Windows only.</value>
+  </data>
+  <data name="Mode.Proxy" xml:space="preserve">
+    <value>Local Proxy</value>
+  </data>
+  <data name="Mode.Tun" xml:space="preserve">
+    <value>TUN</value>
+  </data>
+  <data name="Nav.Config" xml:space="preserve">
+    <value>Config</value>
+  </data>
+  <data name="Nav.Dns" xml:space="preserve">
+    <value>DNS</value>
+  </data>
+  <data name="Nav.Language" xml:space="preserve">
+    <value>Language</value>
+  </data>
+  <data name="Nav.Logs" xml:space="preserve">
+    <value>Logs</value>
+  </data>
+  <data name="Nav.Status" xml:space="preserve">
+    <value>Status</value>
+  </data>
+  <data name="Page.Config.ActionFailed" xml:space="preserve">
+    <value>Action failed.</value>
+  </data>
+  <data name="Page.Config.AlertRestarting" xml:space="preserve">
+    <value>Restarting service. Refreshing in {0} seconds...</value>
+  </data>
+  <data name="Page.Config.AlertSavedHtml" xml:space="preserve">
+    <value>Configuration saved. &lt;strong&gt;Changes take effect after restart.&lt;/strong&gt;</value>
+  </data>
+  <data name="Page.Config.ConfigPath" xml:space="preserve">
+    <value>Configuration file: &lt;code&gt;tunproxy.json&lt;/code&gt;</value>
+  </data>
+  <data name="Page.Config.CopyAddress" xml:space="preserve">
+    <value>Copy URL</value>
+  </data>
+  <data name="Page.Config.CurrentMode" xml:space="preserve">
+    <value>Current mode:</value>
+  </data>
+  <data name="Page.Config.DirectDomains" xml:space="preserve">
+    <value>Direct domains (one per line)</value>
+  </data>
+  <data name="Page.Config.EnableGeo" xml:space="preserve">
+    <value>Enable GeoIP routing</value>
+  </data>
+  <data name="Page.Config.EnableGfw" xml:space="preserve">
+    <value>Enable GFWList routing</value>
+  </data>
+  <data name="Page.Config.LocalProxyPort" xml:space="preserve">
+    <value>Local proxy port</value>
+  </data>
+  <data name="Page.Config.ModeHintProxyHtml" xml:space="preserve">
+    <value>&lt;strong&gt;Local Proxy mode&lt;/strong&gt; listens on a local port and can automatically update the system proxy. No administrator rights are required.&lt;br&gt;To switch to TUN mode, use the tray menu to install the system service.</value>
+  </data>
+  <data name="Page.Config.ModeHintTunHtml" xml:space="preserve">
+    <value>&lt;strong&gt;TUN mode&lt;/strong&gt; transparently captures TCP traffic through the virtual adapter.&lt;br&gt;To switch back, uninstall the system service from the tray menu.</value>
+  </data>
+  <data name="Page.Config.ModeUnknown" xml:space="preserve">
+    <value>Unknown (service unavailable)</value>
+  </data>
+  <data name="Page.Config.PacCleared" xml:space="preserve">
+    <value>PAC configuration cleared.</value>
+  </data>
+  <data name="Page.Config.PacDescriptionHtml" xml:space="preserve">
+    <value>PAC (Proxy Auto-Config) decides whether requests should use the proxy or go direct based on domain rules. GFWList entries are merged automatically when enabled.</value>
+  </data>
+  <data name="Page.Config.PacHeading" xml:space="preserve">
+    <value>PAC Auto Proxy</value>
+  </data>
+  <data name="Page.Config.PacSet" xml:space="preserve">
+    <value>Applied: {0}</value>
+  </data>
+  <data name="Page.Config.PacSetFailed" xml:space="preserve">
+    <value>Failed to apply PAC. Windows only.</value>
+  </data>
+  <data name="Page.Config.PreviewPac" xml:space="preserve">
+    <value>Preview PAC</value>
+  </data>
+  <data name="Page.Config.ProxyDomains" xml:space="preserve">
+    <value>Proxy domains (one per line)</value>
+  </data>
+  <data name="Page.Config.ProxyHost" xml:space="preserve">
+    <value>Proxy host</value>
+  </data>
+  <data name="Page.Config.ProxyPassword" xml:space="preserve">
+    <value>Password (optional)</value>
+  </data>
+  <data name="Page.Config.ProxyPort" xml:space="preserve">
+    <value>Port</value>
+  </data>
+  <data name="Page.Config.ProxyServer" xml:space="preserve">
+    <value>Upstream proxy</value>
+  </data>
+  <data name="Page.Config.ProxyType" xml:space="preserve">
+    <value>Type</value>
+  </data>
+  <data name="Page.Config.ProxyUsername" xml:space="preserve">
+    <value>Username (optional)</value>
+  </data>
+  <data name="Page.Config.Route.Blacklist" xml:space="preserve">
+    <value>Blacklist</value>
+  </data>
+  <data name="Page.Config.Route.Global" xml:space="preserve">
+    <value>Global proxy</value>
+  </data>
+  <data name="Page.Config.Route.Whitelist" xml:space="preserve">
+    <value>Whitelist</value>
+  </data>
+  <data name="Page.Config.RouteMode" xml:space="preserve">
+    <value>Route mode</value>
+  </data>
+  <data name="Page.Config.RoutingRules" xml:space="preserve">
+    <value>Routing Rules</value>
+  </data>
+  <data name="Page.Config.Save" xml:space="preserve">
+    <value>Save Configuration</value>
+  </data>
+  <data name="Page.Config.SaveFailed" xml:space="preserve">
+    <value>Failed to save configuration: {0}</value>
+  </data>
+  <data name="Page.Config.SetSystemProxy" xml:space="preserve">
+    <value>Automatically set system proxy</value>
+  </data>
+  <data name="Page.Config.ApplyPac" xml:space="preserve">
+    <value>Use as system PAC</value>
+  </data>
+  <data name="Page.Config.ClearPac" xml:space="preserve">
+    <value>Clear system PAC</value>
+  </data>
+  <data name="Page.Config.Title" xml:space="preserve">
+    <value>Config</value>
+  </data>
+  <data name="Page.Dns.ClearSearch" xml:space="preserve">
+    <value>Clear</value>
+  </data>
+  <data name="Page.Dns.DirectHeading" xml:space="preserve">
+    <value>Direct IP Routes</value>
+  </data>
+  <data name="Page.Dns.DirectHint" xml:space="preserve">
+    <value>These IP ranges bypass TUN and use the original gateway.</value>
+  </data>
+  <data name="Page.Dns.Empty" xml:space="preserve">
+    <value>No records yet. Data will appear automatically once traffic is flowing.</value>
+  </data>
+  <data name="Page.Dns.Heading" xml:space="preserve">
+    <value>DNS Resolution Records</value>
+  </data>
+  <data name="Page.Dns.IpAddress" xml:space="preserve">
+    <value>IP Address</value>
+  </data>
+  <data name="Page.Dns.MoreEntries" xml:space="preserve">
+    <value>... and {0} more</value>
+  </data>
+  <data name="Page.Dns.ProxyModeNoticeHtml" xml:space="preserve">
+    <value>&lt;strong&gt;Local Proxy mode&lt;/strong&gt; does not need DNS interception. Browsers send hostnames directly to the upstream proxy. This page only has data in &lt;strong&gt;TUN mode&lt;/strong&gt;.</value>
+  </data>
+  <data name="Page.Dns.ResolvedDomain" xml:space="preserve">
+    <value>Resolved Domain</value>
+  </data>
+  <data name="Page.Dns.SearchPlaceholder" xml:space="preserve">
+    <value>Search by IP or domain...</value>
+  </data>
+  <data name="Page.Dns.Title" xml:space="preserve">
+    <value>DNS</value>
+  </data>
+  <data name="Page.Logs.Clear" xml:space="preserve">
+    <value>Clear</value>
+  </data>
+  <data name="Page.Logs.EmptyHtml" xml:space="preserve">
+    <value>No logs yet. They will appear automatically after the service starts.&lt;br&gt;TUN mode: [CONN] shows TCP routing decisions and [DNS] shows DNS resolution results.&lt;br&gt;Local Proxy mode: [CONN] shows CONNECT and HTTP request routing decisions.</value>
+  </data>
+  <data name="Page.Logs.FilterAll" xml:space="preserve">
+    <value>All</value>
+  </data>
+  <data name="Page.Logs.FilterConnections" xml:space="preserve">
+    <value>Connections</value>
+  </data>
+  <data name="Page.Logs.FilterDns" xml:space="preserve">
+    <value>DNS</value>
+  </data>
+  <data name="Page.Logs.FilterErrors" xml:space="preserve">
+    <value>Errors</value>
+  </data>
+  <data name="Page.Logs.FilterPlaceholder" xml:space="preserve">
+    <value>Filter keywords...</value>
+  </data>
+  <data name="Page.Logs.FilterWarnings" xml:space="preserve">
+    <value>Warnings</value>
+  </data>
+  <data name="Page.Logs.Heading" xml:space="preserve">
+    <value>Live Logs</value>
+  </data>
+  <data name="Page.Logs.Pause" xml:space="preserve">
+    <value>Pause</value>
+  </data>
+  <data name="Page.Logs.Reconnecting" xml:space="preserve">
+    <value>Connection lost. Retrying...</value>
+  </data>
+  <data name="Page.Logs.Resume" xml:space="preserve">
+    <value>Resume</value>
+  </data>
+  <data name="Page.Logs.ScrollToLatest" xml:space="preserve">
+    <value>Scroll to latest</value>
+  </data>
+  <data name="Page.Logs.Title" xml:space="preserve">
+    <value>Logs</value>
+  </data>
+  <data name="Page.Logs.UpdatedAt" xml:space="preserve">
+    <value>Last updated: {0}</value>
+  </data>
+  <data name="Page.Logs.Waiting" xml:space="preserve">
+    <value>Waiting for logs...</value>
+  </data>
+  <data name="Page.Status.ActiveConnections" xml:space="preserve">
+    <value>Active connections</value>
+  </data>
+  <data name="Page.Status.Badge.Downloading" xml:space="preserve">
+    <value>Downloading rules</value>
+  </data>
+  <data name="Page.Status.Badge.Loading" xml:space="preserve">
+    <value>Loading</value>
+  </data>
+  <data name="Page.Status.Badge.Running" xml:space="preserve">
+    <value>Running</value>
+  </data>
+  <data name="Page.Status.Badge.Stopped" xml:space="preserve">
+    <value>Stopped</value>
+  </data>
+  <data name="Page.Status.Badge.Unreachable" xml:space="preserve">
+    <value>Unreachable</value>
+  </data>
+  <data name="Page.Status.BytesReceived" xml:space="preserve">
+    <value>Received</value>
+  </data>
+  <data name="Page.Status.BytesSent" xml:space="preserve">
+    <value>Sent</value>
+  </data>
+  <data name="Page.Status.DirectRouted" xml:space="preserve">
+    <value>Direct routed</value>
+  </data>
+  <data name="Page.Status.DnsFailures" xml:space="preserve">
+    <value>DNS failures</value>
+  </data>
+  <data name="Page.Status.DnsQueries" xml:space="preserve">
+    <value>DNS queries</value>
+  </data>
+  <data name="Page.Status.FailedConnections" xml:space="preserve">
+    <value>Failed connections</value>
+  </data>
+  <data name="Page.Status.Heading" xml:space="preserve">
+    <value>Service Status</value>
+  </data>
+  <data name="Page.Status.ParseFailures" xml:space="preserve">
+    <value>Parse failures</value>
+  </data>
+  <data name="Page.Status.PortFiltered" xml:space="preserve">
+    <value>Filtered ports (non-80/443)</value>
+  </data>
+  <data name="Page.Status.ProxyServer" xml:space="preserve">
+    <value>Proxy server</value>
+  </data>
+  <data name="Page.Status.RawPackets" xml:space="preserve">
+    <value>Raw packets received</value>
+  </data>
+  <data name="Page.Status.Title" xml:space="preserve">
+    <value>Status</value>
+  </data>
+  <data name="Page.Status.TotalConnections" xml:space="preserve">
+    <value>Total connections</value>
+  </data>
+  <data name="Page.Status.Traffic" xml:space="preserve">
+    <value>Traffic Stats</value>
+  </data>
+  <data name="Page.Status.TunDiagnostics" xml:space="preserve">
+    <value>TUN Diagnostics</value>
+  </data>
+  <data name="Page.Status.Uptime" xml:space="preserve">
+    <value>Uptime</value>
+  </data>
+  <data name="Shared.Loading" xml:space="preserve">
+    <value>Loading...</value>
+  </data>
+  <data name="Shared.None" xml:space="preserve">
+    <value>None</value>
+  </data>
+  <data name="Shared.RefreshAt" xml:space="preserve">
+    <value>Auto refresh every {0} seconds | Last update: {1}</value>
+  </data>
+  <data name="Shared.Unknown" xml:space="preserve">
+    <value>Unknown</value>
+  </data>
+  <data name="Tray.Caption.ConfirmUninstall" xml:space="preserve">
+    <value>Confirm Uninstall</value>
+  </data>
+  <data name="Tray.Caption.Error" xml:space="preserve">
+    <value>Error</value>
+  </data>
+  <data name="Tray.Caption.Info" xml:space="preserve">
+    <value>Info</value>
+  </data>
+  <data name="Tray.Caption.InstallComplete" xml:space="preserve">
+    <value>Install Complete</value>
+  </data>
+  <data name="Tray.Caption.RepairFailed" xml:space="preserve">
+    <value>Repair Failed</value>
+  </data>
+  <data name="Tray.Caption.RepairSuccess" xml:space="preserve">
+    <value>Repair Succeeded</value>
+  </data>
+  <data name="Tray.FileMissing" xml:space="preserve">
+    <value>Service executable not found:
+{0}</value>
+  </data>
+  <data name="Tray.FixTun.ApiError" xml:space="preserve">
+    <value>Repair endpoint returned an error: {0}</value>
+  </data>
+  <data name="Tray.FixTun.CannotConnectApi" xml:space="preserve">
+    <value>Unable to connect to the service API: {0}
+
+Please confirm the service is running.</value>
+  </data>
+  <data name="Tray.FixTun.Menu" xml:space="preserve">
+    <value>Repair: switch to TUN mode (configuration was overwritten)</value>
+  </data>
+  <data name="Tray.FixTun.SuccessMessage" xml:space="preserve">
+    <value>TUN mode has been written back to the configuration. The service will restart automatically shortly.</value>
+  </data>
+  <data name="Tray.Install.Failed" xml:space="preserve">
+    <value>Installation failed: {0}</value>
+  </data>
+  <data name="Tray.Install.Menu" xml:space="preserve">
+    <value>Install as system service</value>
+  </data>
+  <data name="Tray.Install.MenuInstalled" xml:space="preserve">
+    <value>Installed as system service</value>
+  </data>
+  <data name="Tray.Install.SuccessMessage" xml:space="preserve">
+    <value>Service installation completed. TUN mode has been enabled and the service was started automatically.</value>
+  </data>
+  <data name="Tray.Menu.Exit" xml:space="preserve">
+    <value>Exit</value>
+  </data>
+  <data name="Tray.Menu.OpenConsole" xml:space="preserve">
+    <value>Open Console</value>
+  </data>
+  <data name="Tray.Menu.StartService" xml:space="preserve">
+    <value>Start Service</value>
+  </data>
+  <data name="Tray.Menu.StopService" xml:space="preserve">
+    <value>Stop Service</value>
+  </data>
+  <data name="Tray.Mode.Proxy" xml:space="preserve">
+    <value>Local Proxy</value>
+  </data>
+  <data name="Tray.Mode.Tun" xml:space="preserve">
+    <value>TUN</value>
+  </data>
+  <data name="Tray.NoRunningCli" xml:space="preserve">
+    <value>No running TunProxy CLI process was found.</value>
+  </data>
+  <data name="Tray.OpenBrowserFailed" xml:space="preserve">
+    <value>Unable to open the browser: {0}</value>
+  </data>
+  <data name="Tray.Start.Failed" xml:space="preserve">
+    <value>Failed to start: {0}</value>
+  </data>
+  <data name="Tray.StartupFailed" xml:space="preserve">
+    <value>TunProxy failed to start</value>
+  </data>
+  <data name="Tray.Status.Downloading" xml:space="preserve">
+    <value>Downloading rules...</value>
+  </data>
+  <data name="Tray.Status.Error" xml:space="preserve">
+    <value>Service error</value>
+  </data>
+  <data name="Tray.Status.ResponseParseFailed" xml:space="preserve">
+    <value>Unable to parse service response</value>
+  </data>
+  <data name="Tray.Status.RunningState" xml:space="preserve">
+    <value>Running</value>
+  </data>
+  <data name="Tray.Status.RunningSummary" xml:space="preserve">
+    <value>Running ({0}) | {1} connections</value>
+  </data>
+  <data name="Tray.Status.ServiceInstalledStopped" xml:space="preserve">
+    <value>Service installed, not running</value>
+  </data>
+  <data name="Tray.Status.ServiceNoResponse" xml:space="preserve">
+    <value>Service installed, no response</value>
+  </data>
+  <data name="Tray.Status.ServiceNotStarted" xml:space="preserve">
+    <value>Service not started</value>
+  </data>
+  <data name="Tray.Status.StoppedState" xml:space="preserve">
+    <value>Stopped</value>
+  </data>
+  <data name="Tray.Status.Unknown" xml:space="preserve">
+    <value>Unknown</value>
+  </data>
+  <data name="Tray.Stop.Failed" xml:space="preserve">
+    <value>Failed to stop: {0}</value>
+  </data>
+  <data name="Tray.Tooltip" xml:space="preserve">
+    <value>TunProxy - {0}</value>
+  </data>
+  <data name="Tray.Uninstall.ConfirmMessage" xml:space="preserve">
+    <value>Are you sure you want to uninstall the TunProxy system service?
+After uninstalling, the app will switch back to Local Proxy mode.</value>
+  </data>
+  <data name="Tray.Uninstall.Failed" xml:space="preserve">
+    <value>Uninstall failed: {0}</value>
+  </data>
+  <data name="Tray.Uninstall.Menu" xml:space="preserve">
+    <value>Uninstall system service</value>
+  </data>
+</root>

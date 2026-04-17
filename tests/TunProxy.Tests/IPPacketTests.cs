@@ -5,29 +5,22 @@ namespace TunProxy.Tests;
 public class IPPacketTests
 {
     [Fact]
-    public void Parse_ValidIPv4Packet_ReturnsPacket()
+    public void Parse_ValidTcpPacket_ReturnsPacket()
     {
-        // 构造一个简单的 IPv4 数据包（TCP，源端口 12345，目标端口 80）
-        // 注意：网络字节序是大端（big-endian）
         var packetData = new byte[]
         {
-            // IPv4 头部（20 字节）- 网络字节序（大端）
-            0x45, 0x00, 0x00, 0x2D, // 版本 4, IHL 5, TOS 0, 总长度 45 (大端：0x002D = 20+20+5)
-            0x00, 0x01, 0x00, 0x00, // 标识
-            0x40, 0x06, 0x00, 0x00, // TTL 64, 协议 6 (TCP), 校验和
-            0x0A, 0x00, 0x00, 0x01, // 源 IP: 10.0.0.1
-            0x0A, 0x00, 0x00, 0x02, // 目标 IP: 10.0.0.2
-
-            // TCP 头部（20 字节）- 网络字节序（大端）
-            0x30, 0x39, // 源端口：12345 (0x3039 大端)
-            0x00, 0x50, // 目标端口：80 (0x0050 大端)
-            0x00, 0x00, 0x00, 0x01, // 序列号
-            0x00, 0x00, 0x00, 0x00, // 确认号
-            0x50, 0x02, 0xFF, 0xFF, // 数据偏移 5, 标志 SYN, 窗口
-            0x00, 0x00, 0x00, 0x00, // 校验和，紧急指针
-
-            // Payload
-            0x48, 0x65, 0x6C, 0x6C, 0x6F // "Hello"
+            0x45, 0x00, 0x00, 0x2D,
+            0x00, 0x01, 0x00, 0x00,
+            0x40, 0x06, 0x00, 0x00,
+            0x0A, 0x00, 0x00, 0x01,
+            0x0A, 0x00, 0x00, 0x02,
+            0x30, 0x39,
+            0x00, 0x50,
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x00,
+            0x50, 0x02, 0xFF, 0xFF,
+            0x00, 0x00, 0x00, 0x00,
+            0x48, 0x65, 0x6C, 0x6C, 0x6F
         };
 
         var packet = IPPacket.Parse(packetData);
@@ -48,47 +41,36 @@ public class IPPacketTests
     {
         var packetData = new byte[]
         {
-            0x60, 0x00, 0x00, 0x00, // IPv6 版本 6
+            0x60, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00
         };
 
-        var packet = IPPacket.Parse(packetData);
-
-        Assert.Null(packet);
+        Assert.Null(IPPacket.Parse(packetData));
     }
 
     [Fact]
     public void Parse_TooShort_ReturnsNull()
     {
-        var packetData = new byte[] { 0x45, 0x00, 0x00 };
-
-        var packet = IPPacket.Parse(packetData);
-
-        Assert.Null(packet);
+        Assert.Null(IPPacket.Parse(new byte[] { 0x45, 0x00, 0x00 }));
     }
 
     [Fact]
-    public void Parse_UDPPacket_ReturnsPacketWithUDPHeader()
+    public void Parse_ValidUdpPacket_ReturnsPacketWithUdpHeader()
     {
         var packetData = new byte[]
         {
-            // IPv4 头部 - 网络字节序（大端）
-            0x45, 0x00, 0x00, 0x1C,
+            0x45, 0x00, 0x00, 0x20,
             0x00, 0x01, 0x00, 0x00,
-            0x40, 0x11, 0x00, 0x00, // 协议 17 (UDP)
-            0x0A, 0x00, 0x00, 0x01, // 源 IP
-            0x0A, 0x00, 0x00, 0x02, // 目标 IP
-
-            // UDP 头部（8 字节）- 网络字节序（大端）
-            0x00, 0x35, // 源端口：53 (DNS) 大端
-            0x00, 0x35, // 目标端口：53 大端
-            0x00, 0x0C, // 长度大端 (8 + 4 = 12)
-            0x00, 0x00, // 校验和
-
-            // Payload
+            0x40, 0x11, 0x00, 0x00,
+            0x0A, 0x00, 0x00, 0x01,
+            0x0A, 0x00, 0x00, 0x02,
+            0x00, 0x35,
+            0x00, 0x35,
+            0x00, 0x0C,
+            0x00, 0x00,
             0x00, 0x01, 0x02, 0x03
         };
 
@@ -102,18 +84,15 @@ public class IPPacketTests
     }
 
     [Fact]
-    public void Parse_ICMPPacket_ReturnsPacketWithoutPort()
+    public void Parse_IcmpPacket_ReturnsPacketWithoutPorts()
     {
         var packetData = new byte[]
         {
-            // IPv4 头部
-            0x45, 0x00, 0x00, 0x1C,
+            0x45, 0x00, 0x00, 0x18,
             0x00, 0x01, 0x00, 0x00,
-            0x40, 0x01, 0x00, 0x00, // 协议 1 (ICMP)
+            0x40, 0x01, 0x00, 0x00,
             0x0A, 0x00, 0x00, 0x01,
             0x0A, 0x00, 0x00, 0x02,
-            
-            // ICMP 头部
             0x08, 0x00, 0x00, 0x00
         };
 
@@ -123,5 +102,58 @@ public class IPPacketTests
         Assert.True(packet.IsICMP);
         Assert.Null(packet.SourcePort);
         Assert.Null(packet.DestinationPort);
+    }
+
+    [Fact]
+    public void Parse_TotalLengthExceedsBuffer_ReturnsNull()
+    {
+        var packetData = CreateTcpPacket(totalLength: 60, tcpDataOffset: 0x50, payload: [0x41, 0x42])[..40];
+
+        Assert.Null(IPPacket.Parse(packetData));
+    }
+
+    [Fact]
+    public void Parse_InvalidTcpHeaderLength_ReturnsNull()
+    {
+        var packetData = CreateTcpPacket(totalLength: 40, tcpDataOffset: 0x40, payload: []);
+
+        Assert.Null(IPPacket.Parse(packetData));
+    }
+
+    [Fact]
+    public void Parse_IgnoresTrailingBytesBeyondIpTotalLength()
+    {
+        var packetData = CreateTcpPacket(totalLength: 40, tcpDataOffset: 0x50, payload: []);
+        var withTrailingBytes = packetData.Concat(new byte[] { 0x48, 0x65, 0x6C, 0x6C, 0x6F }).ToArray();
+
+        var packet = IPPacket.Parse(withTrailingBytes);
+
+        Assert.NotNull(packet);
+        Assert.Empty(packet.Payload);
+    }
+
+    private static byte[] CreateTcpPacket(ushort totalLength, byte tcpDataOffset, byte[] payload)
+    {
+        var packet = new byte[Math.Max(totalLength, (ushort)40)];
+        packet[0] = 0x45;
+        packet[2] = (byte)(totalLength >> 8);
+        packet[3] = (byte)(totalLength & 0xFF);
+        packet[8] = 0x40;
+        packet[9] = 0x06;
+        packet[12] = 0x0A;
+        packet[15] = 0x01;
+        packet[16] = 0x0A;
+        packet[19] = 0x02;
+        packet[20] = 0x00;
+        packet[21] = 0x50;
+        packet[22] = 0x01;
+        packet[23] = 0xBB;
+        packet[32] = tcpDataOffset;
+        packet[33] = 0x18;
+
+        if (payload.Length > 0)
+            Array.Copy(payload, 0, packet, 40, Math.Min(payload.Length, packet.Length - 40));
+
+        return packet;
     }
 }

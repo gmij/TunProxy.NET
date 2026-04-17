@@ -15,9 +15,11 @@ public class GeoIpService : IDisposable
     private DatabaseReader? _reader;
     private bool _disposed;
 
+    internal string DatabasePath => _dbPath;
+
     public GeoIpService(string dbPath)
     {
-        _dbPath = dbPath;
+        _dbPath = AppPathResolver.ResolveAppFilePath(dbPath);
     }
 
     /// <summary>

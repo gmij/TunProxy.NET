@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TunProxy</title>
+  <link rel="stylesheet" href="/bootstrap/bootstrap.min.css" />
+  <link rel="icon" href="/favicon.png" />
+</head>
+<body data-page-title-key="Page.Status.Title">
+<script src="/i18n.js"></script>
+<script src="/nav.js"></script>
+
+<div class="container-fluid px-4">
+  <h4 class="mb-3" data-i18n="Page.Status.Heading"></h4>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="d-flex align-items-center gap-3 mb-3">
+        <span class="fs-5 fw-bold" id="status-badges">
+          <span class="badge bg-secondary" data-i18n="Page.Status.Badge.Loading"></span>
+        </span>
+      </div>
+      <table class="table table-sm table-borderless mb-0">
+        <tbody>
+          <tr><td class="text-muted" data-i18n="Page.Status.ProxyServer"></td><td id="proxy-info">-</td></tr>
+          <tr><td class="text-muted" data-i18n="Page.Status.ActiveConnections"></td><td id="active-conn">-</td></tr>
+          <tr><td class="text-muted" data-i18n="Page.Status.Uptime"></td><td id="uptime">-</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <h5 class="mb-2" data-i18n="Page.Status.Traffic"></h5>
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body py-2">
+          <div class="text-muted small" data-i18n="Page.Status.BytesSent"></div>
+          <div class="fw-bold" id="bytes-sent">-</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body py-2">
+          <div class="text-muted small" data-i18n="Page.Status.BytesReceived"></div>
+          <div class="fw-bold" id="bytes-recv">-</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body py-2">
+          <div class="text-muted small" data-i18n="Page.Status.TotalConnections"></div>
+          <div class="fw-bold" id="total-conn">-</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body py-2">
+          <div class="text-muted small" data-i18n="Page.Status.FailedConnections"></div>
+          <div class="fw-bold" id="failed-conn">-</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tun-diagnostics" style="display:none">
+    <h5 class="mb-2" data-i18n="Page.Status.TunDiagnostics"></h5>
+    <div class="card">
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <tbody>
+            <tr><td data-i18n="Page.Status.RawPackets"></td><td id="raw-packets">-</td></tr>
+            <tr><td data-i18n="Page.Status.ParseFailures"></td><td id="parse-fail">-</td></tr>
+            <tr><td data-i18n="Page.Status.PortFiltered"></td><td id="port-filtered">-</td></tr>
+            <tr><td data-i18n="Page.Status.DirectRouted"></td><td id="direct-routed">-</td></tr>
+            <tr><td data-i18n="Page.Status.DnsQueries"></td><td id="dns-queries">-</td></tr>
+            <tr><td data-i18n="Page.Status.DnsFailures"></td><td id="dns-fail">-</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <p class="text-muted small mt-3" id="last-update"></p>
+</div>
+
+<script>
+var latestStatus = null;
+
+function fmtBytes(bytes) {
+  if (bytes >= 1e9) return (bytes / 1e9).toFixed(2) + ' GB';
+  if (bytes >= 1e6) return (bytes / 1e6).toFixed(2) + ' MB';
+  if (bytes >= 1e3) return (bytes / 1e3).toFixed(2) + ' KB';
+  return bytes + ' B';
+}
+
+function fmtUptime(seconds) {
+  var hours = Math.floor(seconds / 3600);
+  var minutes = Math.floor((seconds % 3600) / 60);
+  var remaining = seconds % 60;
+  if (hours > 0) return hours + 'h ' + minutes + 'm';
+  if (minutes > 0) return minutes + 'm ' + remaining + 's';
+  return remaining + 's';
+}
+
+function renderStatusBadges(status) {
+  var t = window.TunProxyI18n.t;
+  var badges = '';
+
+  badges += status.isRunning
+    ? '<span class="badge bg-success">' + t('Page.Status.Badge.Running') + '</span>'
+    : '<span class="badge bg-secondary">' + t('Page.Status.Badge.Stopped') + '</span>';
+
+  badges += status.mode === 'tun'
+    ? ' <span class="badge bg-primary">' + t('Mode.Tun') + '</span>'
+    : ' <span class="badge bg-info text-dark">' + t('Mode.Proxy') + '</span>';
+
+  if (status.isDownloading) {
+    badges += ' <span class="badge bg-warning text-dark">' + t('Page.Status.Badge.Downloading') + '</span>';
+  }
+
+  document.getElementById('status-badges').innerHTML = badges;
+}
+
+function renderStatus(status) {
+  latestStatus = status;
+  var metrics = status.metrics;
+
+  renderStatusBadges(status);
+  document.getElementById('proxy-info').innerHTML =
+    status.proxyHost + ':' + status.proxyPort + ' <span class="badge bg-light text-dark">' + status.proxyType + '</span>';
+  document.getElementById('active-conn').textContent = status.activeConnections;
+  document.getElementById('uptime').textContent = fmtUptime(metrics.uptimeSeconds);
+  document.getElementById('bytes-sent').textContent = fmtBytes(metrics.totalBytesSent);
+  document.getElementById('bytes-recv').textContent = fmtBytes(metrics.totalBytesReceived);
+  document.getElementById('total-conn').textContent = metrics.totalConnections;
+
+  var failedConnections = document.getElementById('failed-conn');
+  failedConnections.textContent = metrics.failedConnections;
+  failedConnections.className = metrics.failedConnections > 0 ? 'fw-bold text-danger' : 'fw-bold';
+
+  var tunDiagnostics = document.getElementById('tun-diagnostics');
+  if (status.mode === 'tun') {
+    tunDiagnostics.style.display = '';
+    document.getElementById('raw-packets').textContent = metrics.rawPacketsReceived;
+
+    var parseFailures = document.getElementById('parse-fail');
+    parseFailures.textContent = metrics.parseFailures;
+    parseFailures.className = metrics.parseFailures > 0 ? 'text-danger' : '';
+
+    document.getElementById('port-filtered').textContent = metrics.portFilteredPackets;
+    document.getElementById('direct-routed').textContent = metrics.directRoutedPackets;
+    document.getElementById('dns-queries').textContent = metrics.dnsQueries;
+
+    var dnsFailures = document.getElementById('dns-fail');
+    dnsFailures.textContent = metrics.failedDnsQueries;
+    dnsFailures.className = metrics.failedDnsQueries > 0 ? 'text-warning' : '';
+  } else {
+    tunDiagnostics.style.display = 'none';
+  }
+
+  document.getElementById('last-update').textContent =
+    window.TunProxyI18n.format('Shared.RefreshAt', 5, window.TunProxyI18n.timeString(new Date()));
+}
+
+function refreshStatus() {
+  fetch('/api/status')
+    .then(function (response) { return response.json(); })
+    .then(renderStatus)
+    .catch(function () {
+      document.getElementById('status-badges').innerHTML =
+        '<span class="badge bg-danger">' + window.TunProxyI18n.t('Page.Status.Badge.Unreachable') + '</span>';
+    });
+}
+
+document.addEventListener('tunproxy:i18n-updated', function () {
+  if (latestStatus) {
+    renderStatus(latestStatus);
+  }
+});
+
+window.TunProxyI18n.initPage().then(function () {
+  refreshStatus();
+  window.setInterval(refreshStatus, 5000);
+});
+</script>
+</body>
+</html>

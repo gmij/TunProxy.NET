@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -8,11 +8,14 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
+    <PublishAot>true</PublishAot>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
-    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.5" />
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="MaxMind.GeoIP2" Version="5.1.0" />
   </ItemGroup>
 
@@ -20,14 +23,18 @@
     <ProjectReference Include="..\TunProxy.Core\TunProxy.Core.csproj" />
   </ItemGroup>
 
-  <!-- 复制配置文件到输出目录 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="TunProxy.Tests" />
+  </ItemGroup>
+
+  <!-- 配置文件 -->
   <ItemGroup>
     <None Update="tunproxy.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 
-  <!-- wintun.dll 只在 Windows 发布时需要 -->
+  <!-- wintun.dll 仅 Windows 发布时需要 -->
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <None Include="..\..\wintun.dll" Link="wintun.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TunProxy</title>
+  <link rel="stylesheet" href="/bootstrap/bootstrap.min.css" />
+  <link rel="icon" href="/favicon.png" />
+</head>
+<body data-page-title-key="Page.Dns.Title">
+<script src="/i18n.js"></script>
+<script src="/nav.js"></script>
+
+<div class="container-fluid px-4">
+  <div id="proxy-mode-notice" class="alert alert-info" style="display:none" data-i18n-html="Page.Dns.ProxyModeNoticeHtml"></div>
+
+  <div id="tun-content" style="display:none">
+    <div class="d-flex align-items-center gap-3 mb-3">
+      <h4 class="mb-0" data-i18n="Page.Dns.Heading"></h4>
+      <span class="badge bg-secondary" id="dns-count">0</span>
+    </div>
+
+    <div class="mb-3 d-flex gap-2">
+      <input type="text"
+             class="form-control form-control-sm"
+             id="search-input"
+             style="max-width:300px"
+             data-i18n-placeholder="Page.Dns.SearchPlaceholder" />
+      <button class="btn btn-sm btn-outline-secondary" id="clear-search-button" data-i18n="Page.Dns.ClearSearch"></button>
+    </div>
+
+    <div id="dns-table-wrap" class="table-responsive mb-4">
+      <table class="table table-sm table-hover">
+        <thead class="table-light">
+          <tr>
+            <th data-i18n="Page.Dns.IpAddress"></th>
+            <th data-i18n="Page.Dns.ResolvedDomain"></th>
+          </tr>
+        </thead>
+        <tbody id="dns-tbody"></tbody>
+      </table>
+      <p id="dns-empty" class="text-muted" style="display:none" data-i18n="Page.Dns.Empty"></p>
+    </div>
+
+    <hr class="my-4" />
+
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <h5 class="mb-0" data-i18n="Page.Dns.DirectHeading"></h5>
+      <span class="badge bg-secondary" id="direct-count">0</span>
+    </div>
+    <p class="text-muted small mb-2" data-i18n="Page.Dns.DirectHint"></p>
+    <div id="direct-ips" class="d-flex flex-wrap gap-2 mb-3"></div>
+
+    <p class="text-muted small mt-2" id="last-update"></p>
+  </div>
+</div>
+
+<script>
+var dnsData = {};
+var latestDirectIps = [];
+var isTunMode = false;
+
+function filterDns() {
+  var query = document.getElementById('search-input').value.toLowerCase();
+  var tbody = document.getElementById('dns-tbody');
+  tbody.innerHTML = '';
+
+  var entries = Object.entries(dnsData);
+  if (query) {
+    entries = entries.filter(function (entry) {
+      return entry[0].includes(query) || entry[1].toLowerCase().includes(query);
+    });
+  }
+
+  entries.sort(function (left, right) {
+    return left[0].localeCompare(right[0]);
+  });
+
+  entries.forEach(function (entry) {
+    var row = document.createElement('tr');
+    row.innerHTML = '<td class="font-monospace text-nowrap">' + entry[0] + '</td><td>' + entry[1] + '</td>';
+    tbody.appendChild(row);
+  });
+
+  document.getElementById('dns-empty').style.display = entries.length === 0 ? '' : 'none';
+}
+
+function renderDirectIps() {
+  var container = document.getElementById('direct-ips');
+  container.innerHTML = '';
+
+  latestDirectIps.slice(0, 200).forEach(function (ip) {
+    var badge = document.createElement('span');
+    badge.className = 'badge bg-light text-dark font-monospace';
+    badge.textContent = ip;
+    container.appendChild(badge);
+  });
+
+  if (latestDirectIps.length > 200) {
+    var more = document.createElement('span');
+    more.className = 'text-muted small';
+    more.textContent = window.TunProxyI18n.format('Page.Dns.MoreEntries', latestDirectIps.length - 200);
+    container.appendChild(more);
+  }
+}
+
+function renderPage() {
+  document.getElementById('proxy-mode-notice').style.display = isTunMode ? 'none' : '';
+  document.getElementById('tun-content').style.display = isTunMode ? '' : 'none';
+
+  if (!isTunMode) {
+    return;
+  }
+
+  document.getElementById('dns-count').textContent = Object.keys(dnsData).length;
+  document.getElementById('direct-count').textContent = latestDirectIps.length;
+  filterDns();
+  renderDirectIps();
+  document.getElementById('last-update').textContent =
+    window.TunProxyI18n.format('Shared.RefreshAt', 10, window.TunProxyI18n.timeString(new Date()));
+}
+
+function loadData() {
+  fetch('/api/status')
+    .then(function (response) { return response.json(); })
+    .then(function (status) {
+      isTunMode = status.mode === 'tun';
+      if (!isTunMode) {
+        renderPage();
+        return;
+      }
+
+      return Promise.all([
+        fetch('/api/dns').then(function (response) { return response.json(); }),
+        fetch('/api/direct-ips').then(function (response) { return response.json(); })
+      ]).then(function (payload) {
+        dnsData = payload[0];
+        latestDirectIps = payload[1];
+        renderPage();
+      });
+    });
+}
+
+document.addEventListener('tunproxy:i18n-updated', renderPage);
+
+window.TunProxyI18n.initPage().then(function () {
+  document.getElementById('search-input').addEventListener('input', filterDns);
+  document.getElementById('clear-search-button').addEventListener('click', function () {
+    document.getElementById('search-input').value = '';
+    filterDns();
+  });
+
+  loadData();
+  window.setInterval(loadData, 10000);
+});
+</script>
+</body>
+</html>

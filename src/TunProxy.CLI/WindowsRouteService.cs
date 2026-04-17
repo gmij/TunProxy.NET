@@ -1,16 +1,18 @@
 using System.Diagnostics;
 using System.Net.NetworkInformation;
 using Serilog;
+using TunProxy.Core.Route;
 
 namespace TunProxy.CLI;
 
 /// <summary>
 /// Windows 路由服务
 /// </summary>
-public class WindowsRouteService
+public class WindowsRouteService : IRouteService
 {
     private readonly string _tunIpAddress;
     private readonly string _tunSubnetMask;
+    private readonly HashSet<string> _addedBypassRoutes = new(StringComparer.OrdinalIgnoreCase);
 
     public WindowsRouteService(string tunIpAddress = "10.0.0.1", string tunSubnetMask = "255.255.255.0")
     {
@@ -117,6 +119,7 @@ public class WindowsRouteService
         if (exitCode == 0)
         {
             Log.Debug("[ROUTE] 绕过路由已添加：{IP}/{Prefix} via {Gateway}", ipAddress, prefixLength, gateway);
+            _addedBypassRoutes.Add(ipAddress);
             return true;
         }
 
@@ -126,6 +129,7 @@ public class WindowsRouteService
             RouteExists(ipAddress, mask))
         {
             Log.Debug("[ROUTE] 绕过路由已存在（复用）：{IP}/{Prefix}", ipAddress, prefixLength);
+            _addedBypassRoutes.Add(ipAddress);
             return true;
         }
 
@@ -158,6 +162,22 @@ public class WindowsRouteService
     {
         var tunInterfaceName = GetTunInterfaceName();
         return ExecuteNetshCommand($"interface ip delete route 0.0.0.0/0 \"{tunInterfaceName}\"");
+    }
+
+    /// <summary>
+    /// 删除所有通过 AddBypassRoute 添加过的绕过路由，还原路由表
+    /// </summary>
+    public void ClearAllBypassRoutes()
+    {
+        if (_addedBypassRoutes.Count == 0) return;
+        Log.Information("[ROUTE] 清理绕过路由（共 {Count} 条）...", _addedBypassRoutes.Count);
+        foreach (var ip in _addedBypassRoutes.ToList())
+        {
+            RemoveBypassRoute(ip);
+            Log.Debug("[ROUTE] 已删除绕过路由：{IP}", ip);
+        }
+        _addedBypassRoutes.Clear();
+        Log.Information("[ROUTE] 路由表已恢复");
     }
 
     /// <summary>

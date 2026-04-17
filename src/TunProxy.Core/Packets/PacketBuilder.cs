@@ -96,17 +96,100 @@ public static class PacketBuilder
     }
 
     /// <summary>
-    /// 构建 SYN-ACK 响应包
+    /// 构建 SYN-ACK 响应包（含 MSS TCP Option，通告 MSS=1460）
     /// </summary>
     public static byte[] BuildSynAck(IPPacket requestPacket, out uint serverIsn)
     {
         serverIsn = (uint)Random.Shared.Next();
         uint clientSeq = requestPacket.TCPHeader?.SequenceNumber ?? 0;
 
-        return BuildTcpPacket(requestPacket,
-            TcpFlags.SYN | TcpFlags.ACK,
-            seqNum: serverIsn,
-            ackNum: clientSeq + 1);
+        var sourceIP = requestPacket.Header.DestinationAddress.GetAddressBytes();
+        var destIP   = requestPacket.Header.SourceAddress.GetAddressBytes();
+        var srcPort  = requestPacket.DestinationPort!.Value;
+        var dstPort  = requestPacket.SourcePort!.Value;
+
+        // TCP header = 24 bytes (20 fixed + 4 MSS option), DataOffset = 6
+        var tcpHeader = new byte[24];
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(0, 2), srcPort);
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(2, 2), dstPort);
+        NetworkHelper.WriteUInt32BigEndian(tcpHeader.AsSpan(4, 4), serverIsn);
+        NetworkHelper.WriteUInt32BigEndian(tcpHeader.AsSpan(8, 4), clientSeq + 1);
+        tcpHeader[12] = 0x60;                              // DataOffset = 6 (24 bytes)
+        tcpHeader[13] = (byte)(TcpFlags.SYN | TcpFlags.ACK);
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(14, 2), 65535); // Window
+        // [16-17] Checksum filled below; [18-19] Urgent = 0
+        // MSS option at byte 20: Kind=2, Len=4, MSS=1460 (0x05B4)
+        tcpHeader[20] = 0x02;
+        tcpHeader[21] = 0x04;
+        tcpHeader[22] = 0x05;
+        tcpHeader[23] = 0xB4;
+
+        var totalLength = (ushort)(20 + 24);
+        var ipHeader    = BuildIPv4Header(sourceIP, destIP, 0x06, totalLength);
+
+        var checksum = NetworkHelper.CalculateTcpUdpChecksum(sourceIP, destIP, 6, tcpHeader);
+        NetworkHelper.WriteUInt16BigEndian(tcpHeader.AsSpan(16, 2), checksum);
+
+        var packet = new byte[totalLength];
+        Array.Copy(ipHeader,   0, packet,  0, 20);
+        Array.Copy(tcpHeader,  0, packet, 20, 24);
+        return packet;
+    }
+
+    /// <summary>
+    /// 构建 ICMP Destination Unreachable / Port Unreachable 包
+    /// 用于拒绝非 DNS 的 UDP 流量（强制浏览器 QUIC → TCP 快速回退）
+    /// </summary>
+    public static byte[] BuildIcmpPortUnreachable(IPPacket originalUdpPacket)
+    {
+        var sourceIP = originalUdpPacket.Header.DestinationAddress.GetAddressBytes();
+        var destIP   = originalUdpPacket.Header.SourceAddress.GetAddressBytes();
+
+        // 重建原始 IP 头（20 bytes），用于 ICMP payload
+        var origIpHdr = new byte[20];
+        origIpHdr[0] = 0x45;
+        var origLen = (ushort)(20 + 8 + originalUdpPacket.Payload.Length);
+        NetworkHelper.WriteUInt16BigEndian(origIpHdr.AsSpan(2, 2), origLen);
+        origIpHdr[8] = 0x40; // TTL
+        origIpHdr[9] = 17;   // UDP
+        Array.Copy(originalUdpPacket.Header.SourceAddress.GetAddressBytes(),      0, origIpHdr, 12, 4);
+        Array.Copy(originalUdpPacket.Header.DestinationAddress.GetAddressBytes(), 0, origIpHdr, 16, 4);
+        var origIpChecksum = NetworkHelper.CalculateIPChecksum(origIpHdr);
+        NetworkHelper.WriteUInt16BigEndian(origIpHdr.AsSpan(10, 2), origIpChecksum);
+
+        // 原始 UDP 头（8 bytes）
+        var origUdpHdr = new byte[8];
+        NetworkHelper.WriteUInt16BigEndian(origUdpHdr.AsSpan(0, 2), originalUdpPacket.SourcePort!.Value);
+        NetworkHelper.WriteUInt16BigEndian(origUdpHdr.AsSpan(2, 2), originalUdpPacket.DestinationPort!.Value);
+        NetworkHelper.WriteUInt16BigEndian(origUdpHdr.AsSpan(4, 2), (ushort)(8 + originalUdpPacket.Payload.Length));
+
+        // ICMP 消息 = 8 字节头 + 20 字节原始 IP + 8 字节原始 UDP = 36 bytes
+        var icmpData = new byte[36];
+        icmpData[0] = 3; // Type: Destination Unreachable
+        icmpData[1] = 3; // Code: Port Unreachable
+        // [2-3] Checksum (填充在后), [4-7] Unused = 0
+        Array.Copy(origIpHdr,  0, icmpData,  8, 20);
+        Array.Copy(origUdpHdr, 0, icmpData, 28,  8);
+
+        // 计算 ICMP 校验和（普通 internet checksum，无伪头部）
+        uint sum = 0;
+        for (int i = 0; i < icmpData.Length; i += 2)
+        {
+            ushort word = (i + 1 < icmpData.Length)
+                ? NetworkHelper.ReadUInt16BigEndian(icmpData.AsSpan(i, 2))
+                : (ushort)(icmpData[i] << 8);
+            sum += word;
+        }
+        while (sum >> 16 != 0) sum = (sum & 0xFFFF) + (sum >> 16);
+        NetworkHelper.WriteUInt16BigEndian(icmpData.AsSpan(2, 2), (ushort)~sum);
+
+        var totalLength = (ushort)(20 + icmpData.Length);
+        var ipHeader    = BuildIPv4Header(sourceIP, destIP, 0x01 /* ICMP */, totalLength);
+
+        var packet = new byte[totalLength];
+        Array.Copy(ipHeader,  0, packet,  0, 20);
+        Array.Copy(icmpData,  0, packet, 20, icmpData.Length);
+        return packet;
     }
 
     /// <summary>

@@ -13,10 +13,12 @@ public class GfwListService
     private HashSet<string> _domains = new();
     private bool _initialized;
 
+    internal string ListPath => _gfwListPath;
+
     public GfwListService(string gfwListUrl, string gfwListPath)
     {
         _gfwListUrl = gfwListUrl;
-        _gfwListPath = gfwListPath;
+        _gfwListPath = AppPathResolver.ResolveAppFilePath(gfwListPath);
     }
 
     /// <summary>

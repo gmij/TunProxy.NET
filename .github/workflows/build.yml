@@ -134,7 +134,7 @@ jobs:
         path: TunProxy.NET-linux-x64.tar.gz
 
   # ─────────────────────────────────────────────────────────────
-  # macOS  osx-arm64   CLI (AOT) + Tray (AOT, net8.0-macos)
+  # macOS  osx-arm64   CLI (AOT) + Tray (AOT, net9.0-macos)
   # ─────────────────────────────────────────────────────────────
   publish-macos:
     name: Publish · macOS arm64
@@ -143,13 +143,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup .NET 8
+    - name: Setup .NET 9
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '8.0.x'
+        dotnet-version: '9.0.x'
 
-    - name: Install macOS workload (net8.0-macos)
-      run: sudo dotnet workload install macos
+    - name: Install macOS workload (net9.0-macos)
+      run: sudo env "PATH=$PATH" dotnet workload install macos
 
     - name: Restore (CLI + macOS Tray)
       run: |

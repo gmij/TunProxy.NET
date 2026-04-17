@@ -8,6 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <ApplicationId>net.tunproxy.tray.macos</ApplicationId>
     <!-- macOS 最低版本 12（Monterey） -->
     <SupportedOSPlatformVersion>12.0</SupportedOSPlatformVersion>
   </PropertyGroup>

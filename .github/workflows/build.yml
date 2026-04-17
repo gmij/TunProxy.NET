@@ -148,6 +148,11 @@ jobs:
       with:
         dotnet-version: '9.0.x'
 
+    - name: Pin SDK to 9.0 for this job
+      # Prevents dotnet host from selecting SDK 10 (pre-installed on the runner),
+      # which would install macOS SDK packs that require Xcode 26.3 (not available).
+      run: echo '{"sdk":{"version":"9.0","rollForward":"latestPatch"}}' > global.json
+
     - name: Install macOS workload (net9.0-macos)
       run: |
         sudo env "PATH=$PATH" dotnet workload install macos

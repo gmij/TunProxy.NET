@@ -66,6 +66,27 @@
   <data name="Page.Config.EnableGfw" xml:space="preserve">
     <value>Enable GFWList routing</value>
   </data>
+  <data name="Page.Config.RuleResource.Disabled" xml:space="preserve">
+    <value>Disabled</value>
+  </data>
+  <data name="Page.Config.RuleResource.Download" xml:space="preserve">
+    <value>Download</value>
+  </data>
+  <data name="Page.Config.RuleResource.Downloading" xml:space="preserve">
+    <value>Downloading...</value>
+  </data>
+  <data name="Page.Config.RuleResource.Missing" xml:space="preserve">
+    <value>Missing/invalid</value>
+  </data>
+  <data name="Page.Config.RuleResource.Preparing" xml:space="preserve">
+    <value>Preparing GEO/GFW resources before restart...</value>
+  </data>
+  <data name="Page.Config.RuleResource.Ready" xml:space="preserve">
+    <value>Valid</value>
+  </data>
+  <data name="Page.Config.RuleResource.Retry" xml:space="preserve">
+    <value>Retry</value>
+  </data>
   <data name="Page.Config.LocalProxyPort" xml:space="preserve">
     <value>Local proxy port</value>
   </data>
@@ -105,6 +126,42 @@
   <data name="Page.Config.ProxyPassword" xml:space="preserve">
     <value>Password (optional)</value>
   </data>
+  <data name="Page.Config.ProxyCheck" xml:space="preserve">
+    <value>Check upstream proxy</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Unknown" xml:space="preserve">
+    <value>Unchecked</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Hint" xml:space="preserve">
+    <value>Routing rules unlock after Google, GitHub, and YouTube all return HTTP 200 through this proxy.</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Checking" xml:space="preserve">
+    <value>Checking...</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Available" xml:space="preserve">
+    <value>Available</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.AvailableHint" xml:space="preserve">
+    <value>Upstream proxy is ready. Smart routing can be configured.</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Unavailable" xml:space="preserve">
+    <value>Unavailable</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.UnavailableHint" xml:space="preserve">
+    <value>Fix the upstream proxy before changing routing rules.</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.TargetOk" xml:space="preserve">
+    <value>OK in {0} ms</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.TargetFailed" xml:space="preserve">
+    <value>Request failed</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.CheckFailed" xml:space="preserve">
+    <value>Proxy check failed: {0}</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.RequiredBeforeSave" xml:space="preserve">
+    <value>Please check the upstream proxy first. Routing configuration can only be saved after all three sites return HTTP 200 through the proxy.</value>
+  </data>
   <data name="Page.Config.ProxyPort" xml:space="preserve">
     <value>Port</value>
   </data>
@@ -131,6 +188,15 @@
   </data>
   <data name="Page.Config.RoutingRules" xml:space="preserve">
     <value>Routing Rules</value>
+  </data>
+  <data name="Page.Config.RoutingLocked" xml:space="preserve">
+    <value>Routing rules are locked until the upstream proxy check passes.</value>
+  </data>
+  <data name="Page.Config.SmartRoutingDescription" xml:space="preserve">
+    <value>Smart routing is enabled: GFWList is evaluated first, then GeoIP. DNS answers are cached and reused to speed up later route decisions.</value>
+  </data>
+  <data name="Page.Config.DnsCacheHint" xml:space="preserve">
+    <value>DNS cache records can be viewed and cleared from the DNS page.</value>
   </data>
   <data name="Page.Config.Save" xml:space="preserve">
     <value>Save Configuration</value>
@@ -176,6 +242,39 @@
   </data>
   <data name="Page.Dns.ResolvedDomain" xml:space="preserve">
     <value>Resolved Domain</value>
+  </data>
+  <data name="Page.Dns.Route" xml:space="preserve">
+    <value>Route</value>
+  </data>
+  <data name="Page.Dns.Reason" xml:space="preserve">
+    <value>Reason</value>
+  </data>
+  <data name="Page.Dns.RouteDirect" xml:space="preserve">
+    <value>DIRECT</value>
+  </data>
+  <data name="Page.Dns.RouteProxy" xml:space="preserve">
+    <value>PROXY</value>
+  </data>
+  <data name="Page.Dns.RouteUnknown" xml:space="preserve">
+    <value>UNKNOWN</value>
+  </data>
+  <data name="Page.Dns.PrivateIp" xml:space="preserve">
+    <value>Private</value>
+  </data>
+  <data name="Page.Dns.BypassRoute" xml:space="preserve">
+    <value>Bypass</value>
+  </data>
+  <data name="Page.Dns.LegendDirect" xml:space="preserve">
+    <value>Private IP, resolved private IP, direct domain, or direct Geo</value>
+  </data>
+  <data name="Page.Dns.LegendGfw" xml:space="preserve">
+    <value>matched by GFW list</value>
+  </data>
+  <data name="Page.Dns.LegendGeo" xml:space="preserve">
+    <value>matched by GeoIP</value>
+  </data>
+  <data name="Page.Dns.LegendDefault" xml:space="preserve">
+    <value>default or unknown GeoIP</value>
   </data>
   <data name="Page.Dns.SearchPlaceholder" xml:space="preserve">
     <value>Search by IP or domain...</value>
@@ -271,7 +370,10 @@
     <value>Service Status</value>
   </data>
   <data name="Page.Status.ParseFailures" xml:space="preserve">
-    <value>Parse failures</value>
+    <value>Malformed packets</value>
+  </data>
+  <data name="Page.Status.Ipv6Packets" xml:space="preserve">
+    <value>IPv6 packets ignored</value>
   </data>
   <data name="Page.Status.PortFiltered" xml:space="preserve">
     <value>Filtered ports (non-80/443)</value>
@@ -348,6 +450,9 @@ Please confirm the service is running.</value>
   <data name="Tray.Install.Failed" xml:space="preserve">
     <value>Installation failed: {0}</value>
   </data>
+  <data name="Tray.Install.PrerequisiteFailed" xml:space="preserve">
+    <value>Cannot enable the TUN system service because enabled GEO/GFW resources are missing or invalid. Open Config, download the missing resources, then try again.</value>
+  </data>
   <data name="Tray.Install.Menu" xml:space="preserve">
     <value>Install as system service</value>
   </data>
@@ -395,6 +500,9 @@ Please confirm the service is running.</value>
   </data>
   <data name="Tray.Status.ResponseParseFailed" xml:space="preserve">
     <value>Unable to parse service response</value>
+  </data>
+  <data name="Tray.Status.Restarting" xml:space="preserve">
+    <value>Restarting service...</value>
   </data>
   <data name="Tray.Status.RunningState" xml:space="preserve">
     <value>Running</value>

@@ -87,14 +87,14 @@ public class LocalProxyConfig
 
 public class RouteConfig
 {
-    public string Mode { get; set; } = "whitelist";
+    public string Mode { get; set; } = "smart";
     public List<string> ProxyDomains { get; set; } = new();
     public List<string> DirectDomains { get; set; } = new();
-    public bool EnableGeo { get; set; }
+    public bool EnableGeo { get; set; } = true;
     public List<string> GeoProxy { get; set; } = new();
     public List<string> GeoDirect { get; set; } = new();
     public string GeoIpDbPath { get; set; } = "GeoLite2-Country.mmdb";
-    public bool EnableGfwList { get; set; }
+    public bool EnableGfwList { get; set; } = true;
     public string GfwListUrl { get; set; } = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt";
     public string GfwListPath { get; set; } = "gfwlist.txt";
     public string TunRouteMode { get; set; } = "global";

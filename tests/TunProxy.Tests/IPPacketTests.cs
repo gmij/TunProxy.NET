@@ -132,6 +132,34 @@ public class IPPacketTests
         Assert.Empty(packet.Payload);
     }
 
+    [Fact]
+    public void ShouldWaitForMoreTlsClientHello_ReturnsTrueForPartialRecord()
+    {
+        var partialClientHello = new byte[]
+        {
+            0x16, 0x03, 0x01, 0x00, 0x20,
+            0x01, 0x00, 0x00, 0x1C
+        };
+
+        Assert.True(ProtocolInspector.LooksLikeTlsClientHello(partialClientHello));
+        Assert.True(ProtocolInspector.ShouldWaitForMoreTlsClientHello(partialClientHello));
+    }
+
+    [Fact]
+    public void ShouldWaitForMoreTlsClientHello_ReturnsFalseForCompleteRecord()
+    {
+        var completeClientHello = new byte[5 + 4];
+        completeClientHello[0] = 0x16;
+        completeClientHello[1] = 0x03;
+        completeClientHello[2] = 0x01;
+        completeClientHello[3] = 0x00;
+        completeClientHello[4] = 0x04;
+        completeClientHello[5] = 0x01;
+
+        Assert.True(ProtocolInspector.LooksLikeTlsClientHello(completeClientHello));
+        Assert.False(ProtocolInspector.ShouldWaitForMoreTlsClientHello(completeClientHello));
+    }
+
     private static byte[] CreateTcpPacket(ushort totalLength, byte tcpDataOffset, byte[] payload)
     {
         var packet = new byte[Math.Max(totalLength, (ushort)40)];

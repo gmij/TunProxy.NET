@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Net;
 using Serilog;
 using TunProxy.Core.Connections;
+using TunProxy.Core.Configuration;
 using TunProxy.Core.Dns;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Tun;
@@ -13,27 +15,51 @@ public class DnsProxyService
     private readonly string _proxyHost;
     private readonly int _proxyPort;
     private readonly ProxyType _proxyType;
-    private readonly IpCacheManager _ipCache;
+    private readonly DnsResolutionStore _resolutionStore;
     private readonly string _upstreamDns;
     private readonly string? _proxyUsername;
     private readonly string? _proxyPassword;
+    private readonly ProxyConfig _proxyConfig;
+    private readonly RouteDecisionService? _routeDecision;
+    private long _tcpQueries;
+    private long _tcpSuccesses;
+    private long _tcpFailures;
+    private long _dohQueries;
+    private long _dohSuccesses;
+    private long _dohFailures;
+    private string? _lastDomain;
+    private string? _lastMethod;
+    private string? _lastError;
+    private DateTime? _lastQueryUtc;
+    private DateTime? _lastSuccessUtc;
+    private DateTime? _lastFailureUtc;
 
     public DnsProxyService(
         string proxyHost,
         int proxyPort,
         ProxyType proxyType,
-        IpCacheManager ipCache,
+        DnsResolutionStore resolutionStore,
         string upstreamDns = "8.8.8.8",
         string? proxyUsername = null,
-        string? proxyPassword = null)
+        string? proxyPassword = null,
+        RouteDecisionService? routeDecision = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
         _proxyType = proxyType;
-        _ipCache = ipCache;
+        _resolutionStore = resolutionStore;
         _upstreamDns = upstreamDns;
         _proxyUsername = proxyUsername;
         _proxyPassword = proxyPassword;
+        _routeDecision = routeDecision;
+        _proxyConfig = new ProxyConfig
+        {
+            Host = proxyHost,
+            Port = proxyPort,
+            Type = proxyType == ProxyType.Http ? "Http" : "Socks5",
+            Username = proxyUsername,
+            Password = proxyPassword
+        };
     }
 
     public async Task ProcessDnsQueryAsync(ITunDevice device, IPPacket requestPacket, CancellationToken ct)
@@ -48,13 +74,31 @@ public class DnsProxyService
             }
 
             var domain = dnsPacket.Questions[0].Name;
+            _lastDomain = domain;
+            _lastQueryUtc = DateTime.UtcNow;
             Log.Debug("[DNS ] Query: {Domain}", domain);
+
+            if (_resolutionStore.TryBuildCachedDnsResponse(dnsPacket, out var cachedResponse))
+            {
+                _lastMethod = "cache";
+                _lastSuccessUtc = DateTime.UtcNow;
+                _lastError = null;
+                Log.Debug("[DNS ] Cache hit for {Domain}", domain);
+                TunWriter.WriteUdpResponse(device, requestPacket, cachedResponse);
+                return;
+            }
 
             var dnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
                 ? _upstreamDns
                 : requestPacket.Header.DestinationAddress.ToString();
 
             var dnsResponse = await QueryDnsViaProxyAsync(requestPacket.Payload, domain, dnsServer, ct);
+            if (dnsResponse == null || dnsResponse.Length == 0)
+            {
+                Log.Warning("[DNS ] TCP DNS failed for {Domain}; trying DoH fallback", domain);
+                dnsResponse = await QueryDnsOverHttpsAsync(requestPacket.Payload, domain, ct);
+            }
+
             if (dnsResponse == null || dnsResponse.Length == 0)
             {
                 Log.Warning("[DNS ] {Domain} query failed", domain);
@@ -66,19 +110,32 @@ public class DnsProxyService
                 var dnsRespPacket = DnsPacket.Parse(dnsResponse);
                 if (dnsRespPacket != null)
                 {
+                    _resolutionStore.StoreDnsResponseInCache(dnsRespPacket);
+
                     var resolvedIps = new List<string>();
                     foreach (var answer in dnsRespPacket.Answers)
                     {
                         if (answer.Type == 1 && answer.Data.Length == 4)
                         {
-                            var ip = new IPAddress(answer.Data).ToString();
-                            _ipCache.CacheHostname(ip, domain);
+                            var ipAddress = new IPAddress(answer.Data);
+                            var ip = ipAddress.ToString();
+                            var decision = _routeDecision == null
+                                ? null
+                                : await _routeDecision.DecideForObservedAddressAsync(domain, ipAddress, ct);
+                            _resolutionStore.RecordObservedHostname(
+                                ip,
+                                domain,
+                                "DNS",
+                                decision == null ? "UNKNOWN" : decision.ShouldProxy ? "PROXY" : "DIRECT",
+                                decision?.Reason);
                             resolvedIps.Add(ip);
                         }
                     }
 
                     if (resolvedIps.Count > 0)
-                        Log.Information("[DNS ] {Domain} -> {IPs}", domain, string.Join(", ", resolvedIps));
+                    {
+                        Log.Debug("[DNS ] {Domain} returned {IPs}", domain, string.Join(", ", resolvedIps));
+                    }
                 }
             }
             catch
@@ -92,6 +149,25 @@ public class DnsProxyService
             Log.Error(ex, "Failed to process DNS query");
         }
     }
+
+    public DnsDiagnosticsSnapshot GetDiagnostics() => new()
+    {
+        TcpQueries = Interlocked.Read(ref _tcpQueries),
+        TcpSuccesses = Interlocked.Read(ref _tcpSuccesses),
+        TcpFailures = Interlocked.Read(ref _tcpFailures),
+        DohQueries = Interlocked.Read(ref _dohQueries),
+        DohSuccesses = Interlocked.Read(ref _dohSuccesses),
+        DohFailures = Interlocked.Read(ref _dohFailures),
+        CacheHits = _resolutionStore.CacheHits,
+        CacheMisses = _resolutionStore.CacheMisses,
+        CacheEntries = _resolutionStore.CacheEntryCount,
+        LastDomain = _lastDomain,
+        LastMethod = _lastMethod,
+        LastError = _lastError,
+        LastQueryUtc = _lastQueryUtc,
+        LastSuccessUtc = _lastSuccessUtc,
+        LastFailureUtc = _lastFailureUtc
+    };
 
     internal Task<byte[]?> QueryDnsViaProxyAsync(string domain, string dnsServer, CancellationToken ct)
     {
@@ -111,6 +187,9 @@ public class DnsProxyService
     internal async Task<byte[]?> QueryDnsViaProxyAsync(byte[] dnsQueryPayload, string domain, string dnsServer, CancellationToken ct)
     {
         System.Net.Sockets.TcpClient? client = null;
+        var stopwatch = Stopwatch.StartNew();
+        Interlocked.Increment(ref _tcpQueries);
+        _lastMethod = "tcp-proxy";
         try
         {
             client = new System.Net.Sockets.TcpClient();
@@ -227,16 +306,74 @@ public class DnsProxyService
 
             var dnsResponseData = new byte[responseLength];
             await stream.ReadExactlyAsync(dnsResponseData, ct);
+            Interlocked.Increment(ref _tcpSuccesses);
+            _lastSuccessUtc = DateTime.UtcNow;
+            Log.Debug("[DNS ] TCP proxy DNS succeeded for {Domain} via {DnsServer} in {ElapsedMs} ms",
+                domain,
+                dnsServer,
+                stopwatch.ElapsedMilliseconds);
             return dnsResponseData;
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "DNS query via {ProxyType} proxy failed for {Domain}", _proxyType, domain);
+            Interlocked.Increment(ref _tcpFailures);
+            _lastFailureUtc = DateTime.UtcNow;
+            _lastError = $"tcp-proxy: {ex.GetType().Name}: {ex.Message}";
+            Log.Warning(ex,
+                "[DNS ] TCP proxy DNS failed for {Domain} via {DnsServer} using {ProxyType} in {ElapsedMs} ms",
+                domain,
+                dnsServer,
+                _proxyType,
+                stopwatch.ElapsedMilliseconds);
             return null;
         }
         finally
         {
             client?.Dispose();
+        }
+    }
+
+    internal async Task<byte[]?> QueryDnsOverHttpsAsync(byte[] dnsQueryPayload, string domain, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        Interlocked.Increment(ref _dohQueries);
+        _lastMethod = "doh";
+        try
+        {
+            using var client = ProxyHttpClientFactory.Create(_proxyConfig, TimeSpan.FromSeconds(15));
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://dns.google/dns-query")
+            {
+                Content = new ByteArrayContent(dnsQueryPayload)
+            };
+
+            request.Headers.Accept.ParseAdd("application/dns-message");
+            request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/dns-message");
+
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                Interlocked.Increment(ref _dohFailures);
+                _lastFailureUtc = DateTime.UtcNow;
+                _lastError = $"doh: HTTP {(int)response.StatusCode} {response.StatusCode}";
+                Log.Warning("[DNS ] DoH query for {Domain} failed: {Status}", domain, response.StatusCode);
+                return null;
+            }
+
+            var data = await response.Content.ReadAsByteArrayAsync(ct);
+            Interlocked.Increment(ref _dohSuccesses);
+            _lastSuccessUtc = DateTime.UtcNow;
+            Log.Information("[DNS ] DoH fallback succeeded for {Domain} in {ElapsedMs} ms",
+                domain,
+                stopwatch.ElapsedMilliseconds);
+            return data;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Interlocked.Increment(ref _dohFailures);
+            _lastFailureUtc = DateTime.UtcNow;
+            _lastError = $"doh: {ex.GetType().Name}: {ex.Message}";
+            Log.Warning(ex, "[DNS ] DoH fallback failed for {Domain}", domain);
+            return null;
         }
     }
 }

@@ -5,16 +5,13 @@ using TunProxy.Core.Route;
 namespace TunProxy.CLI;
 
 /// <summary>
-/// IP 缓存管理器
-/// 管理直连 IP 绕过路由缓存和代理封锁 IP 缓存
-/// 从 TunProxyService 中提取，符合 SRP 原则
+/// Tracks runtime IP routing state.
 /// </summary>
 public class IpCacheManager
 {
-    private readonly ConcurrentDictionary<string, int> _directBypassedIps = new();       // 直连 IP 绕过路由状态：0=添加中，1=已确认
-    private readonly ConcurrentDictionary<string, bool> _proxyBlockedIps = new();         // 代理封锁的 IP（超时/拒绝），SYN 直接 RST
-    private readonly ConcurrentDictionary<string, DateTime> _connectFailedIps = new();     // CONNECT_FAILED IP 临时记录（5分钟内快速失败）
-    private readonly ConcurrentDictionary<string, string> _ipHostnameCache = new();       // IP → 域名，用于 CONNECT
+    private readonly ConcurrentDictionary<string, int> _directBypassedIps = new();
+    private readonly ConcurrentDictionary<string, bool> _proxyBlockedIps = new();
+    private readonly ConcurrentDictionary<string, DateTime> _connectFailedIps = new();
 
     private const string DirectIpCacheFile = "direct_ip_cache.txt";
     private const string BlockedIpCacheFile = "blocked_ip_cache.txt";
@@ -28,22 +25,59 @@ public class IpCacheManager
         _routeService = routeService;
     }
 
-    /// <summary>
-    /// 启动时加载直连 IP 缓存并批量添加绕过路由
-    /// </summary>
-    public void LoadAndApplyDirectIpCache()
+    public void RetireDirectIpCache()
     {
-        if (!File.Exists(DirectIpCachePath)) return;
+        if (!File.Exists(DirectIpCachePath))
+        {
+            return;
+        }
+
         try
         {
             var ips = File.ReadAllLines(DirectIpCachePath)
-                .Select(l => l.Trim())
-                .Where(l => l.Length > 0 && !l.StartsWith('#'))
+                .Select(static line => line.Trim())
+                .Where(static line => line.Length > 0 && !line.StartsWith('#'))
                 .Distinct()
                 .ToList();
-            if (ips.Count == 0) return;
 
-            int added = 0;
+            foreach (var ip in ips)
+            {
+                _routeService?.RemoveBypassRoute(ip);
+                _directBypassedIps.TryRemove(ip, out _);
+            }
+
+            File.Delete(DirectIpCachePath);
+            if (ips.Count > 0)
+            {
+                Log.Information("[ROUTE] Retired legacy direct-route cache entries: {Count}", ips.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[ROUTE] Failed to retire legacy direct-route cache");
+        }
+    }
+
+    public void LoadAndApplyDirectIpCache()
+    {
+        if (!File.Exists(DirectIpCachePath))
+        {
+            return;
+        }
+
+        try
+        {
+            var ips = File.ReadAllLines(DirectIpCachePath)
+                .Select(static line => line.Trim())
+                .Where(static line => line.Length > 0 && !line.StartsWith('#'))
+                .Distinct()
+                .ToList();
+            if (ips.Count == 0)
+            {
+                return;
+            }
+
+            var added = 0;
             foreach (var ip in ips)
             {
                 if (_directBypassedIps.TryAdd(ip, 0))
@@ -54,140 +88,130 @@ public class IpCacheManager
                         added++;
                     }
                     else
+                    {
                         _directBypassedIps.TryRemove(ip, out _);
+                    }
                 }
             }
-            Log.Information("直连 IP 缓存加载：{Total} 条记录，成功添加 {Added} 条绕过路由", ips.Count, added);
+
+            Log.Information("[ROUTE] Loaded direct IP cache: {Total} entries, {Added} routes applied", ips.Count, added);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "加载直连 IP 缓存失败，将在运行时重建");
+            Log.Warning(ex, "[ROUTE] Failed to load direct IP cache; it will be rebuilt at runtime");
         }
     }
 
-    /// <summary>
-    /// 启动时加载代理封锁 IP 缓存
-    /// </summary>
     public void LoadBlockedIpCache()
     {
-        if (!File.Exists(BlockedIpCachePath)) return;
+        if (!File.Exists(BlockedIpCachePath))
+        {
+            return;
+        }
+
         try
         {
             var ips = File.ReadAllLines(BlockedIpCachePath)
-                .Select(l => l.Trim())
-                .Where(l => l.Length > 0 && !l.StartsWith('#'))
+                .Select(static line => line.Trim())
+                .Where(static line => line.Length > 0 && !line.StartsWith('#'))
                 .Distinct()
                 .ToList();
+
             foreach (var ip in ips)
+            {
                 _proxyBlockedIps.TryAdd(ip, true);
+            }
+
             if (ips.Count > 0)
-                Log.Information("代理封锁 IP 缓存加载：{Count} 条", ips.Count);
+            {
+                Log.Information("[ROUTE] Loaded proxy-blocked IP cache: {Count} entries", ips.Count);
+            }
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "加载代理封锁 IP 缓存失败");
+            Log.Warning(ex, "[ROUTE] Failed to load proxy-blocked IP cache");
         }
     }
 
-    /// <summary>
-    /// 尝试添加直连 IP 绕过路由（/24 子网），返回是否为首次添加
-    /// </summary>
     public bool TryAddDirectBypass(string net24)
     {
-        if (!_directBypassedIps.TryAdd(net24, 0)) return false;
+        if (!_directBypassedIps.TryAdd(net24, 0))
+        {
+            return false;
+        }
 
-        var subnet = net24;
         _ = Task.Run(() =>
         {
-            if (_routeService?.AddBypassRoute(subnet, 24) == true)
+            if (_routeService?.AddBypassRoute(net24, 24) == true)
             {
-                _directBypassedIps.TryUpdate(subnet, 1, 0);
-                AppendDirectIpCache(subnet);
+                _directBypassedIps.TryUpdate(net24, 1, 0);
+                AppendDirectIpCache(net24);
             }
             else
-                _directBypassedIps.TryRemove(subnet, out _);
+            {
+                _directBypassedIps.TryRemove(net24, out _);
+            }
         });
         return true;
     }
 
-    /// <summary>
-    /// IP 是否被代理封锁
-    /// </summary>
     public bool IsProxyBlocked(string ip) => _proxyBlockedIps.ContainsKey(ip);
 
-    /// <summary>
-    /// 添加代理封锁 IP
-    /// </summary>
     public bool TryAddProxyBlocked(string ip)
     {
-        if (!_proxyBlockedIps.TryAdd(ip, true)) return false;
+        if (!_proxyBlockedIps.TryAdd(ip, true))
+        {
+            return false;
+        }
+
         _ = Task.Run(() => AppendBlockedIpCache(ip));
         return true;
     }
 
-    /// <summary>
-    /// IP 是否在 CONNECT_FAILED 临时屏蔽中（5分钟内）
-    /// </summary>
-    public bool IsConnectFailed(string ip)
-    {
-        return _connectFailedIps.TryGetValue(ip, out var failedAt) &&
-            (DateTime.UtcNow - failedAt).TotalMinutes < 5;
-    }
+    public bool IsConnectFailed(string ip) =>
+        _connectFailedIps.TryGetValue(ip, out var failedAt) &&
+        (DateTime.UtcNow - failedAt).TotalMinutes < 5;
 
-    /// <summary>
-    /// 记录 CONNECT_FAILED IP
-    /// </summary>
     public void RecordConnectFailed(string ip)
     {
         _connectFailedIps[ip] = DateTime.UtcNow;
     }
 
-    /// <summary>
-    /// 缓存 IP → 域名映射
-    /// </summary>
-    public void CacheHostname(string ip, string hostname)
-    {
-        _ipHostnameCache.TryAdd(ip, hostname);
-    }
-
-    /// <summary>
-    /// 获取缓存的域名
-    /// </summary>
-    public string? GetCachedHostname(string ip)
-    {
-        return _ipHostnameCache.TryGetValue(ip, out var hostname) ? hostname : null;
-    }
-
-    /// <summary>
-    /// 清理停止时的直连 IP 绕过路由
-    /// </summary>
     public void CleanupBypassRoutes()
     {
         foreach (var ip in _directBypassedIps.Keys)
         {
             _routeService?.RemoveBypassRoute(ip);
         }
+
         if (_directBypassedIps.Count > 0)
-            Log.Information("直连 IP 绕过路由已删除（{Count} 条）", _directBypassedIps.Count);
+        {
+            Log.Information("[ROUTE] Removed direct bypass routes: {Count}", _directBypassedIps.Count);
+        }
     }
+
+    public IReadOnlyList<string> GetDirectIpSnapshot() =>
+        _directBypassedIps.Keys.Order(StringComparer.OrdinalIgnoreCase).ToList();
 
     private static void AppendDirectIpCache(string ip)
     {
-        try { File.AppendAllText(DirectIpCachePath, ip + Environment.NewLine); }
-        catch { }
+        try
+        {
+            File.AppendAllText(DirectIpCachePath, ip + Environment.NewLine);
+        }
+        catch
+        {
+        }
     }
 
     private static void AppendBlockedIpCache(string ip)
     {
-        try { File.AppendAllText(BlockedIpCachePath, ip + Environment.NewLine); }
-        catch { }
+        try
+        {
+            File.AppendAllText(BlockedIpCachePath, ip + Environment.NewLine);
+        }
+        catch
+        {
+        }
     }
-
-    /// <summary>获取 IP→域名 缓存快照（供 Dashboard 展示）</summary>
-    public IReadOnlyDictionary<string, string> GetHostnameCacheSnapshot() =>
-        new Dictionary<string, string>(_ipHostnameCache);
-
-    /// <summary>获取直连 IP 列表快照</summary>
-    public IReadOnlyList<string> GetDirectIpSnapshot() =>
-        _directBypassedIps.Keys.ToList();
 }

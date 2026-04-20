@@ -101,6 +101,11 @@ public static class PacketBuilder
     public static byte[] BuildSynAck(IPPacket requestPacket, out uint serverIsn)
     {
         serverIsn = (uint)Random.Shared.Next();
+        return BuildSynAck(requestPacket, serverIsn);
+    }
+
+    public static byte[] BuildSynAck(IPPacket requestPacket, uint serverIsn)
+    {
         uint clientSeq = requestPacket.TCPHeader?.SequenceNumber ?? 0;
 
         var sourceIP = requestPacket.Header.DestinationAddress.GetAddressBytes();

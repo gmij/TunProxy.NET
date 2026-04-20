@@ -22,6 +22,7 @@ internal sealed class SystemProxy
     private int _savedEnable;
     private string? _savedServer;
     private string? _savedBypass;
+    private string? _savedAutoConfigUrl;
     private bool _applied;
 
     public bool IsApplied => _applied;
@@ -38,13 +39,12 @@ internal sealed class SystemProxy
                 return false;
             }
 
-            _savedEnable = (int)(key.GetValue("ProxyEnable", 0) ?? 0);
-            _savedServer = key.GetValue("ProxyServer") as string;
-            _savedBypass = key.GetValue("ProxyOverride") as string;
+            SaveSnapshotIfNeeded(key);
 
             key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
             key.SetValue("ProxyServer", proxyAddress, RegistryValueKind.String);
             key.SetValue("ProxyOverride", bypassList, RegistryValueKind.String);
+            key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
 
             Notify();
             _applied = true;
@@ -56,16 +56,10 @@ internal sealed class SystemProxy
         }
     }
 
-    public void DisableIfLocal()
+    public void DisableForTun()
     {
         try
         {
-            if (_applied)
-            {
-                Restore();
-                return;
-            }
-
             using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsKey, writable: true);
             if (key == null)
             {
@@ -73,20 +67,17 @@ internal sealed class SystemProxy
             }
 
             var enabled = (int)(key.GetValue("ProxyEnable", 0) ?? 0);
-            if (enabled == 0)
+            var autoConfigUrl = key.GetValue("AutoConfigURL") as string;
+            if (enabled == 0 && string.IsNullOrWhiteSpace(autoConfigUrl))
             {
                 return;
             }
 
-            var server = key.GetValue("ProxyServer") as string ?? "";
-            if (!server.StartsWith("127.0.0.1", StringComparison.Ordinal) &&
-                !server.StartsWith("localhost", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
+            SaveSnapshotIfNeeded(key);
             key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+            key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
             Notify();
+            _applied = true;
         }
         catch
         {
@@ -128,6 +119,15 @@ internal sealed class SystemProxy
                 key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
             }
 
+            if (_savedAutoConfigUrl != null)
+            {
+                key.SetValue("AutoConfigURL", _savedAutoConfigUrl, RegistryValueKind.String);
+            }
+            else
+            {
+                key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
+            }
+
             Notify();
             _applied = false;
             return true;
@@ -136,6 +136,19 @@ internal sealed class SystemProxy
         {
             return false;
         }
+    }
+
+    private void SaveSnapshotIfNeeded(RegistryKey key)
+    {
+        if (_applied)
+        {
+            return;
+        }
+
+        _savedEnable = (int)(key.GetValue("ProxyEnable", 0) ?? 0);
+        _savedServer = key.GetValue("ProxyServer") as string;
+        _savedBypass = key.GetValue("ProxyOverride") as string;
+        _savedAutoConfigUrl = key.GetValue("AutoConfigURL") as string;
     }
 
     private static void Notify()

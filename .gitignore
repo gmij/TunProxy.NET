@@ -29,3 +29,7 @@ wintun.zip
 
 # GFWList
 gfwlist.txt
+
+dist/**
+
+.codexbuild/**

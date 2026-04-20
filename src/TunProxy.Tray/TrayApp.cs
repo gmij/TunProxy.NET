@@ -22,6 +22,7 @@ internal sealed class TrayApp : IDisposable
     private const string ClassName = "TunProxyTrayWnd";
     private const string SvcName = "TunProxyService";
     private const string ApiBase = "http://localhost:50000";
+    private const string RestartRequestFileName = "tunproxy.restart";
     private const uint TimerId = 1;
 
     private const int CMD_STATUS = 1;
@@ -56,6 +57,8 @@ internal sealed class TrayApp : IDisposable
 
     private static string AppDir =>
         Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+
+    private static string RestartRequestPath => Path.Combine(AppDir, RestartRequestFileName);
 
     public void Run()
     {
@@ -160,6 +163,8 @@ internal sealed class TrayApp : IDisposable
 
     private void ShowContextMenu()
     {
+        UpdateInstallState();
+
         var menu = CreatePopupMenu();
 
         AppendMenuW(menu, MF_STRING | MF_GRAYED, CMD_STATUS, _statusText);
@@ -240,6 +245,8 @@ internal sealed class TrayApp : IDisposable
 
     private async Task PollStatusAsync()
     {
+        UpdateInstallState();
+
         ServiceState newState;
         string statusText;
         ServiceStatusDto? lastDto = null;
@@ -288,6 +295,13 @@ internal sealed class TrayApp : IDisposable
                 : Text("Tray.Status.ServiceNotStarted");
         }
 
+        if (newState == ServiceState.Stopped && TryConsumeRestartRequest())
+        {
+            StartService();
+            newState = ServiceState.Downloading;
+            statusText = Text("Tray.Status.Restarting");
+        }
+
         if (!_autoStarted)
         {
             _autoStarted = true;
@@ -297,7 +311,7 @@ internal sealed class TrayApp : IDisposable
             }
         }
 
-        if (newState == ServiceState.Running && _currentState != ServiceState.Running)
+        if (newState == ServiceState.Running)
         {
             if (lastDto?.Mode != "tun")
             {
@@ -305,7 +319,7 @@ internal sealed class TrayApp : IDisposable
             }
             else
             {
-                _sysProxy.DisableIfLocal();
+                _sysProxy.DisableForTun();
             }
         }
         else if (newState != ServiceState.Running && _currentState == ServiceState.Running)
@@ -325,6 +339,33 @@ internal sealed class TrayApp : IDisposable
             IsServiceInstalled()
             && newState == ServiceState.Running
             && lastDto?.Mode == "proxy";
+    }
+
+    private static bool TryConsumeRestartRequest()
+    {
+        try
+        {
+            if (!File.Exists(RestartRequestPath))
+            {
+                return false;
+            }
+
+            if (IsServiceInstalled())
+            {
+                using var controller = new ServiceController(SvcName);
+                if (controller.Status != ServiceControllerStatus.Stopped)
+                {
+                    return false;
+                }
+            }
+
+            File.Delete(RestartRequestPath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void ApplyState(ServiceState state, string statusText)
@@ -551,7 +592,16 @@ internal sealed class TrayApp : IDisposable
                 Verb = "runas",
                 WorkingDirectory = AppDir
             });
-            process?.WaitForExit(15000);
+            var installFinished = process?.WaitForExit(15000) ?? false;
+            if (!installFinished || process?.ExitCode != 0)
+            {
+                MessageBoxW(
+                    _hWnd,
+                    Text("Tray.Install.PrerequisiteFailed"),
+                    Text("Tray.Caption.Error"),
+                    MB_OK | MB_ICONERROR);
+                return;
+            }
 
             UpdateInstallState();
 
@@ -628,7 +678,10 @@ internal sealed class TrayApp : IDisposable
             });
             process?.WaitForExit(15000);
 
+            WaitForServiceUninstalled(TimeSpan.FromSeconds(10));
             UpdateInstallState();
+            ApplyState(_currentState, _statusText);
+            StartService();
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -637,6 +690,20 @@ internal sealed class TrayApp : IDisposable
                 Format("Tray.Uninstall.Failed", ex.Message),
                 Text("Tray.Caption.Error"),
                 MB_OK | MB_ICONERROR);
+        }
+    }
+
+    private static void WaitForServiceUninstalled(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!IsServiceInstalled())
+            {
+                return;
+            }
+
+            Thread.Sleep(300);
         }
     }
 

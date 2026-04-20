@@ -178,7 +178,12 @@ public class IpCacheManager
         _connectFailedIps[ip] = DateTime.UtcNow;
     }
 
-    public void CacheHostname(string ip, string hostname)
+    public void CacheHostname(
+        string ip,
+        string hostname,
+        string source = "Observed",
+        string? route = null,
+        string? reason = null)
     {
         if (string.IsNullOrWhiteSpace(ip) || string.IsNullOrWhiteSpace(hostname))
         {
@@ -186,16 +191,68 @@ public class IpCacheManager
         }
 
         var normalized = hostname.Trim().TrimEnd('.');
+        var normalizedRoute = string.IsNullOrWhiteSpace(route) ? "UNKNOWN" : route;
+        var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "Observed" : reason;
         var now = DateTime.UtcNow;
+        _ipHostnameCache.TryGetValue(ip, out var previous);
         _ipHostnameCache.AddOrUpdate(
             ip,
-            _ => new HostnameCacheEntry(normalized, now, 1),
+            _ => new HostnameCacheEntry(normalized, normalizedRoute, normalizedReason, now, 1),
             (_, existing) => existing with
             {
                 Hostname = normalized,
+                Route = normalizedRoute,
+                Reason = normalizedReason,
                 LastSeenUtc = now,
                 SeenCount = existing.SeenCount + 1
             });
+
+        if (previous == null)
+        {
+            LogDnsMapping(normalized, ip, source, normalizedRoute, normalizedReason, previousHostname: null);
+        }
+        else if (!previous.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
+                 !previous.Route.Equals(normalizedRoute, StringComparison.OrdinalIgnoreCase) ||
+                 !previous.Reason.Equals(normalizedReason, StringComparison.OrdinalIgnoreCase))
+        {
+            LogDnsMapping(
+                normalized,
+                ip,
+                source,
+                normalizedRoute,
+                normalizedReason,
+                previous.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) ? null : previous.Hostname);
+        }
+    }
+
+    private static void LogDnsMapping(
+        string hostname,
+        string ip,
+        string source,
+        string? route,
+        string? reason,
+        string? previousHostname)
+    {
+        if (previousHostname == null)
+        {
+            Log.Information(
+                "[DNS ] {Hostname} -> {IP} -> {Route}/{Reason} ({Source})",
+                hostname,
+                ip,
+                route,
+                reason,
+                source);
+            return;
+        }
+
+        Log.Information(
+            "[DNS ] {Hostname} -> {IP} -> {Route}/{Reason} ({Source}; was {PreviousHostname})",
+            hostname,
+            ip,
+            route,
+            reason,
+            source,
+            previousHostname);
     }
 
     public string? GetCachedHostname(string ip)
@@ -247,4 +304,9 @@ public class IpCacheManager
     }
 }
 
-internal sealed record HostnameCacheEntry(string Hostname, DateTime LastSeenUtc, long SeenCount);
+internal sealed record HostnameCacheEntry(
+    string Hostname,
+    string Route,
+    string Reason,
+    DateTime LastSeenUtc,
+    long SeenCount);

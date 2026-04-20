@@ -41,6 +41,9 @@ public sealed class RouteDecisionService
     public Task<RouteDecision> DecideForTunAsync(string? host, IPAddress destinationIp, CancellationToken ct) =>
         DecideAsync(host, destinationIp, resolveHost: true, ct);
 
+    public Task<RouteDecision> DecideForObservedAddressAsync(string? host, IPAddress destinationIp, CancellationToken ct) =>
+        DecideAsync(host, destinationIp, resolveHost: false, ct);
+
     private async Task<RouteDecision> DecideAsync(
         string? host,
         IPAddress? destinationIp,

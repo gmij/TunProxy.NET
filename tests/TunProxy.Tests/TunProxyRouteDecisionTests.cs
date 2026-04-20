@@ -143,4 +143,27 @@ public class TunProxyRouteDecisionTests
         Assert.Equal(IPAddress.Parse("203.0.113.20"), decision.EvaluatedIp);
     }
 
+    [Fact]
+    public async Task ObservedAddressDecision_DoesNotResolveHost()
+    {
+        var resolveCalls = 0;
+        var service = new RouteDecisionService(
+            new AppConfig { Route = { EnableGeo = true } },
+            getCountryCode: _ => "CN",
+            resolveHost: (_, _) =>
+            {
+                resolveCalls++;
+                return Task.FromResult<IPAddress?>(IPAddress.Parse("8.8.8.8"));
+            });
+
+        var decision = await service.DecideForObservedAddressAsync(
+            "cdn.example.cn",
+            IPAddress.Parse("8.8.4.4"),
+            CancellationToken.None);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("Geo:CN", decision.Reason);
+        Assert.Equal(0, resolveCalls);
+    }
+
 }

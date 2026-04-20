@@ -15,6 +15,7 @@ public class WindowsRouteService : IRouteService
     private readonly string _tunIpAddress;
     private readonly string _tunSubnetMask;
     private readonly HashSet<string> _addedBypassRoutes = new(StringComparer.OrdinalIgnoreCase);
+    private string? _cachedOriginalDefaultGateway;
 
     public WindowsRouteService(string tunIpAddress = "10.0.0.1", string tunSubnetMask = "255.255.255.0")
     {
@@ -92,9 +93,15 @@ public class WindowsRouteService : IRouteService
 
     public string? GetOriginalDefaultGateway()
     {
+        if (!string.IsNullOrWhiteSpace(_cachedOriginalDefaultGateway))
+        {
+            return _cachedOriginalDefaultGateway;
+        }
+
         var nicGateway = GetGatewayFromNetworkInterfaces();
         if (!string.IsNullOrWhiteSpace(nicGateway))
         {
+            _cachedOriginalDefaultGateway = nicGateway;
             return nicGateway;
         }
 
@@ -111,6 +118,7 @@ public class WindowsRouteService : IRouteService
         if (!string.IsNullOrWhiteSpace(routeGateway))
         {
             Log.Information("[ROUTE] Original gateway selected from route table: {Gateway}", routeGateway);
+            _cachedOriginalDefaultGateway = routeGateway;
         }
 
         return routeGateway;

@@ -71,7 +71,8 @@ public class TunProxyService : IProxyService
             _ipCache,
             config.Tun.DnsServer,
             config.Proxy.Username,
-            config.Proxy.Password);
+            config.Proxy.Password,
+            _routeDecision);
     }
 
     public ServiceStatus GetStatus() => new()
@@ -102,7 +103,7 @@ public class TunProxyService : IProxyService
                 continue;
             }
 
-            var decision = await _routeDecision.DecideForTunAsync(hostname, ipAddress, ct);
+            var decision = await _routeDecision.DecideForObservedAddressAsync(hostname, ipAddress, ct);
             records.Add(new DnsRouteRecord(
                 ipText,
                 hostname,
@@ -113,7 +114,8 @@ public class TunProxyService : IProxyService
         }
 
         return records
-            .OrderBy(static item => item.Route)
+            .OrderBy(static item => item.Hostname, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static item => item.Route)
             .ThenBy(static item => item.Reason, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static item => item.IpAddress, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -197,6 +199,13 @@ public class TunProxyService : IProxyService
 
         try
         {
+            var canInitializeRulesBeforeTunRoute = _config.Proxy.GetProxyType() == ProxyType.Http;
+            if (canInitializeRulesBeforeTunRoute)
+            {
+                Log.Information("[TUN ] Initializing GFWList/GeoIP before applying TUN routes through the upstream HTTP proxy.");
+                await InitializeRuleServicesAsync(ct, waitForProxyReadyWhenNeeded: false);
+            }
+
             if (OperatingSystem.IsWindows())
             {
                 Log.Information("[TUN ] Checking wintun.dll...");
@@ -247,7 +256,10 @@ public class TunProxyService : IProxyService
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             Log.Information("[TUN ] Starting packet workers and background services...");
             StartPacketWorkers(_cts.Token);
-            InitializeBackgroundServices();
+            if (!canInitializeRulesBeforeTunRoute)
+            {
+                InitializeBackgroundServices();
+            }
             StartMetricsLogger(_cts.Token);
 
             Log.Information("TunProxy is running. Press Ctrl+C to stop.");
@@ -497,20 +509,29 @@ public class TunProxyService : IProxyService
                         domainSource = cached != null ? "DNS" : "IP";
                     }
 
-                    if (connectHost != destIP && !IPAddress.TryParse(connectHost, out _))
-                    {
-                        _ipCache!.CacheHostname(destIP, connectHost);
-                    }
-
                     var finalDecision = await _routeDecision.DecideForTunAsync(
                         connectHost != destIP ? connectHost : null,
                         packet.Header.DestinationAddress,
                         ct);
-                    if (connectHost != destIP &&
-                        finalDecision.EvaluatedIp != null &&
-                        !IPAddress.TryParse(connectHost, out _))
+                    if (connectHost != destIP && !IPAddress.TryParse(connectHost, out _))
                     {
-                        _ipCache!.CacheHostname(finalDecision.EvaluatedIp.ToString(), connectHost);
+                        _ipCache!.CacheHostname(
+                            destIP,
+                            connectHost,
+                            domainSource,
+                            finalDecision.ShouldProxy ? "PROXY" : "DIRECT",
+                            finalDecision.Reason);
+
+                        if (finalDecision.EvaluatedIp != null &&
+                            !finalDecision.EvaluatedIp.Equals(packet.Header.DestinationAddress))
+                        {
+                            _ipCache!.CacheHostname(
+                                finalDecision.EvaluatedIp.ToString(),
+                                connectHost,
+                                domainSource,
+                                finalDecision.ShouldProxy ? "PROXY" : "DIRECT",
+                                finalDecision.Reason);
+                        }
                     }
 
                     shouldProxy = finalDecision.ShouldProxy;
@@ -1024,23 +1045,14 @@ public class TunProxyService : IProxyService
 
     private void InitializeBackgroundServices()
     {
-        string? httpUrl = _config.Proxy.GetProxyType() == ProxyType.Http
-            ? $"http://{_config.Proxy.Host}:{_config.Proxy.Port}"
-            : null;
-
         if (_config.Route.EnableGeo && _geoIpService != null)
         {
             _ = Task.Run(async () =>
             {
-                if (httpUrl == null)
-                {
-                    await _proxyReady.Task;
-                }
-
                 Interlocked.Increment(ref _downloadingCount);
                 try
                 {
-                    await _geoIpService.InitializeAsync(_cts!.Token, httpUrl);
+                    await InitializeGeoIpServiceAsync(_cts!.Token, waitForProxyReadyWhenNeeded: true);
                 }
                 finally
                 {
@@ -1053,15 +1065,10 @@ public class TunProxyService : IProxyService
         {
             _ = Task.Run(async () =>
             {
-                if (httpUrl == null)
-                {
-                    await _proxyReady.Task;
-                }
-
                 Interlocked.Increment(ref _downloadingCount);
                 try
                 {
-                    await _gfwListService.InitializeAsync(_cts!.Token, httpUrl);
+                    await InitializeGfwListServiceAsync(_cts!.Token, waitForProxyReadyWhenNeeded: true);
                 }
                 finally
                 {
@@ -1070,6 +1077,62 @@ public class TunProxyService : IProxyService
             });
         }
     }
+
+    private async Task InitializeRuleServicesAsync(CancellationToken ct, bool waitForProxyReadyWhenNeeded)
+    {
+        if (_config.Route.EnableGeo && _geoIpService != null)
+        {
+            Interlocked.Increment(ref _downloadingCount);
+            try
+            {
+                await InitializeGeoIpServiceAsync(ct, waitForProxyReadyWhenNeeded);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _downloadingCount);
+            }
+        }
+
+        if (_config.Route.EnableGfwList && _gfwListService != null)
+        {
+            Interlocked.Increment(ref _downloadingCount);
+            try
+            {
+                await InitializeGfwListServiceAsync(ct, waitForProxyReadyWhenNeeded);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _downloadingCount);
+            }
+        }
+    }
+
+    private async Task InitializeGeoIpServiceAsync(CancellationToken ct, bool waitForProxyReadyWhenNeeded)
+    {
+        var httpUrl = GetHttpProxyUrl();
+        if (httpUrl == null && waitForProxyReadyWhenNeeded)
+        {
+            await _proxyReady.Task;
+        }
+
+        await _geoIpService!.InitializeAsync(ct, httpUrl);
+    }
+
+    private async Task InitializeGfwListServiceAsync(CancellationToken ct, bool waitForProxyReadyWhenNeeded)
+    {
+        var httpUrl = GetHttpProxyUrl();
+        if (httpUrl == null && waitForProxyReadyWhenNeeded)
+        {
+            await _proxyReady.Task;
+        }
+
+        await _gfwListService!.InitializeAsync(ct, httpUrl);
+    }
+
+    private string? GetHttpProxyUrl() =>
+        _config.Proxy.GetProxyType() == ProxyType.Http
+            ? $"http://{_config.Proxy.Host}:{_config.Proxy.Port}"
+            : null;
 
     private void StartMetricsLogger(CancellationToken ct)
     {

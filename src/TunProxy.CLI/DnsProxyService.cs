@@ -20,6 +20,7 @@ public class DnsProxyService
     private readonly string? _proxyUsername;
     private readonly string? _proxyPassword;
     private readonly ProxyConfig _proxyConfig;
+    private readonly RouteDecisionService? _routeDecision;
     private long _tcpQueries;
     private long _tcpSuccesses;
     private long _tcpFailures;
@@ -40,7 +41,8 @@ public class DnsProxyService
         IpCacheManager ipCache,
         string upstreamDns = "8.8.8.8",
         string? proxyUsername = null,
-        string? proxyPassword = null)
+        string? proxyPassword = null,
+        RouteDecisionService? routeDecision = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
@@ -49,6 +51,7 @@ public class DnsProxyService
         _upstreamDns = upstreamDns;
         _proxyUsername = proxyUsername;
         _proxyPassword = proxyPassword;
+        _routeDecision = routeDecision;
         _proxyConfig = new ProxyConfig
         {
             Host = proxyHost,
@@ -102,14 +105,25 @@ public class DnsProxyService
                     {
                         if (answer.Type == 1 && answer.Data.Length == 4)
                         {
-                            var ip = new IPAddress(answer.Data).ToString();
-                            _ipCache.CacheHostname(ip, domain);
+                            var ipAddress = new IPAddress(answer.Data);
+                            var ip = ipAddress.ToString();
+                            var decision = _routeDecision == null
+                                ? null
+                                : await _routeDecision.DecideForObservedAddressAsync(domain, ipAddress, ct);
+                            _ipCache.CacheHostname(
+                                ip,
+                                domain,
+                                "DNS",
+                                decision == null ? "UNKNOWN" : decision.ShouldProxy ? "PROXY" : "DIRECT",
+                                decision?.Reason);
                             resolvedIps.Add(ip);
                         }
                     }
 
                     if (resolvedIps.Count > 0)
-                        Log.Information("[DNS ] {Domain} -> {IPs}", domain, string.Join(", ", resolvedIps));
+                    {
+                        Log.Debug("[DNS ] {Domain} returned {IPs}", domain, string.Join(", ", resolvedIps));
+                    }
                 }
             }
             catch

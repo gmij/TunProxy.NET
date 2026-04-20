@@ -8,6 +8,7 @@ internal sealed class AsyncBoundedWorkQueue<T>
     private readonly Func<T, CancellationToken, Task> _handler;
     private readonly Task[] _workers;
     private int _started;
+    private int _count;
 
     public AsyncBoundedWorkQueue(int capacity, int workerCount, Func<T, CancellationToken, Task> handler)
     {
@@ -26,6 +27,7 @@ internal sealed class AsyncBoundedWorkQueue<T>
     }
 
     public int WorkerCount => _workers.Length;
+    public int Count => Volatile.Read(ref _count);
 
     public void Start(CancellationToken ct)
     {
@@ -40,8 +42,19 @@ internal sealed class AsyncBoundedWorkQueue<T>
         }
     }
 
-    public ValueTask EnqueueAsync(T item, CancellationToken ct) =>
-        _channel.Writer.WriteAsync(item, ct);
+    public async ValueTask EnqueueAsync(T item, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _count);
+        try
+        {
+            await _channel.Writer.WriteAsync(item, ct);
+        }
+        catch
+        {
+            Interlocked.Decrement(ref _count);
+            throw;
+        }
+    }
 
     public void Complete(Exception? error = null)
     {
@@ -58,6 +71,7 @@ internal sealed class AsyncBoundedWorkQueue<T>
             {
                 while (_channel.Reader.TryRead(out var item))
                 {
+                    Interlocked.Decrement(ref _count);
                     await _handler(item, ct);
                 }
             }

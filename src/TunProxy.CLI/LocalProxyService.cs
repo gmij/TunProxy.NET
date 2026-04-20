@@ -13,8 +13,9 @@ public class LocalProxyService : IProxyService
 {
     private readonly AppConfig _config;
     private readonly ProxyMetrics _metrics = new();
-    private GeoIpService? _geoIpService;
-    private GfwListService? _gfwListService;
+    private readonly GeoIpService? _geoIpService;
+    private readonly GfwListService? _gfwListService;
+    private readonly RouteDecisionService _routeDecision;
     private SystemProxyManager? _systemProxy;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
@@ -28,6 +29,7 @@ public class LocalProxyService : IProxyService
             _geoIpService = new GeoIpService(config.Route.GeoIpDbPath);
         if (config.Route.EnableGfwList)
             _gfwListService = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
+        _routeDecision = new RouteDecisionService(config, _geoIpService, _gfwListService);
     }
 
     public ServiceStatus GetStatus() => new()
@@ -41,8 +43,6 @@ public class LocalProxyService : IProxyService
         ActiveConnections = _activeConnections,
         Metrics = _metrics.GetSnapshot()
     };
-
-    public IReadOnlyDictionary<string, string> GetDnsCache() => new Dictionary<string, string>();
 
     public IReadOnlyList<string> GetDirectIps() => [];
 
@@ -166,8 +166,13 @@ public class LocalProxyService : IProxyService
         if (!int.TryParse(hostPort[(colonIdx + 1)..], out var port))
             return;
 
-        bool shouldProxy = await ShouldProxyDomain(host);
-        Log.Information("[CONN] {Host}:{Port}  {Route}  (CONNECT)", host, port, shouldProxy ? "PROXY" : "DIRECT");
+        var decision = await _routeDecision.DecideForDomainAsync(host, ct);
+        bool shouldProxy = decision.ShouldProxy;
+        Log.Information("[CONN] {Host}:{Port}  {Route}  (CONNECT/{Reason})",
+            host,
+            port,
+            shouldProxy ? "PROXY" : "DIRECT",
+            decision.Reason);
 
         try
         {
@@ -219,10 +224,16 @@ public class LocalProxyService : IProxyService
         var host = colonIdx > 0 ? hostPart[..colonIdx] : hostPart;
         var port = colonIdx > 0 && int.TryParse(hostPart[(colonIdx + 1)..], out var parsedPort) ? parsedPort : 80;
 
-        bool shouldProxy = await ShouldProxyDomain(host);
+        var decision = await _routeDecision.DecideForDomainAsync(host, ct);
+        bool shouldProxy = decision.ShouldProxy;
         var proxyType = _config.Proxy.GetProxyType();
         bool useAbsoluteUri = shouldProxy && proxyType == ProxyType.Http;
-        Log.Information("[CONN] {Host}:{Port}  {Route}  (HTTP/{Method})", host, port, shouldProxy ? "PROXY" : "DIRECT", method);
+        Log.Information("[CONN] {Host}:{Port}  {Route}  (HTTP/{Method}/{Reason})",
+            host,
+            port,
+            shouldProxy ? "PROXY" : "DIRECT",
+            method,
+            decision.Reason);
 
         try
         {
@@ -255,33 +266,6 @@ public class LocalProxyService : IProxyService
             Log.Warning("[CONN] {Host}:{Port}  dropped  ({Message})", host, port, ex.Message);
             _metrics.IncrementFailedConnections();
         }
-    }
-
-    private async Task<bool> ShouldProxyDomain(string domain)
-    {
-        if (_gfwListService != null && _gfwListService.IsInGfwList(domain))
-            return true;
-
-        if (_config.Route.DirectDomains.Any(d => domain.EndsWith(d, StringComparison.OrdinalIgnoreCase)))
-            return false;
-        if (_config.Route.ProxyDomains.Any(d => domain.EndsWith(d, StringComparison.OrdinalIgnoreCase)))
-            return true;
-
-        if (_geoIpService != null)
-        {
-            try
-            {
-                var addresses = await Dns.GetHostAddressesAsync(domain);
-                var ipv4 = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
-                if (ipv4 != null)
-                    return _geoIpService.ShouldProxy(ipv4, _config.Route.GeoProxy, _config.Route.GeoDirect);
-            }
-            catch
-            {
-            }
-        }
-
-        return true;
     }
 
     private async Task<TcpClient> ConnectViaUpstreamProxy(string destHost, int destPort, CancellationToken ct)

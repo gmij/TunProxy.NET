@@ -145,55 +145,59 @@ public class DnsPacket
     private static string? ParseDomainName(ReadOnlySpan<byte> data, ref int offset)
     {
         var parts = new List<string>();
+        var position = offset;
+        var nextOffset = offset;
         var jumped = false;
         var maxJumps = 5;
         var jumps = 0;
-        var originalOffset = offset;
 
-        while (offset < data.Length)
+        while (position < data.Length)
         {
-            var length = data[offset];
+            var length = data[position];
 
             // 结束标记
             if (length == 0)
             {
                 if (!jumped)
-                    offset++;
+                    nextOffset = position + 1;
                 break;
             }
 
             // 压缩指针
             if ((length & 0xC0) == 0xC0)
             {
-                if (offset + 1 >= data.Length)
+                if (position + 1 >= data.Length)
                     return null;
 
-                var pointer = ((length & 0x3F) << 8) | data[offset + 1];
+                var pointer = ((length & 0x3F) << 8) | data[position + 1];
+                if (pointer >= data.Length)
+                    return null;
+
                 if (!jumped)
                 {
-                    offset += 2;
+                    nextOffset = position + 2;
                     jumped = true;
                 }
 
                 if (++jumps > maxJumps)
                     return null;
 
-                offset = pointer;
+                position = pointer;
                 continue;
             }
 
-            offset++;
-            if (offset + length > data.Length)
+            position++;
+            if (position + length > data.Length)
                 return null;
 
-            var part = Encoding.ASCII.GetString(data.Slice(offset, length));
+            var part = Encoding.ASCII.GetString(data.Slice(position, length));
             parts.Add(part);
-            offset += length;
+            position += length;
+            if (!jumped)
+                nextOffset = position;
         }
 
-        if (!jumped)
-            offset = originalOffset + 1;
-
+        offset = nextOffset;
         return string.Join(".", parts);
     }
 

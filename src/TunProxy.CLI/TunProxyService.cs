@@ -22,11 +22,12 @@ public class TunProxyService : IProxyService
     private ITunDevice? _tunDevice;
     private TcpConnectionManager? _connectionManager;
     private TcpConnectionManager? _directConnectionManager;
-    private GeoIpService? _geoIpService;
-    private GfwListService? _gfwListService;
-    private IRouteService? _routeService;
-    private IpCacheManager? _ipCache;
-    private DnsProxyService? _dnsProxy;
+    private readonly GeoIpService? _geoIpService;
+    private readonly GfwListService? _gfwListService;
+    private readonly RouteDecisionService _routeDecision;
+    private readonly IRouteService? _routeService;
+    private readonly IpCacheManager? _ipCache;
+    private readonly DnsProxyService? _dnsProxy;
     private CancellationTokenSource? _cts;
     private readonly ProxyMetrics _metrics = new();
 
@@ -34,8 +35,17 @@ public class TunProxyService : IProxyService
     private readonly TaskCompletionSource _proxyReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private volatile int _downloadingCount;
     private AsyncBoundedWorkQueue<byte[]>? _packetQueue;
+    private IPAddress? _outboundBindAddress;
+    private int _packetWorkerCount;
+    private readonly ConcurrentBag<string> _proxyBypassRoutes = new();
+    private readonly ConcurrentDictionary<string, Lazy<Task>> _directBypassRoutes = new(StringComparer.OrdinalIgnoreCase);
+    private string? _lastTcpConnectFailure;
+    private DateTime? _lastTcpConnectFailureUtc;
+    private DateTime? _lastPacketReadUtc;
+    private DateTime? _lastPacketProcessedUtc;
 
     private const int PacketQueueCapacity = 4096;
+    private const int MaxInitialPayloadBufferBytes = 64 * 1024;
 
     public TunProxyService(AppConfig config)
     {
@@ -51,6 +61,7 @@ public class TunProxyService : IProxyService
             _gfwListService = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
         }
 
+        _routeDecision = new RouteDecisionService(config, _geoIpService, _gfwListService);
         _routeService = RouteServiceFactory.Create(config.Tun);
         _ipCache = new IpCacheManager(_routeService);
         _dnsProxy = new DnsProxyService(
@@ -75,11 +86,109 @@ public class TunProxyService : IProxyService
         Metrics = _metrics.GetSnapshot()
     };
 
-    public IReadOnlyDictionary<string, string> GetDnsCache() =>
-        _ipCache?.GetHostnameCacheSnapshot() ?? new Dictionary<string, string>();
-
     public IReadOnlyList<string> GetDirectIps() =>
         _ipCache?.GetDirectIpSnapshot() ?? [];
+
+    public async Task<IReadOnlyList<DnsRouteRecord>> GetDnsRouteRecordsAsync(CancellationToken ct)
+    {
+        var cache = _ipCache?.GetHostnameCacheSnapshot() ?? new Dictionary<string, string>();
+        var directIps = new HashSet<string>(GetDirectIps(), StringComparer.OrdinalIgnoreCase);
+        var records = new List<DnsRouteRecord>(cache.Count);
+
+        foreach (var (ipText, hostname) in cache)
+        {
+            if (!IPAddress.TryParse(ipText, out var ipAddress))
+            {
+                continue;
+            }
+
+            var decision = await _routeDecision.DecideForTunAsync(hostname, ipAddress, ct);
+            records.Add(new DnsRouteRecord(
+                ipText,
+                hostname,
+                decision.ShouldProxy ? "PROXY" : "DIRECT",
+                decision.Reason,
+                ProtocolInspector.IsPrivateIp(ipAddress),
+                directIps.Contains(ipText)));
+        }
+
+        return records
+            .OrderBy(static item => item.Route)
+            .ThenBy(static item => item.Reason, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static item => item.IpAddress, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public TunDiagnosticsSnapshot GetDiagnostics()
+    {
+        var route = new RouteDiagnosticsSnapshot
+        {
+            ProxyBypassRoutes = _proxyBypassRoutes.Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+        };
+
+        try
+        {
+            route.OriginalDefaultGateway = _routeService?.GetOriginalDefaultGateway();
+            if (_routeService is WindowsRouteService windowsRouteService)
+            {
+                var routes = windowsRouteService.GetRouteTable();
+                var tunDefault = windowsRouteService.GetTunDefaultRoute();
+
+                route.HasTunDefaultRoute = tunDefault != null;
+                route.TunDefaultMetric = tunDefault?.Metric;
+
+                if (tunDefault == null)
+                {
+                    route.Issues.Add("TUN default route is missing.");
+                }
+
+                var competingRoutes = routes
+                    .Where(r => r.Network == "0.0.0.0" &&
+                                !WindowsRouteService.IsTunDefaultRoute(r, _config.Tun.IpAddress))
+                    .ToList();
+                if (tunDefault != null &&
+                    int.TryParse(tunDefault.Metric, out var tunMetric) &&
+                    competingRoutes.Any(r => int.TryParse(r.Metric, out var metric) && metric < tunMetric))
+                {
+                    route.Issues.Add($"Another default route has a higher priority than TUN metric {tunMetric}.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            route.Issues.Add($"Route diagnostics failed: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        var dnsDiagnostics = _dnsProxy?.GetDiagnostics() ?? new DnsDiagnosticsSnapshot();
+
+        return new TunDiagnosticsSnapshot
+        {
+            IsRunning = _cts != null && !_cts.IsCancellationRequested,
+            ProxyEndpoint = $"{_config.Proxy.Host}:{_config.Proxy.Port}",
+            ProxyType = _config.Proxy.Type,
+            TunAddress = $"{_config.Tun.IpAddress}/{_config.Tun.SubnetMask}",
+            TunDnsServer = _config.Tun.DnsServer,
+            RouteMode = _config.Route.Mode,
+            EnableGeo = _config.Route.EnableGeo,
+            EnableGfwList = _config.Route.EnableGfwList,
+            AutoAddDefaultRoute = _config.Route.AutoAddDefaultRoute,
+            OutboundBindAddress = _outboundBindAddress?.ToString(),
+            PacketWorkerCount = _packetWorkerCount,
+            PacketQueueDepth = _packetQueue?.Count ?? 0,
+            PacketQueueCapacity = PacketQueueCapacity,
+            PendingConnectCount = _relayStates.Values.Count(static state =>
+                Volatile.Read(ref state.ConnectStarted) != 0 &&
+                !Volatile.Read(ref state.IsProxyConnected)),
+            RelayStateCount = _relayStates.Count,
+            Metrics = _metrics.GetSnapshot(),
+            Dns = dnsDiagnostics,
+            Route = route,
+            LastTcpConnectFailure = _lastTcpConnectFailure,
+            LastTcpConnectFailureUtc = _lastTcpConnectFailureUtc,
+            LastPacketReadUtc = _lastPacketReadUtc,
+            LastPacketProcessedUtc = _lastPacketProcessedUtc
+        };
+    }
 
     public async Task StartAsync(CancellationToken ct)
     {
@@ -90,33 +199,53 @@ public class TunProxyService : IProxyService
         {
             if (OperatingSystem.IsWindows())
             {
+                Log.Information("[TUN ] Checking wintun.dll...");
                 await EnsureWintunDllAsync(ct);
             }
 
+            Log.Information("[TUN ] Creating TUN device...");
             _tunDevice = TunDeviceFactory.Create(_config.Tun);
+            Log.Information("[TUN ] Starting TUN device...");
             _tunDevice.Start();
+            Log.Information("[TUN ] Configuring TUN address {IP}/{Mask}...", _config.Tun.IpAddress, _config.Tun.SubnetMask);
             _tunDevice.Configure(_config.Tun.IpAddress, _config.Tun.SubnetMask);
 
-            IPAddress? proxyBindAddr = ProbeLocalIpForHost(_config.Proxy.Host, _config.Proxy.Port);
+            _outboundBindAddress = DeterminePreferredBindAddress();
+            Log.Information(
+                "[TUN ] Outbound bind address: {BindAddress}",
+                _outboundBindAddress?.ToString() ?? "(not bound)");
 
             if (_config.Route.AutoAddDefaultRoute)
             {
-                _routeService!.AddBypassRoute(_config.Proxy.Host);
-                _ipCache!.LoadAndApplyDirectIpCache();
+                Log.Information("[ROUTE] Applying proxy bypass routes and TUN default route...");
+                AddProxyBypassRoutes();
+                _ipCache!.RetireDirectIpCache();
                 _ipCache.LoadBlockedIpCache();
-                _routeService.AddDefaultRoute();
+                var defaultRouteReady = _routeService!.AddDefaultRoute();
+                Log.Information("[ROUTE] Route setup completed. DefaultRouteReady={DefaultRouteReady}", defaultRouteReady);
+                if (!defaultRouteReady)
+                {
+                    Log.Warning("[ROUTE] TUN default route is still missing; system traffic may not enter TUN.");
+                }
             }
 
+            Log.Information("[TUN ] Creating connection managers...");
             _connectionManager = new TcpConnectionManager(
                 _config.Proxy.Host,
                 _config.Proxy.Port,
                 _config.Proxy.GetProxyType(),
                 _config.Proxy.Username,
                 _config.Proxy.Password,
-                bindAddress: proxyBindAddr);
-            _directConnectionManager = new TcpConnectionManager(string.Empty, 0, ProxyType.Direct);
+                connectionTimeout: TimeSpan.FromSeconds(8),
+                bindAddress: _outboundBindAddress);
+            _directConnectionManager = new TcpConnectionManager(
+                string.Empty,
+                0,
+                ProxyType.Direct,
+                connectionTimeout: TimeSpan.FromSeconds(8));
 
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            Log.Information("[TUN ] Starting packet workers and background services...");
             StartPacketWorkers(_cts.Token);
             InitializeBackgroundServices();
             StartMetricsLogger(_cts.Token);
@@ -160,6 +289,7 @@ public class TunProxyService : IProxyService
     private void StartPacketWorkers(CancellationToken ct)
     {
         var workerCount = Math.Max(2, Math.Min(Environment.ProcessorCount, 8));
+        _packetWorkerCount = workerCount;
         _packetQueue = new AsyncBoundedWorkQueue<byte[]>(
             PacketQueueCapacity,
             workerCount,
@@ -195,6 +325,7 @@ public class TunProxyService : IProxyService
             }
 
             _metrics.IncrementRawPacketsReceived();
+            _lastPacketReadUtc = DateTime.UtcNow;
             if (_packetQueue == null)
             {
                 await ProcessPacketAsync(data, ct);
@@ -223,6 +354,7 @@ public class TunProxyService : IProxyService
             }
 
             _metrics.IncrementPackets();
+            _lastPacketProcessedUtc = DateTime.UtcNow;
 
             if (packet.IsUDP && packet.DestinationPort == 53)
             {
@@ -253,50 +385,41 @@ public class TunProxyService : IProxyService
                 return;
             }
 
-            if (ProtocolInspector.IsPrivateIp(packet.Header.DestinationAddress))
-            {
-                if (tcpFlags.SYN)
-                {
-                    TunWriter.WriteRst(device, packet);
-                }
-                return;
-            }
-
-            var shouldProxy = true;
-            if (_config.Route.EnableGeo && _geoIpService != null)
-            {
-                shouldProxy = _geoIpService.ShouldProxy(
-                    packet.Header.DestinationAddress,
-                    _config.Route.GeoProxy,
-                    _config.Route.GeoDirect);
-            }
-
-            if (!shouldProxy)
-            {
-                _metrics.IncrementDirectRoutedPackets();
-            }
-
+            var initialDecision = await _routeDecision.DecideForTunAsync(null, packet.Header.DestinationAddress, ct);
+            var shouldProxy = initialDecision.ShouldProxy;
             var connManager = shouldProxy ? _connectionManager! : _directConnectionManager!;
             var connKey = ProtocolInspector.MakeConnectionKey(packet);
 
             if (tcpFlags.SYN && !tcpFlags.ACK)
             {
-                if (!shouldProxy && _routeService != null)
+                if (!shouldProxy)
                 {
-                    Log.Debug("[CONN] {DestIP}:{Port}  DIRECT/RST  (GEO)", destIP, destPort);
-                    _ipCache!.TryAddDirectBypass(ProtocolInspector.GetNet24(destIP));
+                    Log.Debug("[CONN] {DestIP}:{Port}  DIRECT  ({Reason})",
+                        destIP,
+                        destPort,
+                        initialDecision.Reason);
+                }
+
+                if (initialDecision.ShouldProxy &&
+                    (_ipCache!.IsProxyBlocked(destIP) || _ipCache.IsConnectFailed(destIP)))
+                {
                     TunWriter.WriteRst(device, packet);
                     return;
                 }
 
-                if (_ipCache!.IsProxyBlocked(destIP) || _ipCache.IsConnectFailed(destIP))
+                if (_relayStates.TryGetValue(connKey, out var existingState))
                 {
-                    TunWriter.WriteRst(device, packet);
+                    TunWriter.WriteSynAck(device, packet, existingState.ServerIsn);
                     return;
                 }
 
                 TunWriter.WriteSynAck(device, packet, out var serverIsn);
-                _relayStates[connKey] = new TcpRelayState(packet, serverIsn, tcpFlags.SequenceNumber);
+                var newState = new TcpRelayState(packet, serverIsn, tcpFlags.SequenceNumber);
+                if (!_relayStates.TryAdd(connKey, newState) &&
+                    _relayStates.TryGetValue(connKey, out existingState))
+                {
+                    TunWriter.WriteSynAck(device, packet, existingState.ServerIsn);
+                }
                 return;
             }
 
@@ -332,10 +455,20 @@ public class TunProxyService : IProxyService
                 TcpConnection? conn;
                 if (!state.IsProxyConnected)
                 {
-                    if (Interlocked.CompareExchange(ref state.ConnectStarted, 1, 0) != 0)
+                    var preConnect = await PreparePreConnectPayloadAsync(
+                            device,
+                            state,
+                            packet,
+                            destPort,
+                            destIP,
+                            ct);
+                    if (!preConnect.ShouldStartConnect)
                     {
                         return;
                     }
+
+                    var initialPayload = preConnect.PayloadForTarget;
+                    var initialPayloadAlreadyAcked = preConnect.PayloadAlreadyAcked;
 
                     _metrics.IncrementTotalConnections();
                     _metrics.IncrementActiveConnections();
@@ -345,14 +478,14 @@ public class TunProxyService : IProxyService
 
                     if (destPort == 443)
                     {
-                        var sni = ProtocolInspector.ExtractSni(packet.Payload);
+                        var sni = ProtocolInspector.ExtractSni(initialPayload);
                         var cached = _ipCache!.GetCachedHostname(destIP);
                         connectHost = sni ?? cached ?? destIP;
                         domainSource = sni != null ? "SNI" : cached != null ? "DNS" : "IP";
                     }
                     else if (destPort == 80)
                     {
-                        var host = ProtocolInspector.ExtractHttpHost(packet.Payload);
+                        var host = ProtocolInspector.ExtractHttpHost(initialPayload);
                         var cached = _ipCache!.GetCachedHostname(destIP);
                         connectHost = host ?? cached ?? destIP;
                         domainSource = host != null ? "Host" : cached != null ? "DNS" : "IP";
@@ -364,20 +497,37 @@ public class TunProxyService : IProxyService
                         domainSource = cached != null ? "DNS" : "IP";
                     }
 
-                    var gfwOverride = false;
-                    if (_config.Route.EnableGfwList && _gfwListService != null && connectHost != destIP)
+                    if (connectHost != destIP && !IPAddress.TryParse(connectHost, out _))
                     {
-                        var gfwProxy = _gfwListService.IsInGfwList(connectHost);
-                        if (gfwProxy != shouldProxy)
-                        {
-                            connManager = gfwProxy ? _connectionManager! : _directConnectionManager!;
-                            gfwOverride = true;
-                        }
+                        _ipCache!.CacheHostname(destIP, connectHost);
                     }
 
+                    var finalDecision = await _routeDecision.DecideForTunAsync(
+                        connectHost != destIP ? connectHost : null,
+                        packet.Header.DestinationAddress,
+                        ct);
+                    if (connectHost != destIP &&
+                        finalDecision.EvaluatedIp != null &&
+                        !IPAddress.TryParse(connectHost, out _))
+                    {
+                        _ipCache!.CacheHostname(finalDecision.EvaluatedIp.ToString(), connectHost);
+                    }
+
+                    shouldProxy = finalDecision.ShouldProxy;
+                    connManager = shouldProxy ? _connectionManager! : _directConnectionManager!;
+                    if (!shouldProxy)
+                    {
+                        _metrics.IncrementDirectRoutedPackets();
+                        var routeIp = finalDecision.EvaluatedIp ?? packet.Header.DestinationAddress;
+                        await EnsureDirectBypassRouteAsync(routeIp.ToString(), routeIp, finalDecision);
+                    }
+
+                    var upstreamHost = shouldProxy
+                        ? connectHost
+                        : finalDecision.EvaluatedIp?.ToString() ?? (connectHost != destIP ? connectHost : destIP);
                     var usingProxy = connManager == _connectionManager;
                     var routeLabel = usingProxy ? "PROXY" : "DIRECT";
-                    var srcLabel = gfwOverride ? domainSource + "/GFW" : domainSource;
+                    var srcLabel = $"{domainSource}/{finalDecision.Reason}";
                     Log.Information("[CONN] {Host}:{Port}  {Route}  ({Source})", connectHost, destPort, routeLabel, srcLabel);
 
                     conn = connManager.GetOrCreateConnection(packet);
@@ -387,32 +537,22 @@ public class TunProxyService : IProxyService
                         return;
                     }
 
-                    try
-                    {
-                        await conn.ConnectAsync(connectHost, destPort, ct);
-                        state.IsProxyConnected = true;
-                        state.ConnectionManager = connManager;
-                        _ = Task.Run(() => RelayProxyToTunAsync(device, conn, connKey, connManager, ct), ct);
-                    }
-                    catch (Exception ex)
-                    {
-                        var reason = ex.Message.Contains("PROXY_DENIED") ? "proxy denied"
-                                   : ex.Message.Contains("CONNECT_FAILED") ? "connect failed"
-                                   : "error";
-                        Log.Warning("[CONN] {Host}:{Port}  dropped  ({Reason})", connectHost, destPort, reason);
-
-                        if (ex.Message.Contains("PROXY_DENIED"))
-                        {
-                            _ipCache!.TryAddProxyBlocked(destIP);
-                        }
-                        else if (ex.Message.Contains("CONNECT_FAILED"))
-                        {
-                            _ipCache!.RecordConnectFailed(destIP);
-                        }
-
-                        HandleConnectionFail(connKey, device, packet);
-                        return;
-                    }
+                    StartInitialConnectAndSend(
+                        device,
+                        conn,
+                        connKey,
+                        connManager,
+                        state,
+                        packet,
+                        upstreamHost,
+                        destPort,
+                        routeLabel,
+                        srcLabel,
+                        destIP,
+                        initialPayload,
+                        initialPayloadAlreadyAcked,
+                        ct);
+                    return;
                 }
                 else
                 {
@@ -423,30 +563,381 @@ public class TunProxyService : IProxyService
                     }
                 }
 
-                var incomingEnd = tcpFlags.SequenceNumber + (uint)packet.Payload.Length;
-                if (ProtocolInspector.IsSeqBeforeOrEqual(incomingEnd, state.ExpectedClientSeq))
-                {
-                    TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
-                    return;
-                }
-
-                state.ExpectedClientSeq = incomingEnd;
-                try
-                {
-                    await conn.SendAsync(packet.Payload, ct);
-                    _metrics.AddBytesSent(packet.Payload.Length);
-                    TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
-                }
-                catch
-                {
-                    HandleConnectionFail(connKey, device, packet);
-                }
+                await SendClientPayloadAsync(device, conn, state, packet, connKey, ct);
             }
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Packet processing error");
         }
+    }
+
+    private async Task<PreConnectPayloadDecision> PreparePreConnectPayloadAsync(
+        ITunDevice device,
+        TcpRelayState state,
+        IPPacket packet,
+        int destPort,
+        string destIP,
+        CancellationToken ct)
+    {
+        await state.SendLock.WaitAsync(ct);
+        try
+        {
+            if (Volatile.Read(ref state.ConnectStarted) != 0)
+            {
+                if (state.InitialPayloadLength > 0)
+                {
+                    TryAppendInitialPayloadAndAck(device, state, packet, destIP);
+                }
+
+                return PreConnectPayloadDecision.Wait;
+            }
+
+            if (!ShouldBufferInitialTlsPayload(state, packet, destPort, destIP))
+            {
+                if (Interlocked.CompareExchange(ref state.ConnectStarted, 1, 0) != 0)
+                {
+                    return PreConnectPayloadDecision.Wait;
+                }
+
+                return new PreConnectPayloadDecision(true, packet.Payload, false);
+            }
+
+            if (!TryAppendInitialPayloadAndAck(device, state, packet, destIP, out var initialPayload))
+            {
+                return PreConnectPayloadDecision.Wait;
+            }
+
+            if (ProtocolInspector.ExtractSni(initialPayload) == null &&
+                ProtocolInspector.ShouldWaitForMoreTlsClientHello(initialPayload))
+            {
+                Log.Debug(
+                    "[CONN] buffering partial TLS ClientHello for {DestIP}:443 ({Bytes} bytes)",
+                    destIP,
+                    initialPayload.Length);
+                return PreConnectPayloadDecision.Wait;
+            }
+
+            if (Interlocked.CompareExchange(ref state.ConnectStarted, 1, 0) != 0)
+            {
+                return PreConnectPayloadDecision.Wait;
+            }
+
+            return new PreConnectPayloadDecision(true, initialPayload, true);
+        }
+        finally
+        {
+            state.SendLock.Release();
+        }
+    }
+
+    private bool ShouldBufferInitialTlsPayload(TcpRelayState state, IPPacket packet, int destPort, string destIP)
+    {
+        if (destPort != 443 ||
+            packet.Payload.Length == 0 ||
+            _ipCache?.GetCachedHostname(destIP) != null)
+        {
+            return false;
+        }
+
+        return state.InitialPayloadLength > 0 || ProtocolInspector.LooksLikeTlsClientHello(packet.Payload);
+    }
+
+    private bool TryAppendInitialPayloadAndAck(
+        ITunDevice device,
+        TcpRelayState state,
+        IPPacket packet,
+        string destIP) =>
+        TryAppendInitialPayloadAndAck(device, state, packet, destIP, out _);
+
+    private bool TryAppendInitialPayloadAndAck(
+        ITunDevice device,
+        TcpRelayState state,
+        IPPacket packet,
+        string destIP,
+        out byte[] initialPayload)
+    {
+        initialPayload = state.GetInitialPayloadSnapshot();
+        var tcpFlags = packet.TCPHeader!.Value;
+        var incomingEnd = tcpFlags.SequenceNumber + (uint)packet.Payload.Length;
+
+        if (ProtocolInspector.IsSeqBeforeOrEqual(incomingEnd, state.ExpectedClientSeq))
+        {
+            TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
+            return false;
+        }
+
+        if (tcpFlags.SequenceNumber != state.ExpectedClientSeq)
+        {
+            TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
+            return false;
+        }
+
+        if (state.InitialPayloadLength + packet.Payload.Length > MaxInitialPayloadBufferBytes)
+        {
+            Log.Warning(
+                "[CONN] initial TLS buffer for {DestIP}:443 exceeded {Limit} bytes; continuing with buffered data only",
+                destIP,
+                MaxInitialPayloadBufferBytes);
+            return state.InitialPayloadLength > 0;
+        }
+
+        initialPayload = state.AppendInitialPayload(packet.Payload);
+        state.ExpectedClientSeq = incomingEnd;
+        TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
+        return true;
+    }
+
+    private void StartInitialConnectAndSend(
+        ITunDevice device,
+        TcpConnection conn,
+        string connKey,
+        TcpConnectionManager connManager,
+        TcpRelayState state,
+        IPPacket packet,
+        string connectHost,
+        int destPort,
+        string routeLabel,
+        string srcLabel,
+        string destIP,
+        byte[] initialPayload,
+        bool initialPayloadAlreadyAcked,
+        CancellationToken ct)
+    {
+        _ = Task.Run(async () =>
+        {
+            var started = DateTime.UtcNow;
+            try
+            {
+                await conn.ConnectAsync(connectHost, destPort, ct);
+
+                if (!_relayStates.ContainsKey(connKey))
+                {
+                    connManager.RemoveConnectionByKey(connKey);
+                    _metrics.DecrementActiveConnections();
+                    return;
+                }
+
+                state.IsProxyConnected = true;
+                state.ConnectionManager = connManager;
+                _ = Task.Run(() => RelayProxyToTunAsync(device, conn, connKey, connManager, ct), ct);
+
+                Log.Debug(
+                    "[CONN] {Host}:{Port} connected in {ElapsedMs} ms ({Route}/{Source})",
+                    connectHost,
+                    destPort,
+                    (DateTime.UtcNow - started).TotalMilliseconds,
+                    routeLabel,
+                    srcLabel);
+
+                await SendInitialClientPayloadAsync(
+                    device,
+                    conn,
+                    state,
+                    packet,
+                    connKey,
+                    initialPayload,
+                    initialPayloadAlreadyAcked,
+                    ct);
+            }
+            catch (Exception ex)
+            {
+                HandleConnectionException(ex, connKey, device, packet, connectHost, destPort, routeLabel, srcLabel, destIP);
+            }
+        }, ct);
+    }
+
+    private async Task SendInitialClientPayloadAsync(
+        ITunDevice device,
+        TcpConnection conn,
+        TcpRelayState state,
+        IPPacket packet,
+        string connKey,
+        byte[] initialPayload,
+        bool payloadAlreadyAcked,
+        CancellationToken ct)
+    {
+        await state.SendLock.WaitAsync(ct);
+        try
+        {
+            if (!_relayStates.ContainsKey(connKey))
+            {
+                return;
+            }
+
+            var payloadToSend = payloadAlreadyAcked ? state.TakeInitialPayload() : initialPayload;
+            if (payloadToSend.Length == 0)
+            {
+                payloadToSend = initialPayload;
+            }
+
+            await conn.SendAsync(payloadToSend, ct);
+            _metrics.AddBytesSent(payloadToSend.Length);
+
+            if (!payloadAlreadyAcked)
+            {
+                var tcpFlags = packet.TCPHeader!.Value;
+                state.ExpectedClientSeq = tcpFlags.SequenceNumber + (uint)packet.Payload.Length;
+                TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
+            }
+        }
+        catch
+        {
+            HandleConnectionFail(connKey, device, packet);
+        }
+        finally
+        {
+            state.SendLock.Release();
+        }
+    }
+
+    private async Task SendClientPayloadAsync(
+        ITunDevice device,
+        TcpConnection conn,
+        TcpRelayState state,
+        IPPacket packet,
+        string connKey,
+        CancellationToken ct)
+    {
+        await state.SendLock.WaitAsync(ct);
+        try
+        {
+            if (!_relayStates.ContainsKey(connKey))
+            {
+                return;
+            }
+
+            var tcpFlags = packet.TCPHeader!.Value;
+            var incomingEnd = tcpFlags.SequenceNumber + (uint)packet.Payload.Length;
+            if (ProtocolInspector.IsSeqBeforeOrEqual(incomingEnd, state.ExpectedClientSeq))
+            {
+                TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
+                return;
+            }
+
+            if (tcpFlags.SequenceNumber != state.ExpectedClientSeq)
+            {
+                TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
+                Log.Debug(
+                    "[CONN] out-of-order TCP payload ignored for {ConnKey}: seq={Seq}, expected={Expected}, bytes={Bytes}",
+                    connKey,
+                    tcpFlags.SequenceNumber,
+                    state.ExpectedClientSeq,
+                    packet.Payload.Length);
+                return;
+            }
+
+            state.ExpectedClientSeq = incomingEnd;
+            await conn.SendAsync(packet.Payload, ct);
+            _metrics.AddBytesSent(packet.Payload.Length);
+            TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
+        }
+        catch
+        {
+            HandleConnectionFail(connKey, device, packet);
+        }
+        finally
+        {
+            state.SendLock.Release();
+        }
+    }
+
+    private void HandleConnectionException(
+        Exception ex,
+        string connKey,
+        ITunDevice device,
+        IPPacket packet,
+        string connectHost,
+        int destPort,
+        string routeLabel,
+        string srcLabel,
+        string destIP)
+    {
+        var reason = ex.Message.Contains("PROXY_DENIED") ? "proxy denied"
+                   : ex.Message.Contains("CONNECT_FAILED") ? "connect failed"
+                   : "error";
+        _lastTcpConnectFailure = $"{connectHost}:{destPort} {routeLabel}/{srcLabel} {reason}: {ex.GetType().Name}: {ex.Message}";
+        _lastTcpConnectFailureUtc = DateTime.UtcNow;
+        var bindAddress = routeLabel == "PROXY"
+            ? _outboundBindAddress?.ToString() ?? "default"
+            : "default";
+        Log.Warning(ex,
+            "[CONN] {Host}:{Port} dropped ({Route}/{Source}; {Reason}; DestIP={DestIP}; Bind={BindAddress})",
+            connectHost,
+            destPort,
+            routeLabel,
+            srcLabel,
+            reason,
+            destIP,
+            bindAddress);
+
+        if (ex.Message.Contains("PROXY_DENIED"))
+        {
+            _ipCache!.TryAddProxyBlocked(destIP);
+        }
+        else if (routeLabel == "PROXY" && ex.Message.Contains("CONNECT_FAILED"))
+        {
+            _ipCache!.RecordConnectFailed(destIP);
+        }
+
+        HandleConnectionFail(connKey, device, packet);
+    }
+
+    private async Task EnsureDirectBypassRouteAsync(string destIP, IPAddress destinationAddress, RouteDecision decision)
+    {
+        if (_routeService == null || ShouldSkipDirectBypassRoute(destinationAddress))
+        {
+            return;
+        }
+
+        var routeTask = _directBypassRoutes.GetOrAdd(
+            destIP,
+            static (ip, state) => new Lazy<Task>(
+                () => state.service.AddDirectBypassRouteAsync(ip, state.decision),
+                LazyThreadSafetyMode.ExecutionAndPublication),
+            (service: this, decision));
+
+        await routeTask.Value;
+    }
+
+    private Task AddDirectBypassRouteAsync(string destIP, RouteDecision decision) =>
+        Task.Run(() =>
+        {
+            var ok = _routeService?.AddBypassRoute(destIP) == true;
+            if (!ok)
+            {
+                _directBypassRoutes.TryRemove(destIP, out _);
+            }
+
+            Log.Information("[ROUTE] Direct bypass route {Status}: {IP} ({Reason})",
+                ok ? "ready" : "failed",
+                destIP,
+                decision.Reason);
+        });
+
+    private bool ShouldSkipDirectBypassRoute(IPAddress destinationAddress)
+    {
+        if (destinationAddress.AddressFamily != AddressFamily.InterNetwork ||
+            IPAddress.IsLoopback(destinationAddress))
+        {
+            return true;
+        }
+
+        if (IPAddress.TryParse(_config.Tun.IpAddress, out var tunIp) &&
+            destinationAddress.Equals(tunIp))
+        {
+            return true;
+        }
+
+        var bytes = destinationAddress.GetAddressBytes();
+        if (bytes[0] == 169 && bytes[1] == 254)
+        {
+            return true;
+        }
+
+        var gateway = _routeService?.GetOriginalDefaultGateway();
+        return IPAddress.TryParse(gateway, out var gatewayIp) &&
+               destinationAddress.Equals(gatewayIp);
     }
 
     private void HandleConnectionFail(string connKey, ITunDevice device, IPPacket packet)
@@ -588,12 +1079,64 @@ public class TunProxyService : IProxyService
             while (await timer.WaitForNextTickAsync(ct))
             {
                 Log.Information(
-                    "Traffic: sent {Sent} B, received {Received} B, active {Active}",
+                    "Traffic: sent {Sent} B, received {Received} B, active {Active}, relays {Relays}, dns tcp {DnsTcpOk}/{DnsTcpTotal}, doh {DohOk}/{DohTotal}, last connect failure {LastFailure}",
                     _metrics.TotalBytesSent,
                     _metrics.TotalBytesReceived,
-                    (_connectionManager?.ActiveConnections ?? 0) + (_directConnectionManager?.ActiveConnections ?? 0));
+                    (_connectionManager?.ActiveConnections ?? 0) + (_directConnectionManager?.ActiveConnections ?? 0),
+                    _relayStates.Count,
+                    _dnsProxy?.GetDiagnostics().TcpSuccesses ?? 0,
+                    _dnsProxy?.GetDiagnostics().TcpQueries ?? 0,
+                    _dnsProxy?.GetDiagnostics().DohSuccesses ?? 0,
+                    _dnsProxy?.GetDiagnostics().DohQueries ?? 0,
+                    _lastTcpConnectFailure ?? "(none)");
             }
         }, ct);
+    }
+
+    private IPAddress? DeterminePreferredBindAddress()
+    {
+        var probed = ProbeLocalIpForHost(_config.Proxy.Host, _config.Proxy.Port);
+        if (probed != null && !IPAddress.IsLoopback(probed))
+        {
+            return probed;
+        }
+
+        try
+        {
+            foreach (var networkInterface in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (networkInterface.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up ||
+                    networkInterface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback ||
+                    networkInterface.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
+                    networkInterface.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var properties = networkInterface.GetIPProperties();
+                if (!properties.GatewayAddresses.Any(static gateway => gateway.Address.AddressFamily == AddressFamily.InterNetwork))
+                {
+                    continue;
+                }
+
+                var address = properties.UnicastAddresses
+                    .Select(static unicast => unicast.Address)
+                    .FirstOrDefault(static address =>
+                        address.AddressFamily == AddressFamily.InterNetwork &&
+                        !IPAddress.IsLoopback(address));
+
+                if (address != null)
+                {
+                    return address;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("[TUN ] Failed to select outbound bind address: {Message}", ex.Message);
+        }
+
+        return probed;
     }
 
     private static IPAddress? ProbeLocalIpForHost(string host, int port)
@@ -608,6 +1151,51 @@ public class TunProxyService : IProxyService
         {
             return null;
         }
+    }
+
+    private void AddProxyBypassRoutes()
+    {
+        if (_routeService == null)
+        {
+            return;
+        }
+
+        if (IPAddress.TryParse(_config.Proxy.Host, out var proxyIp))
+        {
+            if (!IPAddress.IsLoopback(proxyIp))
+            {
+                AddProxyBypassRoute(proxyIp.ToString());
+            }
+
+            return;
+        }
+
+        try
+        {
+            foreach (var address in Dns.GetHostAddresses(_config.Proxy.Host)
+                .Where(address => address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(address))
+                .Distinct())
+            {
+                AddProxyBypassRoute(address.ToString());
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("[ROUTE] Failed to resolve upstream proxy host for bypass route: {Host}, {Message}",
+                _config.Proxy.Host,
+                ex.Message);
+        }
+    }
+
+    private void AddProxyBypassRoute(string ipAddress)
+    {
+        var ok = _routeService?.AddBypassRoute(ipAddress) == true;
+        if (ok)
+        {
+            _proxyBypassRoutes.Add(ipAddress);
+        }
+
+        Log.Information("[ROUTE] Proxy bypass route {Status}: {IP}", ok ? "ready" : "failed", ipAddress);
     }
 
     private void AddDnsServersBypassRoutes()
@@ -665,19 +1253,55 @@ public class TunProxyService : IProxyService
     }
 }
 
+internal readonly record struct PreConnectPayloadDecision(
+    bool ShouldStartConnect,
+    byte[] PayloadForTarget,
+    bool PayloadAlreadyAcked)
+{
+    public static PreConnectPayloadDecision Wait { get; } = new(false, [], false);
+}
+
 internal class TcpRelayState
 {
+    private MemoryStream? _initialPayload;
+
     public uint NextServerSeq;
     public uint ExpectedClientSeq;
     public readonly IPPacket SynPacket;
+    public readonly uint ServerIsn;
     public bool IsProxyConnected;
     public int ConnectStarted;
     public TcpConnectionManager? ConnectionManager;
+    public readonly SemaphoreSlim SendLock = new(1, 1);
+    public int InitialPayloadLength => (int)(_initialPayload?.Length ?? 0);
 
     public TcpRelayState(IPPacket synPacket, uint serverIsn, uint clientIsn)
     {
         SynPacket = synPacket;
+        ServerIsn = serverIsn;
         NextServerSeq = serverIsn + 1;
         ExpectedClientSeq = clientIsn + 1;
+    }
+
+    public byte[] AppendInitialPayload(byte[] payload)
+    {
+        _initialPayload ??= new MemoryStream();
+        _initialPayload.Write(payload, 0, payload.Length);
+        return _initialPayload.ToArray();
+    }
+
+    public byte[] GetInitialPayloadSnapshot() => _initialPayload?.ToArray() ?? [];
+
+    public byte[] TakeInitialPayload()
+    {
+        var payload = GetInitialPayloadSnapshot();
+        ClearInitialPayload();
+        return payload;
+    }
+
+    public void ClearInitialPayload()
+    {
+        _initialPayload?.Dispose();
+        _initialPayload = null;
     }
 }

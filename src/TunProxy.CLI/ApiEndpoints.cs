@@ -57,15 +57,31 @@ public static class ApiEndpoints
             }
         });
 
-        app.MapGet("/api/dns", (IProxyService svc) =>
-            Results.Json(
-                new Dictionary<string, string>(svc.GetDnsCache()),
-                AppJsonContext.Default.DictionaryStringString));
+        app.MapGet("/api/dns-records", async (IProxyService svc, CancellationToken ct) =>
+        {
+            List<DnsRouteRecord> records = svc is TunProxyService tunService
+                ? new List<DnsRouteRecord>(await tunService.GetDnsRouteRecordsAsync(ct))
+                : [];
+
+            return Results.Json(records, AppJsonContext.Default.ListDnsRouteRecord);
+        });
 
         app.MapGet("/api/direct-ips", (IProxyService svc) =>
             Results.Json(
                 new List<string>(svc.GetDirectIps()),
                 AppJsonContext.Default.ListString));
+
+        app.MapGet("/api/diagnostics/tun", (IProxyService svc) =>
+        {
+            if (svc is not TunProxyService tunService)
+            {
+                return Results.BadRequest("TUN diagnostics are only available in TUN mode.");
+            }
+
+            return Results.Json(
+                tunService.GetDiagnostics(),
+                AppJsonContext.Default.TunDiagnosticsSnapshot);
+        });
 
         app.MapGet("/api/logs", (HttpContext ctx) =>
         {

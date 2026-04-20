@@ -52,26 +52,24 @@ public class TcpConnectionManager : IDisposable
 
         var connKey = MakeConnectionKey(packet);
 
-        if (!_connections.TryGetValue(connKey, out var connection))
+        if (_connections.TryGetValue(connKey, out var connection))
         {
-            // 检查连接数限制
-            if (_connections.Count >= _maxConnections)
-            {
-                // 尝试清理一些过期连接
-                CleanupIdleConnections(TimeSpan.FromMinutes(1));
-
-                // 如果仍然超过限制，返回 null
-                if (_connections.Count >= _maxConnections)
-                {
-                    return null;
-                }
-            }
-
-            connection = new TcpConnection(_proxyHost, _proxyPort, _proxyType, _username, _password, _connectionTimeout, _bindAddress);
-            _connections[connKey] = connection;
+            return connection;
         }
 
-        return connection;
+        if (_connections.Count >= _maxConnections)
+        {
+            CleanupIdleConnections(TimeSpan.FromMinutes(1));
+
+            if (_connections.Count >= _maxConnections)
+            {
+                return null;
+            }
+        }
+
+        return _connections.GetOrAdd(
+            connKey,
+            _ => new TcpConnection(_proxyHost, _proxyPort, _proxyType, _username, _password, _connectionTimeout, _bindAddress));
     }
 
     /// <summary>
@@ -174,7 +172,7 @@ public class TcpConnection : IDisposable
     private bool _connected;
     private bool _disposed;
     private int _retryCount;
-    private const int MaxRetries = 3;
+    private const int MaxRetries = 1;
     private bool _isHttpPlainMode;   // HTTP 代理 + port 80：直转发模式（不用 CONNECT）
     private bool _needsHttpRewrite;  // 第一次发送时改写请求行
     private string _destHost = string.Empty;   // 目标主机（用于改写 HTTP 请求行）

@@ -1,12 +1,14 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using Serilog;
 using TunProxy.Core.Route;
 
 namespace TunProxy.CLI;
 
 /// <summary>
-/// Windows 路由服务
+/// Windows route management backed by route.exe and netsh.exe.
 /// </summary>
 public class WindowsRouteService : IRouteService
 {
@@ -20,25 +22,20 @@ public class WindowsRouteService : IRouteService
         _tunSubnetMask = tunSubnetMask;
     }
 
-    /// <summary>
-    /// 获取 Wintun 适配器的实际网络连接名称
-    /// </summary>
     private string GetTunInterfaceName()
     {
         try
         {
             var adapter = NetworkInterface.GetAllNetworkInterfaces()
-                .FirstOrDefault(ni =>
-                    ni.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
-                    ni.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(IsTunInterface);
             return adapter?.Name ?? "TunProxy";
         }
-        catch { return "TunProxy"; }
+        catch
+        {
+            return "TunProxy";
+        }
     }
 
-    /// <summary>
-    /// 获取 TUN 接口索引
-    /// </summary>
     public uint? GetTunInterfaceIndex()
     {
         try
@@ -46,65 +43,88 @@ public class WindowsRouteService : IRouteService
             var tunInterfaceName = GetTunInterfaceName();
             var adapter = NetworkInterface.GetAllNetworkInterfaces()
                 .FirstOrDefault(ni => ni.Name.Equals(tunInterfaceName, StringComparison.OrdinalIgnoreCase));
-            if (adapter == null) return null;
-            var index = adapter.GetIPProperties().GetIPv4Properties()?.Index;
-            return index.HasValue ? (uint?)index.Value : null;
+
+            var index = adapter?.GetIPProperties().GetIPv4Properties()?.Index;
+            return index.HasValue ? (uint)index.Value : null;
         }
         catch (Exception ex)
         {
-            Log.Warning("[ROUTE] 获取 TUN 接口索引失败：{Message}", ex.Message);
+            Log.Warning("[ROUTE] Failed to get TUN interface index: {Message}", ex.Message);
             return null;
         }
     }
 
-    /// <summary>
-    /// 添加默认路由（全局流量走 TUN）
-    /// </summary>
     public bool AddDefaultRoute()
     {
         var tunInterfaceName = GetTunInterfaceName();
         var routes = GetRouteTable();
 
-        // 清理指向 TUN IP 但接口不对的过期路由
-        foreach (var stale in routes.Where(r => r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress && r.Interface != _tunIpAddress))
+        foreach (var stale in routes.Where(route =>
+                     route.Network == "0.0.0.0" &&
+                     route.Gateway == _tunIpAddress &&
+                     !IsTunDefaultRoute(route, _tunIpAddress)))
         {
-            Log.Debug("[ROUTE] 清理过期路由：0.0.0.0 -> {Gateway} via {Interface}", stale.Gateway, stale.Interface);
-            ExecuteNetshCommand($"interface ip delete route 0.0.0.0/0 {stale.Gateway}");
+            Log.Debug(
+                "[ROUTE] Removing stale TUN default route 0.0.0.0 via {Gateway} on {Interface}",
+                stale.Gateway,
+                stale.Interface);
+            ExecuteNetshCommand($"interface ipv4 delete route 0.0.0.0/0 \"{tunInterfaceName}\" {_tunIpAddress}");
         }
 
-        // 已存在则跳过
-        if (routes.Any(r => r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress && r.Interface == _tunIpAddress))
+        if (HasTunDefaultRoute())
         {
-            Log.Debug("[ROUTE] TUN 默认路由已存在，跳过");
+            Log.Information("[ROUTE] TUN default route already exists.");
             return true;
         }
 
-        Log.Debug("[ROUTE] 添加 TUN 默认路由：0.0.0.0/0 via {Interface}", tunInterfaceName);
-        return ExecuteNetshCommand($"interface ip add route 0.0.0.0/0 \"{tunInterfaceName}\" {_tunIpAddress} metric=1");
+        Log.Information("[ROUTE] Adding TUN default route 0.0.0.0/0 via interface {Interface}.", tunInterfaceName);
+        if (TryAddDefaultRoute(tunInterfaceName, _tunIpAddress))
+        {
+            return true;
+        }
+
+        Log.Warning(
+            "[ROUTE] Retrying TUN default route as an on-link route. Interface={Interface}, TUN={TunIp}",
+            tunInterfaceName,
+            _tunIpAddress);
+        return TryAddDefaultRoute(tunInterfaceName, "0.0.0.0");
     }
 
-    /// <summary>
-    /// 获取原始默认网关（非 TUN 网关）
-    /// </summary>
     public string? GetOriginalDefaultGateway()
     {
-        var routes = GetRouteTable();
-        return routes
-            .Where(r => r.Network == "0.0.0.0" && r.Gateway != _tunIpAddress)
-            .OrderBy(r => int.TryParse(r.Metric, out var m) ? m : 9999)
-            .FirstOrDefault()?.Gateway;
+        var nicGateway = GetGatewayFromNetworkInterfaces();
+        if (!string.IsNullOrWhiteSpace(nicGateway))
+        {
+            return nicGateway;
+        }
+
+        var routeGateway = GetRouteTable()
+            .Where(route =>
+                route.Network == "0.0.0.0" &&
+                route.Gateway != _tunIpAddress &&
+                !IsOnLinkGateway(route.Gateway) &&
+                IsIPv4Address(route.Gateway))
+            .OrderBy(route => int.TryParse(route.Metric, out var metric) ? metric : int.MaxValue)
+            .FirstOrDefault()
+            ?.Gateway;
+
+        if (!string.IsNullOrWhiteSpace(routeGateway))
+        {
+            Log.Information("[ROUTE] Original gateway selected from route table: {Gateway}", routeGateway);
+        }
+
+        return routeGateway;
     }
 
-    /// <summary>
-    /// 为指定 IP/子网添加绕过路由（走原始网关，不经过 TUN）
-    /// prefixLength=24 时传入子网地址（如 106.11.43.0），添加 /24 路由覆盖整段
-    /// </summary>
     public bool AddBypassRoute(string ipAddress, int prefixLength = 32)
     {
         var gateway = GetOriginalDefaultGateway();
-        if (string.IsNullOrEmpty(gateway))
+        if (string.IsNullOrWhiteSpace(gateway))
         {
-            Log.Warning("[ROUTE] 无法获取原始默认网关，跳过绕过路由：{IP}/{Prefix}", ipAddress, prefixLength);
+            Log.Warning(
+                "[ROUTE] Failed to find original default gateway; skipping bypass route {IP}/{Prefix}.",
+                ipAddress,
+                prefixLength);
             return false;
         }
 
@@ -112,87 +132,76 @@ public class WindowsRouteService : IRouteService
         {
             24 => "255.255.255.0",
             16 => "255.255.0.0",
-            _  => "255.255.255.255"  // /32
+            _ => "255.255.255.255"
         };
 
         var (exitCode, output) = ExecuteCommandWithOutput("route", $"add {ipAddress} mask {mask} {gateway}");
         if (exitCode == 0)
         {
-            Log.Debug("[ROUTE] 绕过路由已添加：{IP}/{Prefix} via {Gateway}", ipAddress, prefixLength, gateway);
+            Log.Information("[ROUTE] Bypass route ready: {IP}/{Prefix} via {Gateway}", ipAddress, prefixLength, gateway);
             _addedBypassRoutes.Add(ipAddress);
             return true;
         }
 
-        // 路由已存在也算成功
-        if (output.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
-            output.Contains("已存在", StringComparison.OrdinalIgnoreCase) ||
-            RouteExists(ipAddress, mask))
+        if (IsAlreadyExistsOutput(output) || RouteExists(ipAddress, mask))
         {
-            Log.Debug("[ROUTE] 绕过路由已存在（复用）：{IP}/{Prefix}", ipAddress, prefixLength);
+            Log.Information("[ROUTE] Bypass route already exists: {IP}/{Prefix}", ipAddress, prefixLength);
             _addedBypassRoutes.Add(ipAddress);
             return true;
         }
 
-        Log.Warning("[ROUTE] 添加绕过路由失败：{IP}/{Prefix} via {Gateway}，输出：{Output}", ipAddress, prefixLength, gateway, output.Trim());
+        Log.Warning(
+            "[ROUTE] Failed to add bypass route {IP}/{Prefix} via {Gateway}. Output: {Output}",
+            ipAddress,
+            prefixLength,
+            gateway,
+            output.Trim());
         return false;
     }
 
-    /// <summary>
-    /// 删除绕过路由
-    /// </summary>
     public bool RemoveBypassRoute(string ipAddress)
     {
-        var (exitCode, _) = ExecuteCommandWithOutput("route", $"delete {ipAddress}");
+        var (exitCode, output) = ExecuteCommandWithOutput("route", $"delete {ipAddress}");
+        if (exitCode != 0)
+        {
+            Log.Debug("[ROUTE] Failed to remove bypass route {IP}. Output: {Output}", ipAddress, output.Trim());
+        }
+
         return exitCode == 0;
     }
 
-    /// <summary>
-    /// 检查指定 IP 的 /32 路由是否已存在
-    /// </summary>
-    private bool RouteExists(string ipAddress, string mask = "255.255.255.255")
-    {
-        var routes = GetRouteTable();
-        return routes.Any(r => r.Network == ipAddress && r.Netmask == mask);
-    }
-
-    /// <summary>
-    /// 删除默认路由
-    /// </summary>
     public bool RemoveDefaultRoute()
     {
         var tunInterfaceName = GetTunInterfaceName();
-        return ExecuteNetshCommand($"interface ip delete route 0.0.0.0/0 \"{tunInterfaceName}\"");
+        var removed = ExecuteNetshCommand($"interface ipv4 delete route 0.0.0.0/0 \"{tunInterfaceName}\" {_tunIpAddress}");
+        var removedOnLink = ExecuteNetshCommand($"interface ipv4 delete route 0.0.0.0/0 \"{tunInterfaceName}\" 0.0.0.0");
+        return removed || removedOnLink;
     }
 
-    /// <summary>
-    /// 删除所有通过 AddBypassRoute 添加过的绕过路由，还原路由表
-    /// </summary>
     public void ClearAllBypassRoutes()
     {
-        if (_addedBypassRoutes.Count == 0) return;
-        Log.Information("[ROUTE] 清理绕过路由（共 {Count} 条）...", _addedBypassRoutes.Count);
+        if (_addedBypassRoutes.Count == 0)
+        {
+            return;
+        }
+
+        Log.Information("[ROUTE] Removing {Count} bypass route(s).", _addedBypassRoutes.Count);
         foreach (var ip in _addedBypassRoutes.ToList())
         {
             RemoveBypassRoute(ip);
-            Log.Debug("[ROUTE] 已删除绕过路由：{IP}", ip);
+            Log.Debug("[ROUTE] Removed bypass route: {IP}", ip);
         }
+
         _addedBypassRoutes.Clear();
-        Log.Information("[ROUTE] 路由表已恢复");
     }
 
-    /// <summary>
-    /// 添加指定网段路由
-    /// </summary>
     public bool AddRoute(string network, string mask, string? gateway = null)
     {
         var gw = gateway ?? _tunIpAddress;
         var tunInterfaceName = GetTunInterfaceName();
-        return ExecuteNetshCommand($"interface ip add route {network}/{mask} \"{tunInterfaceName}\" {gw}");
+        return ExecuteNetshCommand($"interface ipv4 add route {network}/{mask} \"{tunInterfaceName}\" {gw}");
     }
 
-    /// <summary>
-    /// 获取当前路由表
-    /// </summary>
     public List<RouteEntry> GetRouteTable()
     {
         var routes = new List<RouteEntry>();
@@ -202,23 +211,42 @@ public class WindowsRouteService : IRouteService
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 var trimmed = line.Trim();
-                if (trimmed.StartsWith("Network") || trimmed.StartsWith("=") || string.IsNullOrWhiteSpace(trimmed))
+                if (string.IsNullOrWhiteSpace(trimmed) ||
+                    trimmed.StartsWith("Network", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("=", StringComparison.Ordinal))
+                {
                     continue;
-                var parts = trimmed.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length >= 5)
-                    routes.Add(new RouteEntry { Network = parts[0], Netmask = parts[1], Gateway = parts[2], Interface = parts[3], Metric = parts[4] });
+                }
+
+                var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 5 || !IsIPv4Address(parts[0]) || !IsIPv4Address(parts[1]))
+                {
+                    continue;
+                }
+
+                routes.Add(new RouteEntry
+                {
+                    Network = parts[0],
+                    Netmask = parts[1],
+                    Gateway = parts[2],
+                    Interface = parts[3],
+                    Metric = parts[4]
+                });
             }
         }
         catch (Exception ex)
         {
-            Log.Warning("[ROUTE] 获取路由表失败：{Message}", ex.Message);
+            Log.Warning("[ROUTE] Failed to read route table: {Message}", ex.Message);
         }
+
         return routes;
     }
 
-    /// <summary>
-    /// 诊断路由配置
-    /// </summary>
+    public RouteEntry? GetTunDefaultRoute() =>
+        GetRouteTable().FirstOrDefault(route => IsTunDefaultRoute(route, _tunIpAddress));
+
+    public bool HasTunDefaultRoute() => GetTunDefaultRoute() != null;
+
     public RouteDiagnosisResult Diagnose()
     {
         var result = new RouteDiagnosisResult();
@@ -227,37 +255,157 @@ public class WindowsRouteService : IRouteService
             var interfaceIndex = GetTunInterfaceIndex();
             result.TunInterfaceExists = interfaceIndex.HasValue;
             result.TunInterfaceIndex = interfaceIndex;
-            if (!result.TunInterfaceExists) { result.Issues.Add("TUN 接口不存在"); return result; }
+            if (!result.TunInterfaceExists)
+            {
+                result.Issues.Add("TUN interface does not exist.");
+                return result;
+            }
 
             var routes = GetRouteTable();
-            var defaultRoute = routes.FirstOrDefault(r => r.Network == "0.0.0.0" && r.Gateway == _tunIpAddress && r.Interface == _tunIpAddress);
+            var defaultRoute = routes.FirstOrDefault(route => IsTunDefaultRoute(route, _tunIpAddress));
             result.HasDefaultRoute = defaultRoute != null;
             result.DefaultRouteMetric = defaultRoute?.Metric;
-            if (!result.HasDefaultRoute) result.Issues.Add("默认路由不存在");
-
-            var competingRoutes = routes.Where(r => r.Network == "0.0.0.0" && r.Gateway != _tunIpAddress).ToList();
-            result.CompetingRoutes = competingRoutes.Count;
-            if (defaultRoute != null && competingRoutes.Any())
+            if (!result.HasDefaultRoute)
             {
-                var tunMetric = int.TryParse(defaultRoute.Metric, out var tm) ? tm : 999;
-                if (competingRoutes.Any(r => int.TryParse(r.Metric, out var m) && m < tunMetric))
-                    result.Issues.Add($"存在优先级更高的其他默认路由 (TUN metric={tunMetric})");
+                result.Issues.Add("TUN default route does not exist.");
             }
+
+            var competingRoutes = routes
+                .Where(route => route.Network == "0.0.0.0" && !IsTunDefaultRoute(route, _tunIpAddress))
+                .ToList();
+            result.CompetingRoutes = competingRoutes.Count;
+
+            if (defaultRoute != null && int.TryParse(defaultRoute.Metric, out var tunMetric))
+            {
+                if (competingRoutes.Any(route => int.TryParse(route.Metric, out var metric) && metric < tunMetric))
+                {
+                    result.Issues.Add($"Another default route has higher priority than TUN metric {tunMetric}.");
+                }
+            }
+
             result.InternetAccessible = TestInternetConnectivity();
             result.TunIpAddress = GetTunInterfaceIpAddress();
         }
-        catch (Exception ex) { result.Issues.Add($"诊断过程出错：{ex.Message}"); }
+        catch (Exception ex)
+        {
+            result.Issues.Add($"Route diagnosis failed: {ex.Message}");
+        }
+
         return result;
+    }
+
+    internal static bool IsOnLinkGateway(string gateway)
+    {
+        return gateway.Equals("On-link", StringComparison.OrdinalIgnoreCase) ||
+               gateway.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase) ||
+               gateway.Contains("link", StringComparison.OrdinalIgnoreCase) ||
+               gateway.Contains("链路", StringComparison.OrdinalIgnoreCase) ||
+               gateway.Contains("鏈路", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsTunDefaultRoute(RouteEntry route, string tunIpAddress)
+    {
+        if (route.Network != "0.0.0.0")
+        {
+            return false;
+        }
+
+        if (route.Gateway.Equals(tunIpAddress, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return route.Interface.Equals(tunIpAddress, StringComparison.OrdinalIgnoreCase) &&
+               IsOnLinkGateway(route.Gateway);
+    }
+
+    private bool TryAddDefaultRoute(string tunInterfaceName, string nextHop)
+    {
+        var command = $"interface ipv4 add route 0.0.0.0/0 \"{tunInterfaceName}\" {nextHop} metric=1";
+        var (exitCode, output) = ExecuteCommandWithOutput("netsh", command);
+        if (exitCode == 0 || IsAlreadyExistsOutput(output))
+        {
+            if (HasTunDefaultRoute())
+            {
+                Log.Information("[ROUTE] TUN default route ready. NextHop={NextHop}", nextHop);
+                return true;
+            }
+
+            Log.Warning(
+                "[ROUTE] netsh accepted the default route command, but route PRINT does not show TUN default route yet. NextHop={NextHop}, Output={Output}",
+                nextHop,
+                output.Trim());
+            return false;
+        }
+
+        Log.Warning(
+            "[ROUTE] Failed to add TUN default route. Command=netsh {Command}, ExitCode={ExitCode}, Output={Output}",
+            command,
+            exitCode,
+            output.Trim());
+        return false;
+    }
+
+    private string? GetGatewayFromNetworkInterfaces()
+    {
+        try
+        {
+            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (!IsUsablePhysicalInterface(networkInterface))
+                {
+                    continue;
+                }
+
+                var gateway = networkInterface.GetIPProperties().GatewayAddresses
+                    .Select(address => address.Address)
+                    .FirstOrDefault(address =>
+                        address.AddressFamily == AddressFamily.InterNetwork &&
+                        !IPAddress.Any.Equals(address) &&
+                        !IPAddress.None.Equals(address));
+
+                if (gateway == null)
+                {
+                    continue;
+                }
+
+                var gatewayText = gateway.ToString();
+                if (gatewayText == _tunIpAddress)
+                {
+                    continue;
+                }
+
+                Log.Information(
+                    "[ROUTE] Original gateway selected from interface {Interface}: {Gateway}",
+                    networkInterface.Name,
+                    gatewayText);
+                return gatewayText;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("[ROUTE] Failed to read gateway from network interfaces: {Message}", ex.Message);
+        }
+
+        return null;
+    }
+
+    private bool RouteExists(string ipAddress, string mask = "255.255.255.255")
+    {
+        return GetRouteTable().Any(route => route.Network == ipAddress && route.Netmask == mask);
     }
 
     private bool TestInternetConnectivity()
     {
         try
         {
-            using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             return client.GetAsync("http://www.baidu.com").Result.IsSuccessStatusCode;
         }
-        catch { return false; }
+        catch
+        {
+            return false;
+        }
     }
 
     private string? GetTunInterfaceIpAddress()
@@ -267,25 +415,56 @@ public class WindowsRouteService : IRouteService
             var tunInterfaceName = GetTunInterfaceName();
             var adapter = NetworkInterface.GetAllNetworkInterfaces()
                 .FirstOrDefault(ni => ni.Name.Equals(tunInterfaceName, StringComparison.OrdinalIgnoreCase));
+
             return adapter?.GetIPProperties().UnicastAddresses
-                .FirstOrDefault(a => a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-                ?.Address.ToString();
+                .FirstOrDefault(address => address.Address.AddressFamily == AddressFamily.InterNetwork)
+                ?.Address
+                .ToString();
         }
-        catch { return null; }
+        catch
+        {
+            return null;
+        }
     }
 
-    /// <summary>
-    /// 执行 netsh 命令（不需要捕获输出）
-    /// </summary>
     private bool ExecuteNetshCommand(string command)
     {
-        var (exitCode, _) = ExecuteCommandWithOutput("netsh", command);
+        var (exitCode, output) = ExecuteCommandWithOutput("netsh", command);
+        if (exitCode != 0)
+        {
+            Log.Debug("[ROUTE] netsh command failed. Command={Command}, Output={Output}", command, output.Trim());
+        }
+
         return exitCode == 0;
     }
 
-    /// <summary>
-    /// 执行命令并返回退出码和输出
-    /// </summary>
+    private static bool IsTunInterface(NetworkInterface networkInterface)
+    {
+        return networkInterface.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
+               networkInterface.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUsablePhysicalInterface(NetworkInterface networkInterface)
+    {
+        return networkInterface.OperationalStatus == OperationalStatus.Up &&
+               networkInterface.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+               !IsTunInterface(networkInterface);
+    }
+
+    private static bool IsIPv4Address(string value)
+    {
+        return IPAddress.TryParse(value, out var address) &&
+               address.AddressFamily == AddressFamily.InterNetwork;
+    }
+
+    private static bool IsAlreadyExistsOutput(string output)
+    {
+        return output.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("object already exists", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("已经存在", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("已存在", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static (int ExitCode, string Output) ExecuteCommandWithOutput(string fileName, string arguments)
     {
         try
@@ -299,14 +478,28 @@ public class WindowsRouteService : IRouteService
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+
             using var proc = Process.Start(psi)!;
             var output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
-            proc.WaitForExit(5000);
+            if (!proc.WaitForExit(5000))
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best effort cleanup for a timed out helper process.
+                }
+
+                return (1, output + "Command timed out.");
+            }
+
             return (proc.ExitCode, output);
         }
         catch (Exception ex)
         {
-            Log.Warning("[ROUTE] 执行命令失败 [{FileName} {Args}]：{Message}", fileName, arguments, ex.Message);
+            Log.Warning("[ROUTE] Failed to execute command [{FileName} {Args}]: {Message}", fileName, arguments, ex.Message);
             return (1, ex.Message);
         }
     }
@@ -334,15 +527,26 @@ public class RouteDiagnosisResult
 
     public void Print()
     {
-        Log.Information("=== 路由诊断报告 ===");
-        Log.Information("TUN 接口：{Status}（索引 {Index}，IP {IP}）",
-            TunInterfaceExists ? "存在" : "不存在", TunInterfaceIndex, TunIpAddress);
-        Log.Information("默认路由：{Status}（Metric={Metric}，竞争路由 {Competing} 条）",
-            HasDefaultRoute ? "存在" : "缺失", DefaultRouteMetric, CompetingRoutes);
-        Log.Information("互联网连通：{Status}", InternetAccessible ? "是" : "否");
+        Log.Information("=== Route diagnosis report ===");
+        Log.Information(
+            "TUN interface: {Status} (index {Index}, IP {IP})",
+            TunInterfaceExists ? "present" : "missing",
+            TunInterfaceIndex,
+            TunIpAddress);
+        Log.Information(
+            "Default route: {Status} (metric={Metric}, competing={Competing})",
+            HasDefaultRoute ? "present" : "missing",
+            DefaultRouteMetric,
+            CompetingRoutes);
+        Log.Information("Internet connectivity: {Status}", InternetAccessible ? "yes" : "no");
         foreach (var issue in Issues)
-            Log.Warning("路由问题：{Issue}", issue);
+        {
+            Log.Warning("Route issue: {Issue}", issue);
+        }
+
         if (Issues.Count == 0)
-            Log.Information("路由诊断：所有检查通过");
+        {
+            Log.Information("Route diagnosis: all checks passed.");
+        }
     }
 }

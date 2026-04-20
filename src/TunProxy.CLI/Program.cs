@@ -19,6 +19,8 @@ public class Program
     {
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Information()
+            .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+            .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
             .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
             .WriteTo.File(Path.Combine(AppContext.BaseDirectory, "logs", "tunproxy-.log"), rollingInterval: RollingInterval.Day)
             .WriteTo.Sink(MemoryLogSink.Instance)
@@ -83,21 +85,26 @@ public class Program
             await Log.CloseAndFlushAsync();
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Is(logLevel)
+                .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+                .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
                 .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
                 .WriteTo.File(
-                    config.Logging.FilePath ?? Path.Combine(AppContext.BaseDirectory, "logs", "tunproxy-.log"),
+                    ResolveLogFilePath(config.Logging.FilePath),
                     rollingInterval: RollingInterval.Day)
                 .WriteTo.Sink(MemoryLogSink.Instance)
                 .CreateLogger();
+            Log.Information("File logging path: {Path}", ResolveLogFilePath(config.Logging.FilePath));
 
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
                 Args = args,
                 ContentRootPath = AppContext.BaseDirectory
             });
+            Log.Information("Web host builder created. ContentRoot={ContentRoot}", AppContext.BaseDirectory);
 
             if (OperatingSystem.IsWindows())
             {
+                Log.Information("Configuring Windows service integration. UserInteractive={UserInteractive}", Environment.UserInteractive);
                 builder.Host.UseWindowsService(options =>
                 {
                     options.ServiceName = SvcName;
@@ -105,11 +112,13 @@ public class Program
             }
 
             builder.Host.UseSerilog();
+            Log.Information("Serilog host integration configured.");
 
             builder.WebHost.ConfigureKestrel(options =>
             {
                 options.ListenLocalhost(50000);
             });
+            Log.Information("Kestrel configured on http://localhost:50000.");
 
             builder.Services.AddSingleton(config);
             builder.Services.ConfigureHttpJsonOptions(options =>
@@ -117,19 +126,24 @@ public class Program
 
             if (tunMode)
             {
+                Log.Information("Registering TUN proxy hosted service.");
                 builder.Services.AddSingleton<TunProxyService>();
                 builder.Services.AddSingleton<IProxyService>(sp => sp.GetRequiredService<TunProxyService>());
                 builder.Services.AddHostedService<ProxyHostedService<TunProxyService>>();
             }
             else
             {
+                Log.Information("Registering local proxy hosted service.");
                 builder.Services.AddSingleton<LocalProxyService>();
                 builder.Services.AddSingleton<IProxyService>(sp => sp.GetRequiredService<LocalProxyService>());
                 builder.Services.AddHostedService<ProxyHostedService<LocalProxyService>>();
             }
 
+            Log.Information("Building web application...");
             var app = builder.Build();
+            Log.Information("Web application built. Mapping endpoints...");
             app.MapApiEndpoints();
+            Log.Information("Endpoints mapped. Starting web application...");
             await app.RunAsync();
         }
         catch (Exception ex)
@@ -169,6 +183,7 @@ public class Program
         else
         {
             Log.Information("Configuration file not found. Creating sample file at {Path}", configPath);
+            ApplyWindowsSystemProxyDefaults(config);
             var json = JsonSerializer.Serialize(config, AppJsonContext.Default.AppConfig);
             File.WriteAllText(configPath, json);
         }
@@ -213,6 +228,37 @@ public class Program
         }
 
         return config;
+    }
+
+    private static string ResolveLogFilePath(string? configuredPath)
+    {
+        var path = string.IsNullOrWhiteSpace(configuredPath)
+            ? "logs/tunproxy-.log"
+            : configuredPath;
+
+        return AppPathResolver.ResolveAppFilePath(path);
+    }
+
+    private static void ApplyWindowsSystemProxyDefaults(AppConfig config)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var systemProxy = new WindowsSystemProxyConfig().ReadProxyConfig();
+        if (systemProxy == null)
+        {
+            Log.Information("[CONFIG] Windows system proxy is not enabled or cannot be converted. Keeping default upstream proxy.");
+            return;
+        }
+
+        config.Proxy.ApplyFrom(systemProxy);
+        Log.Information(
+            "[CONFIG] Initialized upstream proxy from Windows system proxy: {Type} {Host}:{Port}",
+            config.Proxy.Type,
+            config.Proxy.Host,
+            config.Proxy.Port);
     }
 
     private static bool IsAdministrator()
@@ -327,12 +373,31 @@ public class ProxyHostedService<T> : IHostedService where T : IProxyService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _cts = new CancellationTokenSource();
+        Log.Information("Hosted proxy service starting: {ServiceType}", typeof(T).Name);
         _executingTask = _proxyService.StartAsync(_cts.Token);
+        _ = _executingTask.ContinueWith(
+            task =>
+            {
+                if (task.IsFaulted)
+                {
+                    Log.Error(task.Exception, "Hosted proxy service faulted: {ServiceType}", typeof(T).Name);
+                }
+                else if (task.IsCanceled)
+                {
+                    Log.Information("Hosted proxy service canceled: {ServiceType}", typeof(T).Name);
+                }
+                else
+                {
+                    Log.Information("Hosted proxy service completed: {ServiceType}", typeof(T).Name);
+                }
+            },
+            TaskScheduler.Default);
         return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        Log.Information("Hosted proxy service stopping: {ServiceType}", typeof(T).Name);
         if (_executingTask == null)
         {
             return;

@@ -1,13 +1,12 @@
 namespace TunProxy.Core.Packets;
 
 /// <summary>
-/// 协议检查器 - 从 TLS/HTTP 流量中提取域名信息
-/// 从 TunProxyService 中提取，符合 SRP 原则
+/// Extracts domain hints from application protocols carried over TCP.
 /// </summary>
 public static class ProtocolInspector
 {
     /// <summary>
-    /// 从 TLS ClientHello 提取 SNI 域名
+    /// Extracts the SNI hostname from a TLS ClientHello.
     /// </summary>
     public static string? ExtractSni(byte[] data)
     {
@@ -43,7 +42,7 @@ public static class ProtocolInspector
             while (pos + 4 <= extEnd && pos + 4 <= data.Length)
             {
                 int extType = (data[pos] << 8) | data[pos + 1];
-                int extLen  = (data[pos + 2] << 8) | data[pos + 3];
+                int extLen = (data[pos + 2] << 8) | data[pos + 3];
                 pos += 4;
                 if (extType == 0x0000 && pos + 5 <= data.Length) // SNI
                 {
@@ -60,8 +59,31 @@ public static class ProtocolInspector
         return null;
     }
 
+    public static bool LooksLikeTlsClientHello(byte[] data)
+    {
+        if (data.Length == 0 || data[0] != 0x16)
+            return false;
+
+        return data.Length < 6 || data[5] == 0x01;
+    }
+
+    public static bool ShouldWaitForMoreTlsClientHello(byte[] data, int maxBufferedBytes = 8192)
+    {
+        if (!LooksLikeTlsClientHello(data) || data.Length >= maxBufferedBytes)
+            return false;
+
+        if (data.Length < 6)
+            return true;
+
+        var recordLength = (data[3] << 8) | data[4];
+        if (recordLength <= 0)
+            return false;
+
+        return data.Length < 5 + recordLength;
+    }
+
     /// <summary>
-    /// 从 HTTP 请求头提取 Host 域名（不含端口）
+    /// Extracts the Host header from an HTTP request, without the port.
     /// </summary>
     public static string? ExtractHttpHost(byte[] data)
     {
@@ -73,7 +95,6 @@ public static class ProtocolInspector
                 if (line.StartsWith("Host:", StringComparison.OrdinalIgnoreCase))
                 {
                     var host = line[5..].Trim().TrimEnd('\r');
-                    // 去掉端口号
                     var colon = host.LastIndexOf(':');
                     if (colon > 0 && int.TryParse(host[(colon + 1)..], out _))
                         host = host[..colon];
@@ -86,21 +107,21 @@ public static class ProtocolInspector
     }
 
     /// <summary>
-    /// 判断是否为 RFC1918 私有地址或回环/本地链路地址
+    /// Returns true for RFC1918, loopback, and link-local IPv4 addresses.
     /// </summary>
     public static bool IsPrivateIp(System.Net.IPAddress ip)
     {
         if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
         var b = ip.GetAddressBytes();
-        return b[0] == 127                              // 127.0.0.0/8 回环
-            || b[0] == 10                               // 10.0.0.0/8
+        return b[0] == 127                               // 127.0.0.0/8 loopback
+            || b[0] == 10                                // 10.0.0.0/8
             || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) // 172.16.0.0/12
-            || (b[0] == 192 && b[1] == 168)            // 192.168.0.0/16
-            || (b[0] == 169 && b[1] == 254);           // 169.254.0.0/16 本地链路
+            || (b[0] == 192 && b[1] == 168)              // 192.168.0.0/16
+            || (b[0] == 169 && b[1] == 254);             // 169.254.0.0/16 link-local
     }
 
     /// <summary>
-    /// 取 IPv4 的 /24 子网地址（如 106.11.43.246 → 106.11.43.0）
+    /// Returns the IPv4 /24 network address, for example 106.11.43.246 -> 106.11.43.0.
     /// </summary>
     public static string GetNet24(string ip)
     {
@@ -109,13 +130,13 @@ public static class ProtocolInspector
     }
 
     /// <summary>
-    /// 生成连接唯一键（统一 TunProxyService 和 TcpConnectionManager 的 MakeConnKey）
+    /// Builds the stable key used to correlate packets with a relay connection.
     /// </summary>
     public static string MakeConnectionKey(IPPacket packet) =>
         $"{packet.Header.SourceAddress}:{packet.SourcePort}-{packet.Header.DestinationAddress}:{packet.DestinationPort}";
 
     /// <summary>
-    /// TCP 序列号比较（含回绕）：seq 是否 &lt;= boundary
+    /// Compares TCP sequence numbers with wraparound support.
     /// </summary>
     public static bool IsSeqBeforeOrEqual(uint seq, uint boundary) =>
         (int)(boundary - seq) >= 0;

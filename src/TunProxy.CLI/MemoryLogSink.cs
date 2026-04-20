@@ -1,6 +1,8 @@
 using Serilog.Core;
 using Serilog.Events;
+using Serilog.Formatting.Display;
 using System.Collections.Concurrent;
+using System.Globalization;
 
 namespace TunProxy.CLI;
 
@@ -10,6 +12,7 @@ namespace TunProxy.CLI;
 public sealed class MemoryLogSink : ILogEventSink
 {
     private const int MaxEntries = 500;
+    private static readonly MessageTemplateTextFormatter MessageFormatter = new("{Message:lj}", null);
     private readonly ConcurrentQueue<LogEntry> _entries = new();
     private long _nextId;
 
@@ -23,7 +26,7 @@ public sealed class MemoryLogSink : ILogEventSink
             Id      = id,
             Time    = logEvent.Timestamp.LocalDateTime.ToString("HH:mm:ss.fff"),
             Level   = MapLevel(logEvent.Level),
-            Message = logEvent.RenderMessage(),
+            Message = RenderMessage(logEvent),
             Ex      = logEvent.Exception?.Message
         });
         while (_entries.Count > MaxEntries)
@@ -43,6 +46,13 @@ public sealed class MemoryLogSink : ILogEventSink
         LogEventLevel.Fatal       => "FTL",
         _                         => "VRB"
     };
+
+    private static string RenderMessage(LogEvent logEvent)
+    {
+        using var writer = new StringWriter(CultureInfo.InvariantCulture);
+        MessageFormatter.Format(logEvent, writer);
+        return writer.ToString();
+    }
 }
 
 /// <summary>单条日志记录（AOT JSON 兼容）</summary>

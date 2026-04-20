@@ -29,12 +29,21 @@
       <button class="btn btn-sm btn-outline-secondary" id="clear-search-button" data-i18n="Page.Dns.ClearSearch"></button>
     </div>
 
+    <div class="d-flex flex-wrap gap-2 align-items-center small mb-2">
+      <span><span class="badge bg-secondary" data-i18n="Page.Dns.RouteDirect"></span> <span data-i18n="Page.Dns.LegendDirect"></span></span>
+      <span><span class="badge bg-success" data-i18n="Page.Dns.RouteProxy"></span> <span data-i18n="Page.Dns.LegendGfw"></span></span>
+      <span><span class="badge bg-info text-dark" data-i18n="Page.Dns.RouteProxy"></span> <span data-i18n="Page.Dns.LegendGeo"></span></span>
+      <span><span class="badge bg-warning text-dark" data-i18n="Page.Dns.RouteProxy"></span> <span data-i18n="Page.Dns.LegendDefault"></span></span>
+    </div>
+
     <div id="dns-table-wrap" class="table-responsive mb-4">
       <table class="table table-sm table-hover">
         <thead class="table-light">
           <tr>
             <th data-i18n="Page.Dns.IpAddress"></th>
             <th data-i18n="Page.Dns.ResolvedDomain"></th>
+            <th data-i18n="Page.Dns.Route"></th>
+            <th data-i18n="Page.Dns.Reason"></th>
           </tr>
         </thead>
         <tbody id="dns-tbody"></tbody>
@@ -56,29 +65,118 @@
 </div>
 
 <script>
-var dnsData = {};
+var dnsRecords = [];
 var latestDirectIps = [];
 var isTunMode = false;
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function routeLabel(record) {
+  if (record.route === 'DIRECT') {
+    return window.TunProxyI18n.t('Page.Dns.RouteDirect');
+  }
+
+  if (record.route === 'PROXY') {
+    return window.TunProxyI18n.t('Page.Dns.RouteProxy');
+  }
+
+  return window.TunProxyI18n.t('Page.Dns.RouteUnknown');
+}
+
+function routeBadgeClass(record) {
+  if (record.route === 'DIRECT') {
+    return 'bg-secondary';
+  }
+
+  if (record.reason === 'GFW') {
+    return 'bg-success';
+  }
+
+  if (record.reason && record.reason.indexOf('Geo:') === 0) {
+    return 'bg-info text-dark';
+  }
+
+  if (record.reason === 'Default' || record.reason === 'GeoUnknown') {
+    return 'bg-warning text-dark';
+  }
+
+  if (record.route === 'PROXY') {
+    return 'bg-primary';
+  }
+
+  return 'bg-light text-dark';
+}
+
+function rowClass(record) {
+  if (record.route === 'DIRECT') {
+    return 'table-secondary';
+  }
+
+  if (record.reason === 'GFW') {
+    return 'table-success';
+  }
+
+  if (record.reason && record.reason.indexOf('Geo:') === 0) {
+    return 'table-info';
+  }
+
+  if (record.reason === 'Default' || record.reason === 'GeoUnknown') {
+    return 'table-warning';
+  }
+
+  return '';
+}
+
+function renderRouteBadges(record) {
+  var html = '<span class="badge ' + routeBadgeClass(record) + '">' + escapeHtml(routeLabel(record)) + '</span>';
+
+  if (record.isPrivateIp) {
+    html += ' <span class="badge bg-light text-dark border">' + escapeHtml(window.TunProxyI18n.t('Page.Dns.PrivateIp')) + '</span>';
+  }
+
+  if (record.isDirectBypass) {
+    html += ' <span class="badge bg-light text-dark border">' + escapeHtml(window.TunProxyI18n.t('Page.Dns.BypassRoute')) + '</span>';
+  }
+
+  return html;
+}
 
 function filterDns() {
   var query = document.getElementById('search-input').value.toLowerCase();
   var tbody = document.getElementById('dns-tbody');
   tbody.innerHTML = '';
 
-  var entries = Object.entries(dnsData);
+  var entries = dnsRecords.slice();
   if (query) {
-    entries = entries.filter(function (entry) {
-      return entry[0].includes(query) || entry[1].toLowerCase().includes(query);
+    entries = entries.filter(function (record) {
+      return String(record.ipAddress || '').toLowerCase().includes(query) ||
+        String(record.hostname || '').toLowerCase().includes(query) ||
+        String(record.route || '').toLowerCase().includes(query) ||
+        String(record.reason || '').toLowerCase().includes(query);
     });
   }
 
   entries.sort(function (left, right) {
-    return left[0].localeCompare(right[0]);
+    return String(left.route || '').localeCompare(String(right.route || '')) ||
+      String(left.reason || '').localeCompare(String(right.reason || '')) ||
+      String(left.ipAddress || '').localeCompare(String(right.ipAddress || ''));
   });
 
-  entries.forEach(function (entry) {
+  entries.forEach(function (record) {
     var row = document.createElement('tr');
-    row.innerHTML = '<td class="font-monospace text-nowrap">' + entry[0] + '</td><td>' + entry[1] + '</td>';
+    row.className = rowClass(record);
+    row.innerHTML =
+      '<td class="font-monospace text-nowrap">' + escapeHtml(record.ipAddress) + '</td>' +
+      '<td>' + escapeHtml(record.hostname) + '</td>' +
+      '<td class="text-nowrap">' + renderRouteBadges(record) + '</td>' +
+      '<td class="font-monospace small">' + escapeHtml(record.reason) + '</td>';
     tbody.appendChild(row);
   });
 
@@ -112,7 +210,7 @@ function renderPage() {
     return;
   }
 
-  document.getElementById('dns-count').textContent = Object.keys(dnsData).length;
+  document.getElementById('dns-count').textContent = dnsRecords.length;
   document.getElementById('direct-count').textContent = latestDirectIps.length;
   filterDns();
   renderDirectIps();
@@ -131,11 +229,11 @@ function loadData() {
       }
 
       return Promise.all([
-        fetch('/api/dns').then(function (response) { return response.json(); }),
+        fetch('/api/dns-records').then(function (response) { return response.json(); }),
         fetch('/api/direct-ips').then(function (response) { return response.json(); })
       ]).then(function (payload) {
-        dnsData = payload[0];
-        latestDirectIps = payload[1];
+        dnsRecords = Array.isArray(payload[0]) ? payload[0] : [];
+        latestDirectIps = Array.isArray(payload[1]) ? payload[1] : [];
         renderPage();
       });
     });

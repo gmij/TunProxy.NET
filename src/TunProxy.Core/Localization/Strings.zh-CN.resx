@@ -177,6 +177,39 @@
   <data name="Page.Dns.ResolvedDomain" xml:space="preserve">
     <value>解析域名</value>
   </data>
+  <data name="Page.Dns.Route" xml:space="preserve">
+    <value>路由</value>
+  </data>
+  <data name="Page.Dns.Reason" xml:space="preserve">
+    <value>原因</value>
+  </data>
+  <data name="Page.Dns.RouteDirect" xml:space="preserve">
+    <value>直连</value>
+  </data>
+  <data name="Page.Dns.RouteProxy" xml:space="preserve">
+    <value>代理</value>
+  </data>
+  <data name="Page.Dns.RouteUnknown" xml:space="preserve">
+    <value>未知</value>
+  </data>
+  <data name="Page.Dns.PrivateIp" xml:space="preserve">
+    <value>私网</value>
+  </data>
+  <data name="Page.Dns.BypassRoute" xml:space="preserve">
+    <value>旁路</value>
+  </data>
+  <data name="Page.Dns.LegendDirect" xml:space="preserve">
+    <value>私网 IP、解析为私网、直连域名或直连 Geo</value>
+  </data>
+  <data name="Page.Dns.LegendGfw" xml:space="preserve">
+    <value>命中 GFW 列表</value>
+  </data>
+  <data name="Page.Dns.LegendGeo" xml:space="preserve">
+    <value>命中 GeoIP</value>
+  </data>
+  <data name="Page.Dns.LegendDefault" xml:space="preserve">
+    <value>默认规则或 GeoIP 未知</value>
+  </data>
   <data name="Page.Dns.SearchPlaceholder" xml:space="preserve">
     <value>搜索 IP 或域名...</value>
   </data>

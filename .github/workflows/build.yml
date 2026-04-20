@@ -134,7 +134,7 @@ jobs:
         path: TunProxy.NET-linux-x64.tar.gz
 
   # ─────────────────────────────────────────────────────────────
-  # macOS  osx-arm64   CLI (AOT) + Tray (AOT, net8.0-macos)
+  # macOS  osx-arm64   CLI (AOT) + Tray (AOT)
   # ─────────────────────────────────────────────────────────────
   publish-macos:
     name: Publish · macOS arm64
@@ -148,25 +148,17 @@ jobs:
       with:
         dotnet-version: '8.0.x'
 
-    - name: Install macOS workload (net8.0-macos)
-      run: sudo dotnet workload install macos
-
-    - name: Restore (CLI + macOS Tray)
-      run: |
-        dotnet restore src/TunProxy.CLI/TunProxy.CLI.csproj
-        dotnet restore src/TunProxy.Tray.macOS/TunProxy.Tray.macOS.csproj
-
     - name: Publish CLI (AOT)
       run: |
         dotnet publish src/TunProxy.CLI/TunProxy.CLI.csproj \
-          -c Release -r osx-arm64 --no-restore \
+          -c Release -r osx-arm64 \
           -p:DebugType=none -p:DebugSymbols=false \
           -o dist/osx-arm64 --nologo
 
     - name: Publish macOS Tray (AOT)
       run: |
         dotnet publish src/TunProxy.Tray.macOS/TunProxy.Tray.macOS.csproj \
-          -c Release -r osx-arm64 --no-restore \
+          -c Release -r osx-arm64 \
           -p:DebugType=none -p:DebugSymbols=false \
           -o dist/osx-arm64 --nologo
 

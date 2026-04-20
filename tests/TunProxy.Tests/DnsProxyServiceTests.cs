@@ -10,6 +10,110 @@ namespace TunProxy.Tests;
 public class DnsProxyServiceTests
 {
     [Fact]
+    public void TryBuildCachedDnsResponse_AQueryHit_ReturnsCachedAnswerWithCurrentTransactionId()
+    {
+        var store = new DnsResolutionStore();
+        var upstreamQuery = BuildDnsQuery("example.com", 0x1111, 1);
+        var upstreamResponse = DnsPacket.Parse(BuildDnsResponse(upstreamQuery, 1, [1, 2, 3, 4]))!;
+        store.StoreDnsResponseInCache(upstreamResponse);
+
+        var query = DnsPacket.Parse(BuildDnsQuery("example.com", 0x2222, 1))!;
+        var hit = store.TryBuildCachedDnsResponse(query, out var cachedResponse);
+
+        Assert.True(hit);
+        var cachedPacket = DnsPacket.Parse(cachedResponse)!;
+        Assert.Equal((ushort)0x2222, cachedPacket.TransactionId);
+        Assert.True(cachedPacket.Flags.IsResponse);
+        Assert.Single(cachedPacket.Questions);
+        Assert.Single(cachedPacket.Answers);
+        Assert.Equal("example.com", cachedPacket.Questions[0].Name);
+        Assert.Equal("example.com", cachedPacket.Answers[0].Name);
+        Assert.Equal((ushort)1, cachedPacket.Answers[0].Type);
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, cachedPacket.Answers[0].Data);
+        Assert.Equal(1, store.CacheHits);
+    }
+
+    [Fact]
+    public void TryBuildCachedDnsResponse_AaaaQuery_DoesNotUseARecordCache()
+    {
+        var store = new DnsResolutionStore();
+        var upstreamQuery = BuildDnsQuery("example.com", 0x1111, 1);
+        var upstreamResponse = DnsPacket.Parse(BuildDnsResponse(upstreamQuery, 1, [1, 2, 3, 4]))!;
+        store.StoreDnsResponseInCache(upstreamResponse);
+
+        var query = DnsPacket.Parse(BuildDnsQuery("example.com", 0x2222, 28))!;
+        var hit = store.TryBuildCachedDnsResponse(query, out var cachedResponse);
+
+        Assert.False(hit);
+        Assert.Empty(cachedResponse);
+        Assert.Equal(0, store.CacheHits);
+    }
+
+    [Fact]
+    public void TryBuildCachedDnsResponse_MultipleARecords_ReturnsAllActiveAddresses()
+    {
+        var store = new DnsResolutionStore();
+        var queryBytes = BuildDnsQuery("example.com", 0x1111, 1);
+        var upstreamResponse = DnsPacket.Parse(BuildDnsResponse(
+            queryBytes,
+            600,
+            [new byte[] { 1, 2, 3, 4 }, new byte[] { 5, 6, 7, 8 }]))!;
+        store.StoreDnsResponseInCache(upstreamResponse);
+
+        var query = DnsPacket.Parse(BuildDnsQuery("example.com", 0x2222, 1))!;
+        var hit = store.TryBuildCachedDnsResponse(query, out var cachedResponse);
+
+        Assert.True(hit);
+        var cachedPacket = DnsPacket.Parse(cachedResponse)!;
+        Assert.Equal(2, cachedPacket.Answers.Count);
+        Assert.Contains(cachedPacket.Answers, answer => answer.Data.SequenceEqual(new byte[] { 1, 2, 3, 4 }));
+        Assert.Contains(cachedPacket.Answers, answer => answer.Data.SequenceEqual(new byte[] { 5, 6, 7, 8 }));
+        Assert.Equal(2, store.CacheEntryCount);
+    }
+
+    [Fact]
+    public void RemoveCachedAddress_RemovesOnlyFailedAddressFromMultiIpDomain()
+    {
+        var store = new DnsResolutionStore();
+        var queryBytes = BuildDnsQuery("example.com", 0x1111, 1);
+        var upstreamResponse = DnsPacket.Parse(BuildDnsResponse(
+            queryBytes,
+            600,
+            [new byte[] { 1, 2, 3, 4 }, new byte[] { 5, 6, 7, 8 }]))!;
+        store.StoreDnsResponseInCache(upstreamResponse);
+
+        Assert.True(store.RemoveCachedAddress("example.com", "1.2.3.4"));
+
+        var query = DnsPacket.Parse(BuildDnsQuery("example.com", 0x2222, 1))!;
+        Assert.True(store.TryBuildCachedDnsResponse(query, out var cachedResponse));
+        var cachedPacket = DnsPacket.Parse(cachedResponse)!;
+        Assert.Single(cachedPacket.Answers);
+        Assert.Equal(new byte[] { 5, 6, 7, 8 }, cachedPacket.Answers[0].Data);
+        Assert.Equal(1, store.CacheEntryCount);
+
+        Assert.True(store.RemoveCachedAddress("example.com", "5.6.7.8"));
+        Assert.False(store.TryBuildCachedDnsResponse(query, out _));
+        Assert.Equal(0, store.CacheEntryCount);
+    }
+
+    [Fact]
+    public void TryBuildCachedDnsResponse_InactiveMoreThanTenMinutes_RemovesRecord()
+    {
+        var store = new DnsResolutionStore();
+        var now = new DateTime(2026, 4, 20, 0, 0, 0, DateTimeKind.Utc);
+        var queryBytes = BuildDnsQuery("example.com", 0x1111, 1);
+        var upstreamResponse = DnsPacket.Parse(BuildDnsResponse(queryBytes, 1200, [1, 2, 3, 4]))!;
+        store.StoreDnsResponseInCache(upstreamResponse, now);
+
+        var query = DnsPacket.Parse(BuildDnsQuery("example.com", 0x2222, 1))!;
+        var hit = store.TryBuildCachedDnsResponse(query, out var cachedResponse, now.AddMinutes(10).AddSeconds(1));
+
+        Assert.False(hit);
+        Assert.Empty(cachedResponse);
+        Assert.Equal(0, store.CacheEntryCount);
+    }
+
+    [Fact]
     public async Task QueryDnsViaProxyAsync_HttpProxyWithAuth_SendsAuthorizationHeader()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -24,7 +128,7 @@ public class DnsProxyServiceTests
             "127.0.0.1",
             ((IPEndPoint)listener.LocalEndpoint).Port,
             ProxyType.Http,
-            new IpCacheManager(null),
+            new DnsResolutionStore(),
             proxyUsername: "user",
             proxyPassword: "pass");
 
@@ -62,7 +166,7 @@ public class DnsProxyServiceTests
             "127.0.0.1",
             ((IPEndPoint)listener.LocalEndpoint).Port,
             ProxyType.Socks5,
-            new IpCacheManager(null),
+            new DnsResolutionStore(),
             proxyUsername: "user",
             proxyPassword: "pass");
 
@@ -198,6 +302,35 @@ public class DnsProxyServiceTests
 
     private static byte[] BuildDnsResponse(byte[] queryBytes, ushort answerType, byte[] data)
     {
+        return BuildDnsResponse(queryBytes, 60, [data], answerType);
+    }
+
+    private static byte[] BuildDnsResponse(byte[] queryBytes, uint ttl, IReadOnlyList<byte[]> answers, ushort answerType = 1)
+    {
+        var query = DnsPacket.Parse(queryBytes)!;
+        var response = new DnsPacket
+        {
+            TransactionId = query.TransactionId,
+            Flags = new DnsFlags(0x8180),
+            Questions = query.Questions,
+            Answers = answers
+                .Select(data =>
+                    new DnsAnswer
+                    {
+                        Name = query.Questions[0].Name,
+                        Type = answerType,
+                        Class = 1,
+                        TTL = ttl,
+                        Data = data
+                    })
+                .ToList()
+        };
+
+        return response.Build();
+    }
+
+    private static byte[] BuildDnsResponse(byte[] queryBytes, uint ttl, byte[] data, ushort answerType = 1)
+    {
         var query = DnsPacket.Parse(queryBytes)!;
         var response = new DnsPacket
         {
@@ -211,7 +344,7 @@ public class DnsProxyServiceTests
                     Name = query.Questions[0].Name,
                     Type = answerType,
                     Class = 1,
-                    TTL = 60,
+                    TTL = ttl,
                     Data = data
                 }
             ]

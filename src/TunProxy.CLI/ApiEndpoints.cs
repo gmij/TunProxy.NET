@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Hosting;
@@ -21,6 +20,31 @@ public static class ApiEndpoints
 
         app.MapGet("/api/config", (AppConfig cfg) =>
             Results.Json(cfg, AppJsonContext.Default.AppConfig));
+
+        app.MapPost("/api/upstream-proxy/check", async (HttpContext ctx, AppConfig cfg, CancellationToken ct) =>
+        {
+            try
+            {
+                var proxy = await JsonSerializer.DeserializeAsync(
+                    ctx.Request.Body,
+                    AppJsonContext.Default.ProxyConfig,
+                    ct);
+
+                proxy ??= cfg.Proxy;
+                return Results.Json(
+                    await UpstreamProxyHealthChecker.CheckAsync(proxy, ct),
+                    AppJsonContext.Default.UpstreamProxyStatus);
+            }
+            catch (JsonException ex)
+            {
+                return Results.BadRequest(ex.Message);
+            }
+        });
+
+        app.MapGet("/api/rule-resources/status", async (AppConfig cfg) =>
+            Results.Json(
+                await BuildRuleResourcesStatusAsync(cfg),
+                AppJsonContext.Default.RuleResourcesStatus));
 
         app.MapGet("/api/i18n", (HttpContext ctx) =>
         {
@@ -57,6 +81,71 @@ public static class ApiEndpoints
             }
         });
 
+        app.MapPost("/api/rule-resources/prepare", async (AppConfig cfg, CancellationToken ct) =>
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var proxyUrl = ProxyHttpClientFactory.BuildProxyUri(cfg.Proxy)?.ToString();
+            var allReady = true;
+
+            if (cfg.Route.EnableGeo)
+            {
+                using var geo = new GeoIpService(cfg.Route.GeoIpDbPath);
+                var ready = await geo.InitializeAsync(ct, proxyUrl);
+                result["geo"] = ready ? "ready" : "failed";
+                allReady &= ready;
+            }
+            else
+            {
+                result["geo"] = "disabled";
+            }
+
+            if (cfg.Route.EnableGfwList)
+            {
+                var gfw = new GfwListService(cfg.Route.GfwListUrl, cfg.Route.GfwListPath);
+                var ready = await gfw.InitializeAsync(ct, proxyUrl);
+                result["gfw"] = ready ? "ready" : "failed";
+                allReady &= ready;
+            }
+            else
+            {
+                result["gfw"] = "disabled";
+            }
+
+            return allReady
+                ? Results.Json(result, AppJsonContext.Default.DictionaryStringString)
+                : Results.Problem("One or more enabled rule resources failed to download or load.");
+        });
+
+        app.MapPost("/api/rule-resources/download", async (HttpContext ctx, AppConfig cfg, CancellationToken ct) =>
+        {
+            var resource = ctx.Request.Query["resource"].FirstOrDefault();
+            var proxyUrl = ProxyHttpClientFactory.BuildProxyUri(cfg.Proxy)?.ToString();
+            bool ok;
+            switch (resource?.ToLowerInvariant())
+            {
+                case "geo":
+                    ok = await PrepareGeoResourceAsync(cfg, proxyUrl, ct);
+                    break;
+                case "gfw":
+                    ok = await PrepareGfwResourceAsync(cfg, proxyUrl, ct);
+                    break;
+                case "all":
+                case null:
+                case "":
+                    var geoReady = await PrepareGeoResourceAsync(cfg, proxyUrl, ct);
+                    var gfwReady = await PrepareGfwResourceAsync(cfg, proxyUrl, ct);
+                    ok = geoReady && gfwReady;
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+
+            return ok
+                ? Results.Json(await BuildRuleResourcesStatusAsync(cfg), AppJsonContext.Default.RuleResourcesStatus)
+                : Results.Problem("Rule resource download or validation failed.");
+        });
+
         app.MapGet("/api/dns-records", async (IProxyService svc, CancellationToken ct) =>
         {
             List<DnsRouteRecord> records = svc is TunProxyService tunService
@@ -64,6 +153,25 @@ public static class ApiEndpoints
                 : [];
 
             return Results.Json(records, AppJsonContext.Default.ListDnsRouteRecord);
+        });
+
+        app.MapDelete("/api/dns-cache", (IProxyService svc, HttpContext ctx) =>
+        {
+            if (svc is not TunProxyService tunService)
+            {
+                return Results.BadRequest("DNS cache is only available in TUN mode.");
+            }
+
+            var ip = ctx.Request.Query["ip"].FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(ip))
+            {
+                return Results.BadRequest("Missing ip.");
+            }
+
+            var domain = ctx.Request.Query["domain"].FirstOrDefault();
+            return tunService.ClearDnsCacheEntry(domain, ip)
+                ? Results.NoContent()
+                : Results.NotFound();
         });
 
         app.MapGet("/api/direct-ips", (IProxyService svc) =>
@@ -126,10 +234,11 @@ public static class ApiEndpoints
             var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
 
             await File.WriteAllTextAsync(
-                configPath,
-                JsonSerializer.Serialize(cfg, AppJsonContext.Default.AppConfig));
+                    configPath,
+                    JsonSerializer.Serialize(cfg, AppJsonContext.Default.AppConfig));
 
-            Log.Warning("Manual TUN mode repair triggered. Configuration updated; restarting service...");
+            RequestTrayRestart();
+            Log.Warning("Manual TUN mode repair triggered. Configuration updated; requesting tray-managed restart...");
             _ = Task.Run(async () =>
             {
                 await Task.Delay(400);
@@ -141,25 +250,10 @@ public static class ApiEndpoints
 
         app.MapPost("/api/restart", (IHostApplicationLifetime lifetime) =>
         {
+            RequestTrayRestart();
             Task.Run(async () =>
             {
                 await Task.Delay(300);
-                if (!Environment.UserInteractive && OperatingSystem.IsWindows())
-                {
-                    lifetime.StopApplication();
-                    return;
-                }
-
-                var exe = Environment.ProcessPath;
-                if (exe != null)
-                {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = exe,
-                        UseShellExecute = true
-                    });
-                }
-
                 lifetime.StopApplication();
             });
 
@@ -167,5 +261,52 @@ public static class ApiEndpoints
         });
 
         return app;
+    }
+
+    private static void RequestTrayRestart()
+    {
+        var markerPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.restart");
+        try
+        {
+            File.WriteAllText(markerPath, DateTimeOffset.UtcNow.ToString("O"));
+            Log.Information("[RESTART] Restart marker written for tray: {Path}", markerPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[RESTART] Failed to write restart marker: {Path}", markerPath);
+        }
+    }
+
+    private static async Task<RuleResourcesStatus> BuildRuleResourcesStatusAsync(AppConfig cfg)
+    {
+        using var geo = new GeoIpService(cfg.Route.GeoIpDbPath);
+        var gfw = new GfwListService(cfg.Route.GfwListUrl, cfg.Route.GfwListPath);
+        var geoExists = File.Exists(geo.DatabasePath);
+        var gfwExists = File.Exists(gfw.ListPath);
+        return new RuleResourcesStatus(
+            new RuleResourceStatus(
+                "geo",
+                cfg.Route.EnableGeo,
+                geo.DatabasePath,
+                geoExists,
+                geoExists && geo.HasValidDatabase()),
+            new RuleResourceStatus(
+                "gfw",
+                cfg.Route.EnableGfwList,
+                gfw.ListPath,
+                gfwExists,
+                gfwExists && await gfw.HasValidListAsync()));
+    }
+
+    private static async Task<bool> PrepareGeoResourceAsync(AppConfig cfg, string? proxyUrl, CancellationToken ct)
+    {
+        using var geo = new GeoIpService(cfg.Route.GeoIpDbPath);
+        return await geo.InitializeAsync(ct, proxyUrl);
+    }
+
+    private static async Task<bool> PrepareGfwResourceAsync(AppConfig cfg, string? proxyUrl, CancellationToken ct)
+    {
+        var gfw = new GfwListService(cfg.Route.GfwListUrl, cfg.Route.GfwListPath);
+        return await gfw.InitializeAsync(ct, proxyUrl);
     }
 }

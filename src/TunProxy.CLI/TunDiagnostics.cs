@@ -37,6 +37,9 @@ public sealed class DnsDiagnosticsSnapshot
     public long DohQueries { get; set; }
     public long DohSuccesses { get; set; }
     public long DohFailures { get; set; }
+    public long CacheHits { get; set; }
+    public long CacheMisses { get; set; }
+    public int CacheEntries { get; set; }
     public string? LastDomain { get; set; }
     public string? LastMethod { get; set; }
     public string? LastError { get; set; }

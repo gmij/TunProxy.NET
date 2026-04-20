@@ -14,6 +14,7 @@ public class GeoIpService : IDisposable
     private long _failedLookupLogCount;
 
     internal string DatabasePath => _dbPath;
+    internal bool IsInitialized => _reader != null;
 
     public GeoIpService(string dbPath)
     {
@@ -59,7 +60,7 @@ public class GeoIpService : IDisposable
         DynamicallyAccessedMemberTypes.PublicProperties |
         DynamicallyAccessedMemberTypes.NonPublicProperties,
         typeof(MaxMind.GeoIP2.Model.Traits))]
-    public async Task InitializeAsync(CancellationToken ct = default, string? proxyUrl = null)
+    public async Task<bool> InitializeAsync(CancellationToken ct = default, string? proxyUrl = null)
     {
         if (!File.Exists(_dbPath))
         {
@@ -69,7 +70,7 @@ public class GeoIpService : IDisposable
         if (!File.Exists(_dbPath))
         {
             Log.Warning("[GEO] Database file is missing; GeoIP routing is disabled: {Path}", _dbPath);
-            return;
+            return false;
         }
 
         try
@@ -83,10 +84,32 @@ public class GeoIpService : IDisposable
                 metadata.DatabaseType,
                 metadata.IPVersion,
                 metadata.BuildDate);
+            return true;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "[GEO] Failed to load database: {Path}", _dbPath);
+            return false;
+        }
+    }
+
+    internal bool HasValidDatabase()
+    {
+        if (!File.Exists(_dbPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var reader = new DatabaseReader(_dbPath);
+            _ = reader.Metadata;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[GEO] Database validation failed: {Path}", _dbPath);
+            return false;
         }
     }
 
@@ -154,9 +177,9 @@ public class GeoIpService : IDisposable
             }
 
             var country = FirstNonEmpty(
-                response.Country.IsoCode,
-                response.RegisteredCountry.IsoCode,
-                response.RepresentedCountry.IsoCode);
+                response?.Country?.IsoCode,
+                response?.RegisteredCountry?.IsoCode,
+                response?.RepresentedCountry?.IsoCode);
             if (country == null)
             {
                 LogGeoLookupIssue(

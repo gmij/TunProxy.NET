@@ -21,6 +21,10 @@ namespace TunProxy.CLI;
 [JsonSerializable(typeof(TunDiagnosticsSnapshot))]
 [JsonSerializable(typeof(DnsDiagnosticsSnapshot))]
 [JsonSerializable(typeof(RouteDiagnosticsSnapshot))]
+[JsonSerializable(typeof(RuleResourcesStatus))]
+[JsonSerializable(typeof(RuleResourceStatus))]
+[JsonSerializable(typeof(UpstreamProxyStatus))]
+[JsonSerializable(typeof(UpstreamProxyTargetStatus))]
 public partial class AppJsonContext : JsonSerializerContext
 {
 }

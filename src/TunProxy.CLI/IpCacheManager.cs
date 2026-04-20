@@ -5,14 +5,13 @@ using TunProxy.Core.Route;
 namespace TunProxy.CLI;
 
 /// <summary>
-/// Tracks runtime IP routing state and observed IP-to-hostname mappings.
+/// Tracks runtime IP routing state.
 /// </summary>
 public class IpCacheManager
 {
     private readonly ConcurrentDictionary<string, int> _directBypassedIps = new();
     private readonly ConcurrentDictionary<string, bool> _proxyBlockedIps = new();
     private readonly ConcurrentDictionary<string, DateTime> _connectFailedIps = new();
-    private readonly ConcurrentDictionary<string, HostnameCacheEntry> _ipHostnameCache = new();
 
     private const string DirectIpCacheFile = "direct_ip_cache.txt";
     private const string BlockedIpCacheFile = "blocked_ip_cache.txt";
@@ -178,88 +177,6 @@ public class IpCacheManager
         _connectFailedIps[ip] = DateTime.UtcNow;
     }
 
-    public void CacheHostname(
-        string ip,
-        string hostname,
-        string source = "Observed",
-        string? route = null,
-        string? reason = null)
-    {
-        if (string.IsNullOrWhiteSpace(ip) || string.IsNullOrWhiteSpace(hostname))
-        {
-            return;
-        }
-
-        var normalized = hostname.Trim().TrimEnd('.');
-        var normalizedRoute = string.IsNullOrWhiteSpace(route) ? "UNKNOWN" : route;
-        var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "Observed" : reason;
-        var now = DateTime.UtcNow;
-        _ipHostnameCache.TryGetValue(ip, out var previous);
-        _ipHostnameCache.AddOrUpdate(
-            ip,
-            _ => new HostnameCacheEntry(normalized, normalizedRoute, normalizedReason, now, 1),
-            (_, existing) => existing with
-            {
-                Hostname = normalized,
-                Route = normalizedRoute,
-                Reason = normalizedReason,
-                LastSeenUtc = now,
-                SeenCount = existing.SeenCount + 1
-            });
-
-        if (previous == null)
-        {
-            LogDnsMapping(normalized, ip, source, normalizedRoute, normalizedReason, previousHostname: null);
-        }
-        else if (!previous.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
-                 !previous.Route.Equals(normalizedRoute, StringComparison.OrdinalIgnoreCase) ||
-                 !previous.Reason.Equals(normalizedReason, StringComparison.OrdinalIgnoreCase))
-        {
-            LogDnsMapping(
-                normalized,
-                ip,
-                source,
-                normalizedRoute,
-                normalizedReason,
-                previous.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) ? null : previous.Hostname);
-        }
-    }
-
-    private static void LogDnsMapping(
-        string hostname,
-        string ip,
-        string source,
-        string? route,
-        string? reason,
-        string? previousHostname)
-    {
-        if (previousHostname == null)
-        {
-            Log.Information(
-                "[DNS ] {Hostname} -> {IP} -> {Route}/{Reason} ({Source})",
-                hostname,
-                ip,
-                route,
-                reason,
-                source);
-            return;
-        }
-
-        Log.Information(
-            "[DNS ] {Hostname} -> {IP} -> {Route}/{Reason} ({Source}; was {PreviousHostname})",
-            hostname,
-            ip,
-            route,
-            reason,
-            source,
-            previousHostname);
-    }
-
-    public string? GetCachedHostname(string ip)
-    {
-        return _ipHostnameCache.TryGetValue(ip, out var entry) ? entry.Hostname : null;
-    }
-
     public void CleanupBypassRoutes()
     {
         foreach (var ip in _directBypassedIps.Keys)
@@ -272,11 +189,6 @@ public class IpCacheManager
             Log.Information("[ROUTE] Removed direct bypass routes: {Count}", _directBypassedIps.Count);
         }
     }
-
-    public IReadOnlyDictionary<string, string> GetHostnameCacheSnapshot() =>
-        _ipHostnameCache
-            .OrderByDescending(static item => item.Value.LastSeenUtc)
-            .ToDictionary(static item => item.Key, static item => item.Value.Hostname);
 
     public IReadOnlyList<string> GetDirectIpSnapshot() =>
         _directBypassedIps.Keys.Order(StringComparer.OrdinalIgnoreCase).ToList();
@@ -303,10 +215,3 @@ public class IpCacheManager
         }
     }
 }
-
-internal sealed record HostnameCacheEntry(
-    string Hostname,
-    string Route,
-    string Reason,
-    DateTime LastSeenUtc,
-    long SeenCount);

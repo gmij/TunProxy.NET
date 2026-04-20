@@ -57,16 +57,6 @@ public sealed class RouteDecisionService
             {
                 return RouteDecision.Proxy("GFW", domain, destinationIp);
             }
-
-            if (MatchesDomainList(domain, _config.Route.ProxyDomains))
-            {
-                return RouteDecision.Proxy("ProxyDomain", domain, destinationIp);
-            }
-
-            if (MatchesDomainList(domain, _config.Route.DirectDomains))
-            {
-                return RouteDecision.Direct("DirectDomain", domain, destinationIp);
-            }
         }
 
         if (destinationIp != null && ProtocolInspector.IsPrivateIp(destinationIp))
@@ -159,32 +149,6 @@ public sealed class RouteDecisionService
         }
 
         return !country.Equals("CN", StringComparison.OrdinalIgnoreCase);
-    }
-
-    internal static bool MatchesDomainList(string domain, IEnumerable<string> patterns)
-    {
-        var normalized = NormalizeDomain(domain);
-        if (normalized == null)
-        {
-            return false;
-        }
-
-        foreach (var pattern in patterns)
-        {
-            var rule = NormalizeDomain(pattern);
-            if (rule == null)
-            {
-                continue;
-            }
-
-            if (normalized.Equals(rule, StringComparison.OrdinalIgnoreCase) ||
-                normalized.EndsWith("." + rule, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     internal static string? NormalizeDomain(string? host)

@@ -6,4 +6,13 @@ public sealed record DnsRouteRecord(
     string Route,
     string Reason,
     bool IsPrivateIp,
-    bool IsDirectBypass);
+    bool IsDirectBypass,
+    bool IsDnsCached,
+    DateTime? LastActiveUtc,
+    DateTime? DnsExpiresUtc);
+
+public sealed record DnsCacheRecord(
+    string Hostname,
+    string IpAddress,
+    DateTime LastActiveUtc,
+    DateTime ExpiresUtc);

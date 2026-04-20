@@ -74,6 +74,7 @@
         <table class="table table-sm mb-0">
           <tbody>
             <tr><td data-i18n="Page.Status.RawPackets"></td><td id="raw-packets">-</td></tr>
+            <tr><td data-i18n="Page.Status.Ipv6Packets"></td><td id="ipv6-packets">-</td></tr>
             <tr><td data-i18n="Page.Status.ParseFailures"></td><td id="parse-fail">-</td></tr>
             <tr><td data-i18n="Page.Status.PortFiltered"></td><td id="port-filtered">-</td></tr>
             <tr><td data-i18n="Page.Status.DirectRouted"></td><td id="direct-routed">-</td></tr>
@@ -147,6 +148,7 @@ function renderStatus(status) {
   if (status.mode === 'tun') {
     tunDiagnostics.style.display = '';
     document.getElementById('raw-packets').textContent = metrics.rawPacketsReceived;
+    document.getElementById('ipv6-packets').textContent = metrics.iPv6Packets || metrics.ipv6Packets || 0;
 
     var parseFailures = document.getElementById('parse-fail');
     parseFailures.textContent = metrics.parseFailures;

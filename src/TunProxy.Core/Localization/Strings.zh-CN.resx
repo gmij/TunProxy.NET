@@ -66,6 +66,27 @@
   <data name="Page.Config.EnableGfw" xml:space="preserve">
     <value>启用 GFWList 路由</value>
   </data>
+  <data name="Page.Config.RuleResource.Disabled" xml:space="preserve">
+    <value>&#x672A;&#x542F;&#x7528;</value>
+  </data>
+  <data name="Page.Config.RuleResource.Download" xml:space="preserve">
+    <value>&#x4E0B;&#x8F7D;</value>
+  </data>
+  <data name="Page.Config.RuleResource.Downloading" xml:space="preserve">
+    <value>&#x4E0B;&#x8F7D;&#x4E2D;...</value>
+  </data>
+  <data name="Page.Config.RuleResource.Missing" xml:space="preserve">
+    <value>&#x7F3A;&#x5931;/&#x65E0;&#x6548;</value>
+  </data>
+  <data name="Page.Config.RuleResource.Preparing" xml:space="preserve">
+    <value>&#x6B63;&#x5728;&#x91CD;&#x542F;&#x524D;&#x51C6;&#x5907; GEO/GFW &#x8D44;&#x6E90;...</value>
+  </data>
+  <data name="Page.Config.RuleResource.Ready" xml:space="preserve">
+    <value>&#x6709;&#x6548;</value>
+  </data>
+  <data name="Page.Config.RuleResource.Retry" xml:space="preserve">
+    <value>&#x91CD;&#x8BD5;</value>
+  </data>
   <data name="Page.Config.LocalProxyPort" xml:space="preserve">
     <value>本地代理端口</value>
   </data>
@@ -105,6 +126,42 @@
   <data name="Page.Config.ProxyPassword" xml:space="preserve">
     <value>密码（可选）</value>
   </data>
+  <data name="Page.Config.ProxyCheck" xml:space="preserve">
+    <value>检测上游代理</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Unknown" xml:space="preserve">
+    <value>未检测</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Hint" xml:space="preserve">
+    <value>通过此代理访问 Google、GitHub、YouTube 均返回 HTTP 200 后，才能配置路由规则。</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Checking" xml:space="preserve">
+    <value>检测中...</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Available" xml:space="preserve">
+    <value>可用</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.AvailableHint" xml:space="preserve">
+    <value>上游代理可用，可以配置智能路由。</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.Unavailable" xml:space="preserve">
+    <value>不可用</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.UnavailableHint" xml:space="preserve">
+    <value>请先修复上游代理，再修改路由规则。</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.TargetOk" xml:space="preserve">
+    <value>{0} ms 内返回 200</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.TargetFailed" xml:space="preserve">
+    <value>请求失败</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.CheckFailed" xml:space="preserve">
+    <value>代理检测失败：{0}</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.RequiredBeforeSave" xml:space="preserve">
+    <value>请先检测上游代理。只有三个网站都通过代理返回 HTTP 200 后，才能保存路由配置。</value>
+  </data>
   <data name="Page.Config.ProxyPort" xml:space="preserve">
     <value>端口</value>
   </data>
@@ -131,6 +188,15 @@
   </data>
   <data name="Page.Config.RoutingRules" xml:space="preserve">
     <value>路由规则</value>
+  </data>
+  <data name="Page.Config.RoutingLocked" xml:space="preserve">
+    <value>上游代理检测通过前，路由规则暂不可配置。</value>
+  </data>
+  <data name="Page.Config.SmartRoutingDescription" xml:space="preserve">
+    <value>已启用智能路由：优先匹配 GFWList，再通过 GeoIP 判断；DNS 结果会被缓存并复用，用于加速后续路由决策。</value>
+  </data>
+  <data name="Page.Config.DnsCacheHint" xml:space="preserve">
+    <value>DNS 缓存记录可在 DNS 页面查看和清理。</value>
   </data>
   <data name="Page.Config.Save" xml:space="preserve">
     <value>保存配置</value>
@@ -304,7 +370,10 @@
     <value>服务状态</value>
   </data>
   <data name="Page.Status.ParseFailures" xml:space="preserve">
-    <value>解析失败</value>
+    <value>畸形包</value>
+  </data>
+  <data name="Page.Status.Ipv6Packets" xml:space="preserve">
+    <value>忽略的 IPv6 包</value>
   </data>
   <data name="Page.Status.PortFiltered" xml:space="preserve">
     <value>端口过滤（非 80/443）</value>
@@ -381,6 +450,9 @@
   <data name="Tray.Install.Failed" xml:space="preserve">
     <value>安装失败：{0}</value>
   </data>
+  <data name="Tray.Install.PrerequisiteFailed" xml:space="preserve">
+    <value>&#x65E0;&#x6CD5;&#x542F;&#x7528; TUN &#x7CFB;&#x7EDF;&#x670D;&#x52A1;&#xFF1A;&#x5DF2;&#x542F;&#x7528;&#x7684; GEO/GFW &#x8D44;&#x6E90;&#x7F3A;&#x5931;&#x6216;&#x65E0;&#x6548;&#x3002;&#x8BF7;&#x5148;&#x6253;&#x5F00;&#x914D;&#x7F6E;&#x9875;&#x4E0B;&#x8F7D;&#x7F3A;&#x5931;&#x8D44;&#x6E90;&#xFF0C;&#x518D;&#x91CD;&#x8BD5;&#x3002;</value>
+  </data>
   <data name="Tray.Install.Menu" xml:space="preserve">
     <value>安装为系统服务</value>
   </data>
@@ -428,6 +500,9 @@
   </data>
   <data name="Tray.Status.ResponseParseFailed" xml:space="preserve">
     <value>响应解析失败</value>
+  </data>
+  <data name="Tray.Status.Restarting" xml:space="preserve">
+    <value>&#x6B63;&#x5728;&#x91CD;&#x542F;&#x670D;&#x52A1;...</value>
   </data>
   <data name="Tray.Status.RunningState" xml:space="preserve">
     <value>运行中</value>

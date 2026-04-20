@@ -66,35 +66,50 @@
         <input type="password" class="form-control form-control-sm" id="proxyPassword" />
       </div>
     </div>
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+      <button type="button" class="btn btn-sm btn-outline-primary" id="check-proxy-button" data-i18n="Page.Config.ProxyCheck"></button>
+      <span id="proxy-status-badge" class="badge bg-secondary" data-i18n="Page.Config.ProxyStatus.Unknown"></span>
+      <span id="proxy-status-text" class="small text-muted" data-i18n="Page.Config.ProxyStatus.Hint"></span>
+    </div>
+    <div class="border rounded p-2 small" id="proxy-check-panel" style="display:none">
+      <div id="proxy-check-targets" class="vstack gap-1"></div>
+    </div>
   </div>
 
   <h4 class="mb-3" data-i18n="Page.Config.RoutingRules"></h4>
   <div class="mb-4">
-    <div class="row g-2 mb-2">
-      <div class="col-6 col-md-3">
-        <label class="form-label small text-muted" for="routeMode" data-i18n="Page.Config.RouteMode"></label>
-        <select class="form-select form-select-sm" id="routeMode">
-          <option value="global" data-i18n="Page.Config.Route.Global"></option>
-          <option value="whitelist" data-i18n="Page.Config.Route.Whitelist"></option>
-          <option value="blacklist" data-i18n="Page.Config.Route.Blacklist"></option>
-        </select>
+    <div id="routing-locked" class="alert alert-secondary py-2 small mb-3" data-i18n="Page.Config.RoutingLocked"></div>
+    <div id="routing-panel">
+      <div class="alert alert-info py-2 small mb-3" data-i18n="Page.Config.SmartRoutingDescription"></div>
+      <div class="row g-2 mb-3">
+        <div class="col-auto">
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="enableGfw" checked disabled />
+            <label class="form-check-label small" for="enableGfw" data-i18n="Page.Config.EnableGfw"></label>
+          </div>
+        </div>
+        <div class="col-auto">
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="enableGeo" checked disabled />
+            <label class="form-check-label small" for="enableGeo" data-i18n="Page.Config.EnableGeo"></label>
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="mb-2">
-      <label class="form-label small text-muted" for="proxyDomains" data-i18n="Page.Config.ProxyDomains"></label>
-      <textarea class="form-control form-control-sm font-monospace" id="proxyDomains" rows="5"></textarea>
-    </div>
-    <div class="mb-3">
-      <label class="form-label small text-muted" for="directDomains" data-i18n="Page.Config.DirectDomains"></label>
-      <textarea class="form-control form-control-sm font-monospace" id="directDomains" rows="3"></textarea>
-    </div>
-    <div class="mb-3 form-check">
-      <input type="checkbox" class="form-check-input" id="enableGeo" />
-      <label class="form-check-label small" for="enableGeo" data-i18n="Page.Config.EnableGeo"></label>
-    </div>
-    <div class="mb-3 form-check">
-      <input type="checkbox" class="form-check-input" id="enableGfw" />
-      <label class="form-check-label small" for="enableGfw" data-i18n="Page.Config.EnableGfw"></label>
+      <div class="border rounded p-2 small mb-2" id="rule-resource-panel">
+        <div class="d-flex align-items-center gap-2 mb-2" id="gfw-resource-row">
+          <span class="fw-semibold" style="width:72px">GFW</span>
+          <span class="badge bg-secondary" id="gfw-resource-status">-</span>
+          <code class="text-muted flex-grow-1 text-truncate" id="gfw-resource-path"></code>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="gfw-resource-button" style="display:none"></button>
+        </div>
+        <div class="d-flex align-items-center gap-2" id="geo-resource-row">
+          <span class="fw-semibold" style="width:72px">GEO</span>
+          <span class="badge bg-secondary" id="geo-resource-status">-</span>
+          <code class="text-muted flex-grow-1 text-truncate" id="geo-resource-path"></code>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="geo-resource-button" style="display:none"></button>
+        </div>
+      </div>
+      <div class="small text-muted" data-i18n="Page.Config.DnsCacheHint"></div>
     </div>
   </div>
 
@@ -120,6 +135,10 @@
 <script>
 var cfg = {};
 var latestMode = null;
+var ruleResourceStatus = null;
+var ruleResourceFailures = {};
+var upstreamProxyStatus = null;
+var routingUnlocked = false;
 
 function showError(message) {
   var error = document.getElementById('alert-error');
@@ -137,6 +156,117 @@ function splitLines(text) {
   }).filter(function (line) {
     return line.length > 0;
   });
+}
+
+function buildProxyConfigFromFields() {
+  return {
+    host: document.getElementById('proxyHost').value.trim(),
+    port: parseInt(document.getElementById('proxyPort').value, 10) || 7890,
+    type: document.getElementById('proxyType').value,
+    username: document.getElementById('proxyUsername').value.trim() || null,
+    password: document.getElementById('proxyPassword').value || null
+  };
+}
+
+function setRoutingUnlocked(unlocked) {
+  routingUnlocked = unlocked;
+  var panel = document.getElementById('routing-panel');
+  var locked = document.getElementById('routing-locked');
+  panel.style.opacity = unlocked ? '1' : '0.45';
+  locked.style.display = unlocked ? 'none' : '';
+
+  document.getElementById('geo-resource-button').disabled = !unlocked;
+  document.getElementById('gfw-resource-button').disabled = !unlocked;
+  renderRuleResourceStatus();
+}
+
+function resetProxyStatus() {
+  upstreamProxyStatus = null;
+  var badge = document.getElementById('proxy-status-badge');
+  badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Unknown');
+  badge.className = 'badge bg-secondary';
+  document.getElementById('proxy-status-text').textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Hint');
+  document.getElementById('proxy-check-panel').style.display = 'none';
+  setRoutingUnlocked(false);
+}
+
+function renderProxyStatus(status) {
+  upstreamProxyStatus = status;
+  var badge = document.getElementById('proxy-status-badge');
+  var text = document.getElementById('proxy-status-text');
+  var panel = document.getElementById('proxy-check-panel');
+  var targets = document.getElementById('proxy-check-targets');
+
+  targets.innerHTML = '';
+  (status.targets || []).forEach(function (target) {
+    var row = document.createElement('div');
+    row.className = 'd-flex align-items-center gap-2';
+    var targetBadge = document.createElement('span');
+    targetBadge.className = target.isOk ? 'badge bg-success' : 'badge bg-danger';
+    targetBadge.textContent = target.isOk ? '200' : (target.statusCode || 'ERR');
+    var name = document.createElement('span');
+    name.className = 'fw-semibold';
+    name.style.width = '72px';
+    name.textContent = target.name;
+    var detail = document.createElement('span');
+    detail.className = target.isOk ? 'text-muted' : 'text-danger';
+    detail.textContent = target.isOk
+      ? window.TunProxyI18n.format('Page.Config.ProxyStatus.TargetOk', target.elapsedMs)
+      : (target.error || window.TunProxyI18n.t('Page.Config.ProxyStatus.TargetFailed'));
+    row.appendChild(name);
+    row.appendChild(targetBadge);
+    row.appendChild(detail);
+    targets.appendChild(row);
+  });
+
+  panel.style.display = '';
+  if (status.isAvailable) {
+    badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Available');
+    badge.className = 'badge bg-success';
+    text.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.AvailableHint');
+    setRoutingUnlocked(true);
+    return;
+  }
+
+  badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Unavailable');
+  badge.className = 'badge bg-danger';
+  text.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.UnavailableHint');
+  setRoutingUnlocked(false);
+}
+
+function checkUpstreamProxy() {
+  hideError();
+  var button = document.getElementById('check-proxy-button');
+  var badge = document.getElementById('proxy-status-badge');
+  button.disabled = true;
+  button.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Checking');
+  badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Checking');
+  badge.className = 'badge bg-info text-dark';
+  setRoutingUnlocked(false);
+
+  return fetch('/api/upstream-proxy/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildProxyConfigFromFields())
+  })
+    .then(function (response) {
+      if (!response.ok) {
+        return response.text().then(function (text) {
+          throw new Error(text || response.statusText);
+        });
+      }
+
+      return response.json();
+    })
+    .then(renderProxyStatus)
+    .catch(function (error) {
+      showError(window.TunProxyI18n.format('Page.Config.ProxyStatus.CheckFailed', error.message));
+      resetProxyStatus();
+    })
+    .finally(function () {
+      button.disabled = false;
+      button.textContent = window.TunProxyI18n.t('Page.Config.ProxyCheck');
+    });
 }
 
 function renderMode(status) {
@@ -175,11 +305,98 @@ function loadConfig() {
       document.getElementById('proxyType').value = config.proxy.type;
       document.getElementById('proxyUsername').value = config.proxy.username || '';
       document.getElementById('proxyPassword').value = config.proxy.password || '';
-      document.getElementById('routeMode').value = config.route.mode;
-      document.getElementById('proxyDomains').value = (config.route.proxyDomains || []).join('\n');
-      document.getElementById('directDomains').value = (config.route.directDomains || []).join('\n');
-      document.getElementById('enableGeo').checked = config.route.enableGeo;
-      document.getElementById('enableGfw').checked = config.route.enableGfwList;
+      document.getElementById('enableGfw').checked = true;
+      document.getElementById('enableGeo').checked = true;
+      renderRuleResourceStatus();
+      resetProxyStatus();
+    });
+}
+
+function loadRuleResourceStatus() {
+  return fetch('/api/rule-resources/status')
+    .then(function (response) { return response.json(); })
+    .then(function (status) {
+      ruleResourceStatus = status;
+      renderRuleResourceStatus();
+    });
+}
+
+function renderRuleResourceStatus() {
+  if (!ruleResourceStatus) {
+    return;
+  }
+
+  renderSingleRuleResource(
+    'geo',
+    ruleResourceStatus.geo,
+    document.getElementById('enableGeo').checked);
+  renderSingleRuleResource(
+    'gfw',
+    ruleResourceStatus.gfw,
+    document.getElementById('enableGfw').checked);
+}
+
+function renderSingleRuleResource(name, status, enabled) {
+  var row = document.getElementById(name + '-resource-row');
+  var badge = document.getElementById(name + '-resource-status');
+  var path = document.getElementById(name + '-resource-path');
+  var button = document.getElementById(name + '-resource-button');
+
+  row.style.opacity = enabled ? '1' : '0.55';
+  path.textContent = status && status.path ? status.path : '';
+
+  if (!enabled) {
+    badge.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Disabled');
+    badge.className = 'badge bg-secondary';
+    button.style.display = 'none';
+    return;
+  }
+
+  if (status && status.ready) {
+    badge.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Ready');
+    badge.className = 'badge bg-success';
+    button.style.display = 'none';
+    ruleResourceFailures[name] = false;
+    return;
+  }
+
+  badge.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Missing');
+  badge.className = 'badge bg-warning text-dark';
+  button.textContent = ruleResourceFailures[name]
+    ? window.TunProxyI18n.t('Page.Config.RuleResource.Retry')
+    : window.TunProxyI18n.t('Page.Config.RuleResource.Download');
+  button.disabled = !routingUnlocked;
+  button.style.display = '';
+}
+
+function downloadRuleResource(name) {
+  if (!routingUnlocked) {
+    return;
+  }
+
+  var button = document.getElementById(name + '-resource-button');
+  var badge = document.getElementById(name + '-resource-status');
+  button.disabled = true;
+  button.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Downloading');
+  badge.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Downloading');
+  badge.className = 'badge bg-info text-dark';
+
+  fetch('/api/rule-resources/download?resource=' + encodeURIComponent(name), { method: 'POST' })
+    .then(function (response) {
+      if (!response.ok) {
+        throw new Error();
+      }
+
+      return response.json();
+    })
+    .then(function (status) {
+      ruleResourceFailures[name] = false;
+      ruleResourceStatus = status;
+      renderRuleResourceStatus();
+    })
+    .catch(function () {
+      ruleResourceFailures[name] = true;
+      renderRuleResourceStatus();
     });
 }
 
@@ -208,6 +425,11 @@ function showRestartCountdown() {
 function saveConfig() {
   hideError();
 
+  if (!upstreamProxyStatus || !upstreamProxyStatus.isAvailable) {
+    showError(window.TunProxyI18n.t('Page.Config.ProxyStatus.RequiredBeforeSave'));
+    return;
+  }
+
   var payload = JSON.parse(JSON.stringify(cfg));
   payload.localProxy.listenPort = parseInt(document.getElementById('localPort').value, 10) || 8080;
   payload.localProxy.setSystemProxy = document.getElementById('setSystemProxy').checked;
@@ -216,11 +438,11 @@ function saveConfig() {
   payload.proxy.type = document.getElementById('proxyType').value;
   payload.proxy.username = document.getElementById('proxyUsername').value.trim() || null;
   payload.proxy.password = document.getElementById('proxyPassword').value || null;
-  payload.route.mode = document.getElementById('routeMode').value;
-  payload.route.proxyDomains = splitLines(document.getElementById('proxyDomains').value);
-  payload.route.directDomains = splitLines(document.getElementById('directDomains').value);
-  payload.route.enableGeo = document.getElementById('enableGeo').checked;
-  payload.route.enableGfwList = document.getElementById('enableGfw').checked;
+  payload.route.mode = 'smart';
+  payload.route.proxyDomains = [];
+  payload.route.directDomains = [];
+  payload.route.enableGfwList = true;
+  payload.route.enableGeo = true;
 
   fetch('/api/config', {
     method: 'POST',
@@ -229,9 +451,11 @@ function saveConfig() {
   })
     .then(function (response) {
       if (response.ok || response.status === 204) {
-        fetch('/api/restart', { method: 'POST' }).catch(function () {});
-        showRestartCountdown();
-        return;
+        return prepareRuleResourcesIfNeeded(payload)
+          .then(function () {
+            fetch('/api/restart', { method: 'POST' }).catch(function () {});
+            showRestartCountdown();
+          });
       }
 
       return response.text().then(function (text) {
@@ -240,6 +464,27 @@ function saveConfig() {
     })
     .catch(function (error) {
       showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
+    });
+}
+
+function prepareRuleResourcesIfNeeded(payload) {
+  if (!payload.route.enableGeo && !payload.route.enableGfwList) {
+    return Promise.resolve();
+  }
+
+  var alert = document.getElementById('alert-restart');
+  alert.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Preparing');
+  alert.style.display = '';
+
+  return fetch('/api/rule-resources/prepare', { method: 'POST' })
+    .then(function (response) {
+      if (response.ok) {
+        return;
+      }
+
+      return response.text().then(function (text) {
+        throw new Error(text);
+      });
     });
 }
 
@@ -293,15 +538,30 @@ document.addEventListener('tunproxy:i18n-updated', function () {
   if (latestMode) {
     renderMode({ mode: latestMode });
   }
+  if (upstreamProxyStatus) {
+    renderProxyStatus(upstreamProxyStatus);
+  }
 });
 
 window.TunProxyI18n.initPage().then(function () {
   document.getElementById('save-button').addEventListener('click', saveConfig);
+  document.getElementById('check-proxy-button').addEventListener('click', checkUpstreamProxy);
+  ['proxyHost', 'proxyPort', 'proxyType', 'proxyUsername', 'proxyPassword'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', resetProxyStatus);
+    document.getElementById(id).addEventListener('change', resetProxyStatus);
+  });
+  document.getElementById('geo-resource-button').addEventListener('click', function () {
+    downloadRuleResource('geo');
+  });
+  document.getElementById('gfw-resource-button').addEventListener('click', function () {
+    downloadRuleResource('gfw');
+  });
   document.getElementById('copy-pac-button').addEventListener('click', copyPacUrl);
   document.getElementById('apply-pac-button').addEventListener('click', applyPac);
   document.getElementById('clear-pac-button').addEventListener('click', clearPac);
 
-  Promise.all([loadMode(), loadConfig()]).catch(function (error) {
+  setRoutingUnlocked(false);
+  Promise.all([loadMode(), loadConfig().then(checkUpstreamProxy), loadRuleResourceStatus()]).catch(function (error) {
     showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
   });
 });

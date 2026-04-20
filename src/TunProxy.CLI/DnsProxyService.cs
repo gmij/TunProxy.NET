@@ -15,7 +15,7 @@ public class DnsProxyService
     private readonly string _proxyHost;
     private readonly int _proxyPort;
     private readonly ProxyType _proxyType;
-    private readonly IpCacheManager _ipCache;
+    private readonly DnsResolutionStore _resolutionStore;
     private readonly string _upstreamDns;
     private readonly string? _proxyUsername;
     private readonly string? _proxyPassword;
@@ -38,7 +38,7 @@ public class DnsProxyService
         string proxyHost,
         int proxyPort,
         ProxyType proxyType,
-        IpCacheManager ipCache,
+        DnsResolutionStore resolutionStore,
         string upstreamDns = "8.8.8.8",
         string? proxyUsername = null,
         string? proxyPassword = null,
@@ -47,7 +47,7 @@ public class DnsProxyService
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
         _proxyType = proxyType;
-        _ipCache = ipCache;
+        _resolutionStore = resolutionStore;
         _upstreamDns = upstreamDns;
         _proxyUsername = proxyUsername;
         _proxyPassword = proxyPassword;
@@ -78,6 +78,16 @@ public class DnsProxyService
             _lastQueryUtc = DateTime.UtcNow;
             Log.Debug("[DNS ] Query: {Domain}", domain);
 
+            if (_resolutionStore.TryBuildCachedDnsResponse(dnsPacket, out var cachedResponse))
+            {
+                _lastMethod = "cache";
+                _lastSuccessUtc = DateTime.UtcNow;
+                _lastError = null;
+                Log.Debug("[DNS ] Cache hit for {Domain}", domain);
+                TunWriter.WriteUdpResponse(device, requestPacket, cachedResponse);
+                return;
+            }
+
             var dnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
                 ? _upstreamDns
                 : requestPacket.Header.DestinationAddress.ToString();
@@ -100,6 +110,8 @@ public class DnsProxyService
                 var dnsRespPacket = DnsPacket.Parse(dnsResponse);
                 if (dnsRespPacket != null)
                 {
+                    _resolutionStore.StoreDnsResponseInCache(dnsRespPacket);
+
                     var resolvedIps = new List<string>();
                     foreach (var answer in dnsRespPacket.Answers)
                     {
@@ -110,7 +122,7 @@ public class DnsProxyService
                             var decision = _routeDecision == null
                                 ? null
                                 : await _routeDecision.DecideForObservedAddressAsync(domain, ipAddress, ct);
-                            _ipCache.CacheHostname(
+                            _resolutionStore.RecordObservedHostname(
                                 ip,
                                 domain,
                                 "DNS",
@@ -146,6 +158,9 @@ public class DnsProxyService
         DohQueries = Interlocked.Read(ref _dohQueries),
         DohSuccesses = Interlocked.Read(ref _dohSuccesses),
         DohFailures = Interlocked.Read(ref _dohFailures),
+        CacheHits = _resolutionStore.CacheHits,
+        CacheMisses = _resolutionStore.CacheMisses,
+        CacheEntries = _resolutionStore.CacheEntryCount,
         LastDomain = _lastDomain,
         LastMethod = _lastMethod,
         LastError = _lastError,

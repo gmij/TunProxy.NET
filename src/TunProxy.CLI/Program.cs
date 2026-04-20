@@ -302,6 +302,16 @@ public class Program
         var exePath = Environment.ProcessPath!;
         Log.Information("Installing Windows service from {Path}", exePath);
 
+        var config = LoadConfig([]);
+        var invalidRuleResources = GetInvalidRuleResourceMessages(config);
+        if (invalidRuleResources.Count > 0)
+        {
+            Log.Error(
+                "Cannot enable TUN system service because enabled route rule resources are missing or invalid: {Resources}",
+                string.Join("; ", invalidRuleResources));
+            Environment.Exit(1);
+        }
+
         RunSc($"create {SvcName} binPath= \"{exePath}\" start= auto DisplayName= \"TunProxy Service\"");
         RunSc($"description {SvcName} \"TUN-mode transparent proxy service for Windows\"");
         RunSc($"sdset {SvcName} D:(A;;CCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;LCRPWPCR;;;IU)");
@@ -321,6 +331,30 @@ public class Program
         Log.Information("Service uninstalled.");
 
         SetTunEnabledInConfig(false);
+    }
+
+    private static IReadOnlyList<string> GetInvalidRuleResourceMessages(AppConfig config)
+    {
+        var invalid = new List<string>();
+        if (config.Route.EnableGeo)
+        {
+            using var geo = new GeoIpService(config.Route.GeoIpDbPath);
+            if (!geo.HasValidDatabase())
+            {
+                invalid.Add($"GEO database: {geo.DatabasePath}");
+            }
+        }
+
+        if (config.Route.EnableGfwList)
+        {
+            var gfw = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
+            if (!gfw.HasValidListAsync().GetAwaiter().GetResult())
+            {
+                invalid.Add($"GFW list: {gfw.ListPath}");
+            }
+        }
+
+        return invalid;
     }
 
     private static void SetTunEnabledInConfig(bool enabled)

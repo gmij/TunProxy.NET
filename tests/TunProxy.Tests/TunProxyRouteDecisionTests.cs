@@ -31,22 +31,26 @@ public class TunProxyRouteDecisionTests
     }
 
     [Fact]
-    public async Task ProxyDomainWinsOverDirectDomain()
+    public async Task ManualDomainLists_AreIgnoredBySmartRouting()
     {
         var config = new AppConfig
         {
             Route =
             {
                 ProxyDomains = ["example.com"],
-                DirectDomains = ["example.com"]
+                DirectDomains = ["example.com"],
+                EnableGeo = true
             }
         };
-        var service = new RouteDecisionService(config);
+        var service = new RouteDecisionService(
+            config,
+            getCountryCode: _ => "CN",
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("203.0.113.1")));
 
         var decision = await service.DecideForDomainAsync("www.example.com", CancellationToken.None);
 
-        Assert.True(decision.ShouldProxy);
-        Assert.Equal("ProxyDomain", decision.Reason);
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("Geo:CN", decision.Reason);
     }
 
     [Fact]

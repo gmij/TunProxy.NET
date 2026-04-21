@@ -53,7 +53,8 @@ internal sealed class TrayApp : IDisposable
     private bool _disposed;
     private bool _autoStarted;
     private bool _serviceModeMismatch;
-    private readonly SystemProxy _sysProxy = new();
+    private bool _setupConsoleOpened;
+    private readonly SystemProxy _sysProxy = new(AppDir);
 
     private static string AppDir =>
         Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
@@ -250,6 +251,7 @@ internal sealed class TrayApp : IDisposable
         ServiceState newState;
         string statusText;
         ServiceStatusDto? lastDto = null;
+        AppConfigDto? appConfig = null;
 
         try
         {
@@ -271,6 +273,7 @@ internal sealed class TrayApp : IDisposable
             else if (dto.IsRunning)
             {
                 newState = ServiceState.Running;
+                appConfig = await TryGetConfigAsync();
                 var modeLabel = dto.Mode == "tun" ? Text("Tray.Mode.Tun") : Text("Tray.Mode.Proxy");
                 statusText = Format("Tray.Status.RunningSummary", modeLabel, dto.ActiveConnections);
             }
@@ -315,7 +318,7 @@ internal sealed class TrayApp : IDisposable
         {
             if (lastDto?.Mode != "tun")
             {
-                TrySetSystemProxy();
+                TrySetSystemProxy(appConfig);
             }
             else
             {
@@ -335,10 +338,22 @@ internal sealed class TrayApp : IDisposable
             ApplyState(newState, statusText);
         }
 
-        _serviceModeMismatch =
+        var setupMode =
             IsServiceInstalled()
             && newState == ServiceState.Running
-            && lastDto?.Mode == "proxy";
+            && lastDto?.Mode == "proxy"
+            && appConfig?.Tun.Enabled == true;
+        _serviceModeMismatch = setupMode;
+
+        if (setupMode && !_setupConsoleOpened)
+        {
+            _setupConsoleOpened = true;
+            OpenConsole();
+        }
+        else if (!setupMode)
+        {
+            _setupConsoleOpened = false;
+        }
     }
 
     private static bool TryConsumeRestartRequest()
@@ -444,26 +459,30 @@ internal sealed class TrayApp : IDisposable
         }
     }
 
-    private async void TrySetSystemProxy()
+    private async Task<AppConfigDto?> TryGetConfigAsync()
     {
         try
         {
-            var dto = await _httpClient.GetFromJsonAsync(
+            return await _httpClient.GetFromJsonAsync(
                 $"{ApiBase}/api/config",
                 TrayJsonContext.Default.AppConfigDto);
-
-            if (dto == null || !dto.LocalProxy.SetSystemProxy)
-            {
-                return;
-            }
-
-            _sysProxy.Set(
-                $"127.0.0.1:{dto.LocalProxy.ListenPort}",
-                dto.LocalProxy.BypassList);
         }
         catch
         {
+            return null;
         }
+    }
+
+    private void TrySetSystemProxy(AppConfigDto? dto)
+    {
+        if (dto == null || !dto.LocalProxy.SetSystemProxy)
+        {
+            return;
+        }
+
+        _sysProxy.Set(
+            $"127.0.0.1:{dto.LocalProxy.ListenPort}",
+            dto.LocalProxy.BypassList);
     }
 
     private void StartService()

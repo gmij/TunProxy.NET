@@ -218,7 +218,7 @@ public class TunProxyService : IProxyService
             if (NeedsRuleResourceInitialization())
             {
                 Log.Information("[TUN ] Loading enabled GFWList/GeoIP resources before applying TUN routes.");
-                if (!await InitializeRuleServicesAsync(ct, proxyUrl: null, waitForProxyReadyWhenNeeded: false))
+                if (!await InitializeRuleServicesAsync(ct, _config.Proxy, waitForProxyReadyWhenNeeded: false))
                 {
                     throw new InvalidOperationException("Enabled route rule resources failed to load; TUN startup aborted.");
                 }
@@ -274,6 +274,7 @@ public class TunProxyService : IProxyService
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             Log.Information("[TUN ] Starting packet workers and background services...");
             StartPacketWorkers(_cts.Token);
+            StartRuntimeCleanup(_cts.Token);
             StartMetricsLogger(_cts.Token);
 
             Log.Information("TunProxy is running. Press Ctrl+C to stop.");
@@ -328,19 +329,29 @@ public class TunProxyService : IProxyService
             PacketQueueCapacity);
     }
 
+    private void StartRuntimeCleanup(CancellationToken ct)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            try
+            {
+                while (await timer.WaitForNextTickAsync(ct))
+                {
+                    _connectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(2));
+                    _directConnectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(2));
+                    _dnsStore?.CleanupExpired();
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+            }
+        }, ct);
+    }
+
     private async Task PacketLoopAsync(ITunDevice device, CancellationToken ct)
     {
         _proxyReady.TrySetResult();
-
-        _ = Task.Run(async () =>
-        {
-            var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-            while (await timer.WaitForNextTickAsync(ct))
-            {
-                _connectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(2));
-                _directConnectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(2));
-            }
-        }, ct);
 
         while (!ct.IsCancellationRequested)
         {
@@ -1083,7 +1094,7 @@ public class TunProxyService : IProxyService
             _ = Task.Run(() => InitializeRuleServiceWithRetryAsync(
                 "GEO",
                 () => _geoIpService.IsInitialized,
-                token => InitializeGeoIpServiceAsync(token, proxyUrl: null, waitForProxyReadyWhenNeeded: true),
+                token => InitializeGeoIpServiceAsync(token, _config.Proxy, waitForProxyReadyWhenNeeded: true),
                 _cts!.Token));
         }
 
@@ -1092,7 +1103,7 @@ public class TunProxyService : IProxyService
             _ = Task.Run(() => InitializeRuleServiceWithRetryAsync(
                 "GFW",
                 () => _gfwListService.IsInitialized,
-                token => InitializeGfwListServiceAsync(token, proxyUrl: null, waitForProxyReadyWhenNeeded: true),
+                token => InitializeGfwListServiceAsync(token, _config.Proxy, waitForProxyReadyWhenNeeded: true),
                 _cts!.Token));
         }
     }
@@ -1168,7 +1179,7 @@ public class TunProxyService : IProxyService
 
     private async Task<bool> InitializeRuleServicesAsync(
         CancellationToken ct,
-        string? proxyUrl,
+        ProxyConfig? proxyConfig,
         bool waitForProxyReadyWhenNeeded)
     {
         var ready = true;
@@ -1177,7 +1188,7 @@ public class TunProxyService : IProxyService
             Interlocked.Increment(ref _downloadingCount);
             try
             {
-                ready &= await InitializeGeoIpServiceAsync(ct, proxyUrl, waitForProxyReadyWhenNeeded);
+                ready &= await InitializeGeoIpServiceAsync(ct, proxyConfig, waitForProxyReadyWhenNeeded);
             }
             finally
             {
@@ -1190,7 +1201,7 @@ public class TunProxyService : IProxyService
             Interlocked.Increment(ref _downloadingCount);
             try
             {
-                ready &= await InitializeGfwListServiceAsync(ct, proxyUrl, waitForProxyReadyWhenNeeded);
+                ready &= await InitializeGfwListServiceAsync(ct, proxyConfig, waitForProxyReadyWhenNeeded);
             }
             finally
             {
@@ -1203,32 +1214,29 @@ public class TunProxyService : IProxyService
 
     private async Task<bool> InitializeGeoIpServiceAsync(
         CancellationToken ct,
-        string? proxyUrl,
+        ProxyConfig? proxyConfig,
         bool waitForProxyReadyWhenNeeded)
     {
-        if (proxyUrl == null && waitForProxyReadyWhenNeeded)
+        if (ProxyHttpClientFactory.BuildProxyUri(proxyConfig) == null && waitForProxyReadyWhenNeeded)
         {
             await _proxyReady.Task;
         }
 
-        return await _geoIpService!.InitializeAsync(ct, proxyUrl);
+        return await _geoIpService!.InitializeAsync(ct, proxyConfig);
     }
 
     private async Task<bool> InitializeGfwListServiceAsync(
         CancellationToken ct,
-        string? proxyUrl,
+        ProxyConfig? proxyConfig,
         bool waitForProxyReadyWhenNeeded)
     {
-        if (proxyUrl == null && waitForProxyReadyWhenNeeded)
+        if (ProxyHttpClientFactory.BuildProxyUri(proxyConfig) == null && waitForProxyReadyWhenNeeded)
         {
             await _proxyReady.Task;
         }
 
-        return await _gfwListService!.InitializeAsync(ct, proxyUrl);
+        return await _gfwListService!.InitializeAsync(ct, proxyConfig);
     }
-
-    private string? GetRuleDownloadProxyUrl() =>
-        ProxyHttpClientFactory.BuildProxyUri(_config.Proxy)?.ToString();
 
     private void StartMetricsLogger(CancellationToken ct)
     {

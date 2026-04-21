@@ -74,6 +74,7 @@ public class LocalProxyConfig
     public int ListenPort { get; set; } = 8080;
     public bool SetSystemProxy { get; set; } = true;
     public string BypassList { get; set; } = "<local>;localhost;127.0.0.1;10.*;192.168.*";
+    public SystemProxyBackupConfig SystemProxyBackup { get; set; } = new();
 
     public void ApplyFrom(LocalProxyConfig other)
     {
@@ -82,6 +83,49 @@ public class LocalProxyConfig
         ListenPort = other.ListenPort;
         SetSystemProxy = other.SetSystemProxy;
         BypassList = other.BypassList;
+        SystemProxyBackup.ApplyFrom(other.SystemProxyBackup);
+    }
+}
+
+public class SystemProxyBackupConfig
+{
+    public bool Captured { get; set; }
+    public int ProxyEnable { get; set; }
+    public string? ProxyServer { get; set; }
+    public string? ProxyOverride { get; set; }
+    public string? AutoConfigUrl { get; set; }
+
+    public void ApplyFrom(SystemProxyBackupConfig? other)
+    {
+        if (other == null)
+        {
+            Clear();
+            return;
+        }
+
+        Captured = other.Captured;
+        ProxyEnable = other.ProxyEnable;
+        ProxyServer = other.ProxyServer;
+        ProxyOverride = other.ProxyOverride;
+        AutoConfigUrl = other.AutoConfigUrl;
+    }
+
+    public SystemProxyBackupConfig Clone() => new()
+    {
+        Captured = Captured,
+        ProxyEnable = ProxyEnable,
+        ProxyServer = ProxyServer,
+        ProxyOverride = ProxyOverride,
+        AutoConfigUrl = AutoConfigUrl
+    };
+
+    public void Clear()
+    {
+        Captured = false;
+        ProxyEnable = 0;
+        ProxyServer = null;
+        ProxyOverride = null;
+        AutoConfigUrl = null;
     }
 }
 

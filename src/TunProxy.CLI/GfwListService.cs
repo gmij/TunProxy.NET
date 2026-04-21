@@ -1,5 +1,6 @@
 using System.Text;
 using Serilog;
+using TunProxy.Core.Configuration;
 
 namespace TunProxy.CLI;
 
@@ -19,7 +20,7 @@ public class GfwListService
         _gfwListPath = AppPathResolver.ResolveAppFilePath(gfwListPath);
     }
 
-    public async Task<bool> InitializeAsync(CancellationToken ct = default, string? proxyUrl = null)
+    public async Task<bool> InitializeAsync(CancellationToken ct = default, ProxyConfig? proxyConfig = null)
     {
         if (_initialized)
         {
@@ -28,7 +29,7 @@ public class GfwListService
 
         if (!File.Exists(_gfwListPath))
         {
-            await DownloadGfwListAsync(ct, proxyUrl);
+            await DownloadGfwListAsync(ct, proxyConfig);
         }
 
         if (!File.Exists(_gfwListPath))
@@ -58,21 +59,15 @@ public class GfwListService
         return await ParseGfwListAsync();
     }
 
-    private async Task DownloadGfwListAsync(CancellationToken ct = default, string? proxyUrl = null)
+    private async Task DownloadGfwListAsync(CancellationToken ct = default, ProxyConfig? proxyConfig = null)
     {
+        var proxyUri = ProxyHttpClientFactory.BuildProxyUri(proxyConfig);
         Log.Information("[GFW] List is missing; downloading {Via}",
-            proxyUrl != null ? $"via {proxyUrl}" : "direct");
+            proxyUri != null ? $"via {proxyUri}" : "direct");
 
         try
         {
-            using var handler = new HttpClientHandler();
-            if (proxyUrl != null)
-            {
-                handler.Proxy = new System.Net.WebProxy(proxyUrl);
-                handler.UseProxy = true;
-            }
-
-            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(5) };
+            using var client = ProxyHttpClientFactory.Create(proxyConfig, TimeSpan.FromMinutes(5));
             var data = await client.GetByteArrayAsync(_gfwListUrl, ct);
             await File.WriteAllBytesAsync(_gfwListPath, data, ct);
 
@@ -169,10 +164,10 @@ public class GfwListService
         return false;
     }
 
-    public async Task<bool> ReloadAsync(CancellationToken ct = default, string? proxyUrl = null)
+    public async Task<bool> ReloadAsync(CancellationToken ct = default, ProxyConfig? proxyConfig = null)
     {
         _domains.Clear();
         _initialized = false;
-        return await InitializeAsync(ct, proxyUrl);
+        return await InitializeAsync(ct, proxyConfig);
     }
 }

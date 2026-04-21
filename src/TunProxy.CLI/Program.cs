@@ -45,14 +45,19 @@ public class Program
 
             var config = LoadConfig(args);
 
-            if (OperatingSystem.IsWindows() && !Environment.UserInteractive && !config.Tun.Enabled)
-            {
-                Log.Warning("Windows service mode detected with tun.enabled=false. Restoring TUN mode automatically.");
-                config.Tun.Enabled = true;
-                SetTunEnabledInConfig(true);
-            }
+            var configuredTunMode = config.Tun.Enabled;
+            var invalidRuleResources = configuredTunMode
+                ? GetInvalidRuleResourceMessages(config)
+                : [];
+            var bootstrapProxyMode = configuredTunMode && invalidRuleResources.Count > 0;
+            var tunMode = configuredTunMode && !bootstrapProxyMode;
 
-            var tunMode = config.Tun.Enabled;
+            if (bootstrapProxyMode)
+            {
+                Log.Warning(
+                    "TUN mode is configured but rule resources are missing or invalid. Starting local proxy setup mode first: {Resources}",
+                    string.Join("; ", invalidRuleResources));
+            }
 
             if (tunMode && !IsAdministrator())
             {
@@ -70,7 +75,7 @@ public class Program
             }
 
             Log.Information("========================================");
-            Log.Information("TunProxy .NET 8 - {Mode}", tunMode ? "TUN mode" : "Local Proxy mode");
+            Log.Information("TunProxy .NET 8 - {Mode}", tunMode ? "TUN mode" : bootstrapProxyMode ? "Local Proxy setup mode" : "Local Proxy mode");
             Log.Information("Version: {Version}", typeof(Program).Assembly.GetName().Version);
             Log.Information("========================================");
 
@@ -303,14 +308,13 @@ public class Program
         Log.Information("Installing Windows service from {Path}", exePath);
 
         var config = LoadConfig([]);
-        var invalidRuleResources = GetInvalidRuleResourceMessages(config);
-        if (invalidRuleResources.Count > 0)
-        {
-            Log.Error(
-                "Cannot enable TUN system service because enabled route rule resources are missing or invalid: {Resources}",
-                string.Join("; ", invalidRuleResources));
-            Environment.Exit(1);
-        }
+            var invalidRuleResources = GetInvalidRuleResourceMessages(config);
+            if (invalidRuleResources.Count > 0)
+            {
+                Log.Warning(
+                    "TUN service will be installed in setup mode because rule resources are missing or invalid: {Resources}",
+                    string.Join("; ", invalidRuleResources));
+            }
 
         RunSc($"create {SvcName} binPath= \"{exePath}\" start= auto DisplayName= \"TunProxy Service\"");
         RunSc($"description {SvcName} \"TUN-mode transparent proxy service for Windows\"");

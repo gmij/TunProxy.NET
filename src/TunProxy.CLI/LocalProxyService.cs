@@ -58,7 +58,7 @@ public class LocalProxyService : IProxyService
 
         if (_config.LocalProxy.SetSystemProxy && OperatingSystem.IsWindows() && Environment.UserInteractive)
         {
-            _systemProxy = new SystemProxyManager();
+            _systemProxy = new SystemProxyManager(backupStore: new SystemProxyBackupStore(_config));
             _systemProxy.SetProxy($"127.0.0.1:{port}", _config.LocalProxy.BypassList);
         }
 
@@ -454,40 +454,86 @@ public class LocalProxyService : IProxyService
 
     private void InitializeBackgroundServices()
     {
-        string? httpUrl = _config.Proxy.GetProxyType() == ProxyType.Http
-            ? $"http://{_config.Proxy.Host}:{_config.Proxy.Port}"
-            : null;
+        var initializationTasks = new List<Task<bool>>();
 
         if (_config.Route.EnableGeo && _geoIpService != null)
         {
-            _ = Task.Run(async () =>
-            {
-                Interlocked.Increment(ref _downloadingCount);
-                try
-                {
-                    await _geoIpService.InitializeAsync(_cts!.Token, httpUrl);
-                }
-                finally
-                {
-                    Interlocked.Decrement(ref _downloadingCount);
-                }
-            });
+            initializationTasks.Add(InitializeGeoResourceAsync());
         }
 
         if (_config.Route.EnableGfwList && _gfwListService != null)
         {
-            _ = Task.Run(async () =>
+            initializationTasks.Add(InitializeGfwResourceAsync());
+        }
+
+        _ = ObserveRuleResourceInitializationAsync(initializationTasks);
+    }
+
+    private Task<bool> InitializeGeoResourceAsync() => Task.Run(async () =>
+    {
+        Interlocked.Increment(ref _downloadingCount);
+        try
+        {
+            return await _geoIpService!.InitializeAsync(_cts!.Token, _config.Proxy);
+        }
+        catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[GEO] Rule resource initialization failed in local proxy setup mode.");
+            return false;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _downloadingCount);
+        }
+    });
+
+    private Task<bool> InitializeGfwResourceAsync() => Task.Run(async () =>
+    {
+        Interlocked.Increment(ref _downloadingCount);
+        try
+        {
+            return await _gfwListService!.InitializeAsync(_cts!.Token, _config.Proxy);
+        }
+        catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[GFW] Rule resource initialization failed in local proxy setup mode.");
+            return false;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _downloadingCount);
+        }
+    });
+
+    private static async Task ObserveRuleResourceInitializationAsync(IReadOnlyList<Task<bool>> initializationTasks)
+    {
+        if (initializationTasks.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var results = await Task.WhenAll(initializationTasks);
+            if (!results.All(static ready => ready))
             {
-                Interlocked.Increment(ref _downloadingCount);
-                try
-                {
-                    await _gfwListService.InitializeAsync(_cts!.Token, httpUrl);
-                }
-                finally
-                {
-                    Interlocked.Decrement(ref _downloadingCount);
-                }
-            });
+                Log.Warning("[SETUP] Rule resources are not ready yet; staying in the current proxy mode.");
+                return;
+            }
+
+            Log.Information("[SETUP] Rule resources are ready. GFW/GEO routing can be activated after the next mode restart.");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[SETUP] Failed while waiting for rule resources.");
         }
     }
 

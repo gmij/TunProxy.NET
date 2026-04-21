@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using MaxMind.GeoIP2;
 using Serilog;
+using TunProxy.Core.Configuration;
 
 namespace TunProxy.CLI;
 
@@ -60,11 +61,11 @@ public class GeoIpService : IDisposable
         DynamicallyAccessedMemberTypes.PublicProperties |
         DynamicallyAccessedMemberTypes.NonPublicProperties,
         typeof(MaxMind.GeoIP2.Model.Traits))]
-    public async Task<bool> InitializeAsync(CancellationToken ct = default, string? proxyUrl = null)
+    public async Task<bool> InitializeAsync(CancellationToken ct = default, ProxyConfig? proxyConfig = null)
     {
         if (!File.Exists(_dbPath))
         {
-            await DownloadGeoIpDbAsync(ct, proxyUrl);
+            await DownloadGeoIpDbAsync(ct, proxyConfig);
         }
 
         if (!File.Exists(_dbPath))
@@ -113,20 +114,15 @@ public class GeoIpService : IDisposable
         }
     }
 
-    private async Task DownloadGeoIpDbAsync(CancellationToken ct = default, string? proxyUrl = null)
+    private async Task DownloadGeoIpDbAsync(CancellationToken ct = default, ProxyConfig? proxyConfig = null)
     {
+        var proxyUri = ProxyHttpClientFactory.BuildProxyUri(proxyConfig);
         Log.Information("[GEO] Database is missing; downloading... {Via}",
-            proxyUrl != null ? $"via {proxyUrl}" : "direct");
+            proxyUri != null ? $"via {proxyUri}" : "direct");
 
         try
         {
-            using var handler = new HttpClientHandler();
-            if (proxyUrl != null)
-            {
-                handler.Proxy = new WebProxy(proxyUrl);
-                handler.UseProxy = true;
-            }
-            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(10) };
+            using var client = ProxyHttpClientFactory.Create(proxyConfig, TimeSpan.FromMinutes(10));
 
             const string downloadUrl = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb";
 

@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Microsoft.Win32;
 using Serilog;
+using TunProxy.Core.Configuration;
 
 namespace TunProxy.CLI;
 
@@ -12,11 +13,13 @@ internal sealed class SystemProxyManager : IDisposable
     private string? _originalProxyServer;
     private string? _originalBypassList;
     private string? _originalAutoConfigUrl;
+    private bool _originalCaptured;
     private bool _applied;
 
     private const string InternetSettingsKey = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
     private readonly RegistryKey _registryRoot;
     private readonly string _settingsPath;
+    private readonly SystemProxyBackupStore? _backupStore;
 
     [DllImport("wininet.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -25,10 +28,14 @@ internal sealed class SystemProxyManager : IDisposable
     private const int INTERNET_OPTION_SETTINGS_CHANGED = 39;
     private const int INTERNET_OPTION_REFRESH = 37;
 
-    internal SystemProxyManager(RegistryKey? registryRoot = null, string settingsPath = InternetSettingsKey)
+    internal SystemProxyManager(
+        RegistryKey? registryRoot = null,
+        string settingsPath = InternetSettingsKey,
+        SystemProxyBackupStore? backupStore = null)
     {
         _registryRoot = registryRoot ?? Registry.CurrentUser;
         _settingsPath = settingsPath;
+        _backupStore = backupStore;
     }
 
     public void SetProxy(string proxyAddress, string bypassList)
@@ -42,10 +49,7 @@ internal sealed class SystemProxyManager : IDisposable
                 return;
             }
 
-            _originalProxyEnable = (int)(key.GetValue("ProxyEnable", 0) ?? 0);
-            _originalProxyServer = key.GetValue("ProxyServer") as string;
-            _originalBypassList = key.GetValue("ProxyOverride") as string;
-            _originalAutoConfigUrl = key.GetValue("AutoConfigURL") as string;
+            CaptureOriginalSettingsIfNeeded(key);
 
             key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
             key.SetValue("ProxyServer", proxyAddress, RegistryValueKind.String);
@@ -105,7 +109,8 @@ internal sealed class SystemProxyManager : IDisposable
 
     public void RestoreProxy()
     {
-        if (!_applied)
+        var backup = _backupStore?.GetBackup();
+        if (!_applied && backup == null && !_originalCaptured)
             return;
 
         try
@@ -114,25 +119,19 @@ internal sealed class SystemProxyManager : IDisposable
             if (key == null)
                 return;
 
-            key.SetValue("ProxyEnable", _originalProxyEnable, RegistryValueKind.DWord);
-
-            if (_originalProxyServer != null)
-                key.SetValue("ProxyServer", _originalProxyServer, RegistryValueKind.String);
+            if (backup != null)
+            {
+                RestoreFromBackup(key, backup);
+                _backupStore?.Clear();
+            }
             else
-                key.DeleteValue("ProxyServer", throwOnMissingValue: false);
-
-            if (_originalBypassList != null)
-                key.SetValue("ProxyOverride", _originalBypassList, RegistryValueKind.String);
-            else
-                key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
-
-            if (_originalAutoConfigUrl != null)
-                key.SetValue("AutoConfigURL", _originalAutoConfigUrl, RegistryValueKind.String);
-            else
-                key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
+            {
+                RestoreFromMemory(key);
+            }
 
             NotifyProxyChanged();
             _applied = false;
+            _originalCaptured = false;
             Log.Information("System proxy restored");
         }
         catch (Exception ex)
@@ -145,6 +144,73 @@ internal sealed class SystemProxyManager : IDisposable
     {
         InternetSetOption(IntPtr.Zero, INTERNET_OPTION_SETTINGS_CHANGED, IntPtr.Zero, 0);
         InternetSetOption(IntPtr.Zero, INTERNET_OPTION_REFRESH, IntPtr.Zero, 0);
+    }
+
+    private void CaptureOriginalSettingsIfNeeded(RegistryKey key)
+    {
+        var backup = CaptureBackup(key);
+        _backupStore?.SaveIfMissing(backup);
+        var effectiveBackup = _backupStore?.GetBackup() ?? backup;
+
+        if (_originalCaptured)
+        {
+            return;
+        }
+
+        _originalProxyEnable = effectiveBackup.ProxyEnable;
+        _originalProxyServer = effectiveBackup.ProxyServer;
+        _originalBypassList = effectiveBackup.ProxyOverride;
+        _originalAutoConfigUrl = effectiveBackup.AutoConfigUrl;
+        _originalCaptured = true;
+    }
+
+    private static SystemProxyBackupConfig CaptureBackup(RegistryKey key) => new()
+    {
+        Captured = true,
+        ProxyEnable = Convert.ToInt32(key.GetValue("ProxyEnable", 0) ?? 0),
+        ProxyServer = key.GetValue("ProxyServer") as string,
+        ProxyOverride = key.GetValue("ProxyOverride") as string,
+        AutoConfigUrl = key.GetValue("AutoConfigURL") as string
+    };
+
+    private void RestoreFromMemory(RegistryKey key)
+    {
+        key.SetValue("ProxyEnable", _originalProxyEnable, RegistryValueKind.DWord);
+
+        if (_originalProxyServer != null)
+            key.SetValue("ProxyServer", _originalProxyServer, RegistryValueKind.String);
+        else
+            key.DeleteValue("ProxyServer", throwOnMissingValue: false);
+
+        if (_originalBypassList != null)
+            key.SetValue("ProxyOverride", _originalBypassList, RegistryValueKind.String);
+        else
+            key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
+
+        if (_originalAutoConfigUrl != null)
+            key.SetValue("AutoConfigURL", _originalAutoConfigUrl, RegistryValueKind.String);
+        else
+            key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
+    }
+
+    private static void RestoreFromBackup(RegistryKey key, SystemProxyBackupConfig backup)
+    {
+        key.SetValue("ProxyEnable", backup.ProxyEnable, RegistryValueKind.DWord);
+
+        if (backup.ProxyServer != null)
+            key.SetValue("ProxyServer", backup.ProxyServer, RegistryValueKind.String);
+        else
+            key.DeleteValue("ProxyServer", throwOnMissingValue: false);
+
+        if (backup.ProxyOverride != null)
+            key.SetValue("ProxyOverride", backup.ProxyOverride, RegistryValueKind.String);
+        else
+            key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
+
+        if (backup.AutoConfigUrl != null)
+            key.SetValue("AutoConfigURL", backup.AutoConfigUrl, RegistryValueKind.String);
+        else
+            key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
     }
 
     public void Dispose() => RestoreProxy();

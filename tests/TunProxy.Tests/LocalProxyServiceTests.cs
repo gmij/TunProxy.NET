@@ -32,6 +32,11 @@ public class LocalProxyServiceTests
             {
                 ListenPort = localPort,
                 SetSystemProxy = false
+            },
+            Route = new RouteConfig
+            {
+                EnableGeo = false,
+                EnableGfwList = false
             }
         });
 

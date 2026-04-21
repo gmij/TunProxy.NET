@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Microsoft.Win32;
+using TunProxy.Core.Configuration;
 
 namespace TunProxy.Tray;
 
@@ -23,9 +25,16 @@ internal sealed class SystemProxy
     private string? _savedServer;
     private string? _savedBypass;
     private string? _savedAutoConfigUrl;
+    private bool _saved;
     private bool _applied;
+    private readonly string _configPath;
 
     public bool IsApplied => _applied;
+
+    public SystemProxy(string? appDir = null)
+    {
+        _configPath = Path.Combine(appDir ?? AppContext.BaseDirectory, "tunproxy.json");
+    }
 
     public bool Set(
         string proxyAddress,
@@ -86,7 +95,8 @@ internal sealed class SystemProxy
 
     public bool Restore()
     {
-        if (!_applied)
+        var backup = ReadPersistentBackup();
+        if (!_applied && backup == null && !_saved)
         {
             return true;
         }
@@ -99,37 +109,19 @@ internal sealed class SystemProxy
                 return false;
             }
 
-            key.SetValue("ProxyEnable", _savedEnable, RegistryValueKind.DWord);
-
-            if (_savedServer != null)
+            if (backup != null)
             {
-                key.SetValue("ProxyServer", _savedServer, RegistryValueKind.String);
+                RestoreFromBackup(key, backup);
+                ClearPersistentBackup();
             }
             else
             {
-                key.DeleteValue("ProxyServer", throwOnMissingValue: false);
-            }
-
-            if (_savedBypass != null)
-            {
-                key.SetValue("ProxyOverride", _savedBypass, RegistryValueKind.String);
-            }
-            else
-            {
-                key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
-            }
-
-            if (_savedAutoConfigUrl != null)
-            {
-                key.SetValue("AutoConfigURL", _savedAutoConfigUrl, RegistryValueKind.String);
-            }
-            else
-            {
-                key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
+                RestoreFromMemory(key);
             }
 
             Notify();
             _applied = false;
+            _saved = false;
             return true;
         }
         catch
@@ -140,15 +132,160 @@ internal sealed class SystemProxy
 
     private void SaveSnapshotIfNeeded(RegistryKey key)
     {
-        if (_applied)
+        var backup = CaptureBackup(key);
+        SavePersistentBackupIfMissing(backup);
+        var effectiveBackup = ReadPersistentBackup() ?? backup;
+
+        if (_saved)
         {
             return;
         }
 
-        _savedEnable = (int)(key.GetValue("ProxyEnable", 0) ?? 0);
-        _savedServer = key.GetValue("ProxyServer") as string;
-        _savedBypass = key.GetValue("ProxyOverride") as string;
-        _savedAutoConfigUrl = key.GetValue("AutoConfigURL") as string;
+        _savedEnable = effectiveBackup.ProxyEnable;
+        _savedServer = effectiveBackup.ProxyServer;
+        _savedBypass = effectiveBackup.ProxyOverride;
+        _savedAutoConfigUrl = effectiveBackup.AutoConfigUrl;
+        _saved = true;
+    }
+
+    private static SystemProxyBackupConfig CaptureBackup(RegistryKey key) => new()
+    {
+        Captured = true,
+        ProxyEnable = Convert.ToInt32(key.GetValue("ProxyEnable", 0) ?? 0),
+        ProxyServer = key.GetValue("ProxyServer") as string,
+        ProxyOverride = key.GetValue("ProxyOverride") as string,
+        AutoConfigUrl = key.GetValue("AutoConfigURL") as string
+    };
+
+    private void RestoreFromMemory(RegistryKey key)
+    {
+        key.SetValue("ProxyEnable", _savedEnable, RegistryValueKind.DWord);
+
+        if (_savedServer != null)
+        {
+            key.SetValue("ProxyServer", _savedServer, RegistryValueKind.String);
+        }
+        else
+        {
+            key.DeleteValue("ProxyServer", throwOnMissingValue: false);
+        }
+
+        if (_savedBypass != null)
+        {
+            key.SetValue("ProxyOverride", _savedBypass, RegistryValueKind.String);
+        }
+        else
+        {
+            key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
+        }
+
+        if (_savedAutoConfigUrl != null)
+        {
+            key.SetValue("AutoConfigURL", _savedAutoConfigUrl, RegistryValueKind.String);
+        }
+        else
+        {
+            key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
+        }
+    }
+
+    private static void RestoreFromBackup(RegistryKey key, SystemProxyBackupConfig backup)
+    {
+        key.SetValue("ProxyEnable", backup.ProxyEnable, RegistryValueKind.DWord);
+
+        if (backup.ProxyServer != null)
+        {
+            key.SetValue("ProxyServer", backup.ProxyServer, RegistryValueKind.String);
+        }
+        else
+        {
+            key.DeleteValue("ProxyServer", throwOnMissingValue: false);
+        }
+
+        if (backup.ProxyOverride != null)
+        {
+            key.SetValue("ProxyOverride", backup.ProxyOverride, RegistryValueKind.String);
+        }
+        else
+        {
+            key.DeleteValue("ProxyOverride", throwOnMissingValue: false);
+        }
+
+        if (backup.AutoConfigUrl != null)
+        {
+            key.SetValue("AutoConfigURL", backup.AutoConfigUrl, RegistryValueKind.String);
+        }
+        else
+        {
+            key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
+        }
+    }
+
+    private SystemProxyBackupConfig? ReadPersistentBackup()
+    {
+        var config = LoadConfig();
+        return config?.LocalProxy.SystemProxyBackup.Captured == true
+            ? config.LocalProxy.SystemProxyBackup.Clone()
+            : null;
+    }
+
+    private void SavePersistentBackupIfMissing(SystemProxyBackupConfig backup)
+    {
+        var config = LoadConfig();
+        if (config == null || config.LocalProxy.SystemProxyBackup.Captured)
+        {
+            return;
+        }
+
+        config.LocalProxy.SystemProxyBackup.ApplyFrom(backup);
+        SaveConfig(config);
+    }
+
+    private void ClearPersistentBackup()
+    {
+        var config = LoadConfig();
+        if (config == null)
+        {
+            return;
+        }
+
+        config.LocalProxy.SystemProxyBackup.Clear();
+        SaveConfig(config);
+    }
+
+    private AppConfig? LoadConfig()
+    {
+        try
+        {
+            if (!File.Exists(_configPath))
+            {
+                return null;
+            }
+
+            var json = File.ReadAllText(_configPath);
+            return JsonSerializer.Deserialize(json, TrayJsonContext.Default.AppConfig);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void SaveConfig(AppConfig config)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(_configPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            File.WriteAllText(_configPath, JsonSerializer.Serialize(config, TrayJsonContext.Default.AppConfig));
+        }
+        catch
+        {
+        }
     }
 
     private static void Notify()

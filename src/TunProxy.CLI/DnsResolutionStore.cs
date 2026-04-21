@@ -18,6 +18,7 @@ public class DnsResolutionStore
     private long _cacheMisses;
 
     private static readonly TimeSpan DnsCacheIdleTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ObservedHostnameIdleTimeout = TimeSpan.FromMinutes(10);
 
     public long CacheHits => Interlocked.Read(ref _cacheHits);
 
@@ -28,22 +29,26 @@ public class DnsResolutionStore
         get
         {
             var now = DateTime.UtcNow;
-            CleanupDnsCache(now);
             return _dnsCache.Values.Sum(entry => entry.Answers.Count(answer => IsDnsCacheAnswerUsable(answer, now)));
         }
+    }
+
+    public void CleanupExpired(DateTime? nowUtc = null)
+    {
+        var now = nowUtc ?? DateTime.UtcNow;
+        CleanupDnsCache(now);
+        CleanupObservedHostnames(now);
     }
 
     public IReadOnlyList<DnsCacheRecord> GetCacheSnapshot()
     {
         var now = DateTime.UtcNow;
-        CleanupDnsCache(now);
         return GetCacheSnapshot(now);
     }
 
-    public IReadOnlyList<DnsResolutionSnapshot> GetResolutionSnapshot()
+    public IReadOnlyList<DnsResolutionSnapshot> GetResolutionSnapshot(DateTime? nowUtc = null)
     {
-        var now = DateTime.UtcNow;
-        CleanupDnsCache(now);
+        var now = nowUtc ?? DateTime.UtcNow;
         var dnsRecords = GetCacheSnapshot(now);
         var dnsByKey = dnsRecords
             .GroupBy(static record => MakeRecordKey(record.Hostname, record.IpAddress), StringComparer.OrdinalIgnoreCase)
@@ -56,6 +61,11 @@ public class DnsResolutionStore
 
         foreach (var (ip, observed) in _observedHostnames)
         {
+            if (!IsObservedHostnameUsable(observed, now))
+            {
+                continue;
+            }
+
             var key = MakeRecordKey(observed.Hostname, ip);
             dnsByKey.TryGetValue(key, out var dnsRecord);
             seen.Add(key);
@@ -231,7 +241,13 @@ public class DnsResolutionStore
 
         var now = DateTime.UtcNow;
         CleanupDnsCache(now);
-        return UpdateCachedAddress(domain, ipBytes, now, remove: false);
+        var updated = UpdateCachedAddress(domain, ipBytes, now, remove: false);
+        if (updated)
+        {
+            TouchObservedHostname(domain, ip, now);
+        }
+
+        return updated;
     }
 
     internal bool RemoveCachedAddress(string? domain, string ip)
@@ -244,6 +260,7 @@ public class DnsResolutionStore
         var removed = UpdateCachedAddress(domain, ipBytes, DateTime.UtcNow, remove: true);
         if (removed)
         {
+            RemoveObservedHostname(domain, ip);
             Log.Debug("[DNS ] Removed cached address {IP} for {Domain}", ip, domain ?? "(any domain)");
         }
 
@@ -255,7 +272,8 @@ public class DnsResolutionStore
         string hostname,
         string source = "Observed",
         string? route = null,
-        string? reason = null)
+        string? reason = null,
+        DateTime? nowUtc = null)
     {
         if (string.IsNullOrWhiteSpace(ip) || string.IsNullOrWhiteSpace(hostname))
         {
@@ -270,7 +288,7 @@ public class DnsResolutionStore
 
         var normalizedRoute = string.IsNullOrWhiteSpace(route) ? "UNKNOWN" : route;
         var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "Observed" : reason;
-        var now = DateTime.UtcNow;
+        var now = nowUtc ?? DateTime.UtcNow;
         _observedHostnames.TryGetValue(ip, out var previous);
         _observedHostnames.AddOrUpdate(
             ip,
@@ -302,8 +320,29 @@ public class DnsResolutionStore
         }
     }
 
-    public string? GetCachedHostname(string ip) =>
-        _observedHostnames.TryGetValue(ip, out var entry) ? entry.Hostname : null;
+    public string? GetCachedHostname(string ip)
+    {
+        var now = DateTime.UtcNow;
+
+        if (_observedHostnames.TryGetValue(ip, out var entry) &&
+            IsObservedHostnameUsable(entry, now))
+        {
+            return entry.Hostname;
+        }
+
+        if (!TryGetIpv4Bytes(ip, out var ipBytes))
+        {
+            return null;
+        }
+
+        return _dnsCache
+            .SelectMany(item => item.Value.Answers
+                .Where(answer => IsDnsCacheAnswerUsable(answer, now) && answer.Data.SequenceEqual(ipBytes))
+                .Select(answer => new { item.Key.Domain, answer.LastActiveUtc }))
+            .OrderByDescending(item => item.LastActiveUtc)
+            .Select(item => item.Domain)
+            .FirstOrDefault();
+    }
 
     private IReadOnlyList<DnsCacheRecord> GetCacheSnapshot(DateTime now)
     {
@@ -417,6 +456,48 @@ public class DnsResolutionStore
         }
     }
 
+    private void CleanupObservedHostnames(DateTime now)
+    {
+        foreach (var (ip, entry) in _observedHostnames)
+        {
+            if (!IsObservedHostnameUsable(entry, now))
+            {
+                _observedHostnames.TryRemove(ip, out _);
+            }
+        }
+    }
+
+    private void TouchObservedHostname(string? domain, string ip, DateTime now)
+    {
+        var normalizedDomain = domain == null ? null : NormalizeDnsName(domain);
+        if (normalizedDomain == null)
+        {
+            return;
+        }
+
+        _observedHostnames.AddOrUpdate(
+            ip,
+            _ => new DnsObservedHostnameEntry(normalizedDomain, "UNKNOWN", "DNS", now, 1),
+            (_, existing) => existing.Hostname.Equals(normalizedDomain, StringComparison.OrdinalIgnoreCase)
+                ? existing with { LastSeenUtc = now, SeenCount = existing.SeenCount + 1 }
+                : existing);
+    }
+
+    private void RemoveObservedHostname(string? domain, string ip)
+    {
+        if (!_observedHostnames.TryGetValue(ip, out var entry))
+        {
+            return;
+        }
+
+        var normalizedDomain = domain == null ? null : NormalizeDnsName(domain);
+        if (normalizedDomain == null ||
+            entry.Hostname.Equals(normalizedDomain, StringComparison.OrdinalIgnoreCase))
+        {
+            _observedHostnames.TryRemove(ip, out _);
+        }
+    }
+
     private static void AddCachedAnswer(
         Dictionary<DnsCacheKey, List<DnsCachedAnswer>> updates,
         DnsCacheKey key,
@@ -474,6 +555,9 @@ public class DnsResolutionStore
     private static bool IsDnsCacheAnswerUsable(DnsCachedAnswer answer, DateTime now) =>
         answer.ExpiresUtc > now &&
         now - answer.LastActiveUtc <= DnsCacheIdleTimeout;
+
+    private static bool IsObservedHostnameUsable(DnsObservedHostnameEntry entry, DateTime now) =>
+        now - entry.LastSeenUtc <= ObservedHostnameIdleTimeout;
 
     private static uint GetRemainingTtlSeconds(DateTime expiresUtc, DateTime now)
     {

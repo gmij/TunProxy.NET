@@ -16,6 +16,11 @@
   <div id="alert-error" class="alert alert-danger" style="display:none"></div>
 
   <h4 class="mb-3" data-i18n="Page.Config.Title"></h4>
+  <div class="d-flex flex-wrap align-items-center gap-2 small mb-3" id="config-flow">
+    <span class="badge bg-secondary" id="flow-proxy"></span>
+    <span class="badge bg-secondary" id="flow-resources"></span>
+    <span class="badge bg-secondary" id="flow-save"></span>
+  </div>
   <div class="mb-4">
     <div class="d-flex align-items-center gap-2 mb-2">
       <span class="text-muted small" data-i18n="Page.Config.CurrentMode"></span>
@@ -110,6 +115,10 @@
         </div>
       </div>
       <div class="small text-muted" data-i18n="Page.Config.DnsCacheHint"></div>
+      <div class="d-flex align-items-center gap-2 flex-wrap mt-2">
+        <button type="button" class="btn btn-sm btn-outline-primary" id="prepare-resources-button" style="display:none"></button>
+        <span id="resource-summary-text" class="small text-muted"></span>
+      </div>
     </div>
   </div>
 
@@ -139,6 +148,10 @@ var ruleResourceStatus = null;
 var ruleResourceFailures = {};
 var upstreamProxyStatus = null;
 var routingUnlocked = false;
+var checkedConfigKey = null;
+var proxyChecking = false;
+var resourcesPreparing = false;
+var savingConfig = false;
 
 function showError(message) {
   var error = document.getElementById('alert-error');
@@ -168,6 +181,134 @@ function buildProxyConfigFromFields() {
   };
 }
 
+function buildConfigPayloadFromFields() {
+  var payload = JSON.parse(JSON.stringify(cfg));
+  payload.localProxy.listenPort = parseInt(document.getElementById('localPort').value, 10) || 8080;
+  payload.localProxy.setSystemProxy = document.getElementById('setSystemProxy').checked;
+  payload.proxy.host = document.getElementById('proxyHost').value.trim();
+  payload.proxy.port = parseInt(document.getElementById('proxyPort').value, 10) || 7890;
+  payload.proxy.type = document.getElementById('proxyType').value;
+  payload.proxy.username = document.getElementById('proxyUsername').value.trim() || null;
+  payload.proxy.password = document.getElementById('proxyPassword').value || null;
+  payload.route.mode = 'smart';
+  payload.route.proxyDomains = [];
+  payload.route.directDomains = [];
+  payload.route.enableGfwList = true;
+  payload.route.enableGeo = true;
+  return payload;
+}
+
+function getCurrentConfigKey() {
+  return JSON.stringify(buildProxyConfigFromFields());
+}
+
+function isProxyCheckCurrent() {
+  return !!(upstreamProxyStatus && upstreamProxyStatus.isAvailable && checkedConfigKey === getCurrentConfigKey());
+}
+
+function isTunMode() {
+  return latestMode === 'tun';
+}
+
+function hasProxyEndpoint() {
+  return document.getElementById('proxyHost').value.trim().length > 0
+    && (parseInt(document.getElementById('proxyPort').value, 10) || 0) > 0;
+}
+
+function isProxyReadyForWorkflow() {
+  return hasProxyEndpoint();
+}
+
+function isResourceEnabled(name) {
+  return name === 'geo'
+    ? document.getElementById('enableGeo').checked
+    : document.getElementById('enableGfw').checked;
+}
+
+function isSingleRuleResourceReady(name) {
+  if (!isResourceEnabled(name)) {
+    return true;
+  }
+
+  var status = ruleResourceStatus ? ruleResourceStatus[name] : null;
+  return !!(status && status.ready);
+}
+
+function areRuleResourcesReady() {
+  return isSingleRuleResourceReady('geo') && isSingleRuleResourceReady('gfw');
+}
+
+function hasMissingRuleResources() {
+  return !areRuleResourcesReady();
+}
+
+function setFlowBadge(id, ready, active, label) {
+  var badge = document.getElementById(id);
+  badge.textContent = label;
+  badge.className = ready
+    ? 'badge bg-success'
+    : active
+      ? 'badge bg-info text-dark'
+      : 'badge bg-secondary';
+}
+
+function updateWorkflowControls() {
+  var proxyReady = isProxyReadyForWorkflow();
+  var resourcesReady = areRuleResourcesReady();
+  var canPrepareResources = proxyReady && hasMissingRuleResources() && !resourcesPreparing && !savingConfig;
+  var canSave = proxyReady && !resourcesPreparing && !savingConfig;
+  var checkButton = document.getElementById('check-proxy-button');
+  var geoButton = document.getElementById('geo-resource-button');
+  var gfwButton = document.getElementById('gfw-resource-button');
+  var prepareButton = document.getElementById('prepare-resources-button');
+  var resourceSummary = document.getElementById('resource-summary-text');
+  var saveButton = document.getElementById('save-button');
+
+  routingUnlocked = proxyReady;
+  document.getElementById('routing-panel').style.opacity = proxyReady ? '1' : '0.45';
+  document.getElementById('routing-locked').style.display = proxyReady ? 'none' : '';
+  checkButton.disabled = isTunMode() || proxyChecking || resourcesPreparing || savingConfig;
+  geoButton.disabled = !proxyReady || resourcesPreparing || savingConfig;
+  gfwButton.disabled = !proxyReady || resourcesPreparing || savingConfig;
+
+  prepareButton.style.display = proxyReady && hasMissingRuleResources() ? '' : 'none';
+  prepareButton.disabled = !canPrepareResources;
+  prepareButton.textContent = resourcesPreparing
+    ? window.TunProxyI18n.t('Page.Config.RuleResource.Downloading')
+    : window.TunProxyI18n.t('Page.Config.RuleResource.Download') + ' GEO/GFW';
+
+  if (!proxyReady) {
+    resourceSummary.textContent = window.TunProxyI18n.t('Page.Config.RoutingLocked');
+  }
+  else if (resourcesReady) {
+    resourceSummary.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Ready');
+  }
+  else if (resourcesPreparing) {
+    resourceSummary.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Preparing');
+  }
+  else {
+    resourceSummary.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Missing');
+  }
+
+  saveButton.disabled = !canSave;
+
+  setFlowBadge(
+    'flow-proxy',
+    isProxyCheckCurrent(),
+    proxyReady && !isProxyCheckCurrent(),
+    '1 ' + window.TunProxyI18n.t('Page.Config.ProxyServer'));
+  setFlowBadge(
+    'flow-resources',
+    resourcesReady,
+    proxyReady && !resourcesReady,
+    '2 ' + window.TunProxyI18n.t('Page.Config.RoutingRules'));
+  setFlowBadge(
+    'flow-save',
+    canSave,
+    proxyReady,
+    '3 ' + window.TunProxyI18n.t('Page.Config.Save'));
+}
+
 function setRoutingUnlocked(unlocked) {
   routingUnlocked = unlocked;
   var panel = document.getElementById('routing-panel');
@@ -178,14 +319,23 @@ function setRoutingUnlocked(unlocked) {
   document.getElementById('geo-resource-button').disabled = !unlocked;
   document.getElementById('gfw-resource-button').disabled = !unlocked;
   renderRuleResourceStatus();
+  updateWorkflowControls();
 }
 
 function resetProxyStatus() {
   upstreamProxyStatus = null;
+  checkedConfigKey = null;
   var badge = document.getElementById('proxy-status-badge');
-  badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Unknown');
-  badge.className = 'badge bg-secondary';
-  document.getElementById('proxy-status-text').textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Hint');
+  if (isTunMode()) {
+    badge.textContent = window.TunProxyI18n.t('Mode.Tun');
+    badge.className = 'badge bg-warning text-dark';
+    document.getElementById('proxy-status-text').textContent = window.TunProxyI18n.t('Page.Config.ModeHintTunHtml').replace(/<[^>]+>/g, ' ');
+  }
+  else {
+    badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Unknown');
+    badge.className = 'badge bg-secondary';
+    document.getElementById('proxy-status-text').textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Hint');
+  }
   document.getElementById('proxy-check-panel').style.display = 'none';
   setRoutingUnlocked(false);
 }
@@ -236,8 +386,18 @@ function renderProxyStatus(status) {
 
 function checkUpstreamProxy() {
   hideError();
+  if (isTunMode()) {
+    resetProxyStatus();
+    return Promise.resolve();
+  }
+
+  var proxyConfig = buildProxyConfigFromFields();
+  var requestConfigKey = JSON.stringify(proxyConfig);
   var button = document.getElementById('check-proxy-button');
   var badge = document.getElementById('proxy-status-badge');
+  upstreamProxyStatus = null;
+  checkedConfigKey = null;
+  proxyChecking = true;
   button.disabled = true;
   button.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Checking');
   badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Checking');
@@ -247,7 +407,7 @@ function checkUpstreamProxy() {
   return fetch('/api/upstream-proxy/check', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildProxyConfigFromFields())
+    body: JSON.stringify(proxyConfig)
   })
     .then(function (response) {
       if (!response.ok) {
@@ -258,14 +418,18 @@ function checkUpstreamProxy() {
 
       return response.json();
     })
-    .then(renderProxyStatus)
+    .then(function (status) {
+      checkedConfigKey = status.isAvailable ? requestConfigKey : null;
+      renderProxyStatus(status);
+    })
     .catch(function (error) {
       showError(window.TunProxyI18n.format('Page.Config.ProxyStatus.CheckFailed', error.message));
       resetProxyStatus();
     })
     .finally(function () {
-      button.disabled = false;
+      proxyChecking = false;
       button.textContent = window.TunProxyI18n.t('Page.Config.ProxyCheck');
+      updateWorkflowControls();
     });
 }
 
@@ -323,6 +487,7 @@ function loadRuleResourceStatus() {
 
 function renderRuleResourceStatus() {
   if (!ruleResourceStatus) {
+    updateWorkflowControls();
     return;
   }
 
@@ -334,6 +499,7 @@ function renderRuleResourceStatus() {
     'gfw',
     ruleResourceStatus.gfw,
     document.getElementById('enableGfw').checked);
+  updateWorkflowControls();
 }
 
 function renderSingleRuleResource(name, status, enabled) {
@@ -365,26 +531,35 @@ function renderSingleRuleResource(name, status, enabled) {
   button.textContent = ruleResourceFailures[name]
     ? window.TunProxyI18n.t('Page.Config.RuleResource.Retry')
     : window.TunProxyI18n.t('Page.Config.RuleResource.Download');
-  button.disabled = !routingUnlocked;
+  button.disabled = !routingUnlocked || resourcesPreparing || savingConfig;
   button.style.display = '';
 }
 
 function downloadRuleResource(name) {
-  if (!routingUnlocked) {
+  if (!isProxyReadyForWorkflow()) {
+    showError(window.TunProxyI18n.t('Page.Config.ProxyStatus.RequiredBeforeSave'));
     return;
   }
 
   var button = document.getElementById(name + '-resource-button');
   var badge = document.getElementById(name + '-resource-status');
+  resourcesPreparing = true;
+  updateWorkflowControls();
   button.disabled = true;
   button.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Downloading');
   badge.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Downloading');
   badge.className = 'badge bg-info text-dark';
 
-  fetch('/api/rule-resources/download?resource=' + encodeURIComponent(name), { method: 'POST' })
+  fetch('/api/rule-resources/download?resource=' + encodeURIComponent(name), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildConfigPayloadFromFields())
+  })
     .then(function (response) {
       if (!response.ok) {
-        throw new Error();
+        return response.text().then(function (text) {
+          throw new Error(text || response.statusText);
+        });
       }
 
       return response.json();
@@ -394,8 +569,57 @@ function downloadRuleResource(name) {
       ruleResourceStatus = status;
       renderRuleResourceStatus();
     })
-    .catch(function () {
+    .catch(function (error) {
       ruleResourceFailures[name] = true;
+      showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
+      renderRuleResourceStatus();
+    })
+    .finally(function () {
+      resourcesPreparing = false;
+      renderRuleResourceStatus();
+    });
+}
+
+function prepareAllRuleResources() {
+  hideError();
+
+  if (!isProxyReadyForWorkflow()) {
+    showError(window.TunProxyI18n.t('Page.Config.ProxyStatus.RequiredBeforeSave'));
+    return Promise.resolve();
+  }
+
+  if (!hasMissingRuleResources()) {
+    updateWorkflowControls();
+    return Promise.resolve();
+  }
+
+  resourcesPreparing = true;
+  ruleResourceFailures.geo = false;
+  ruleResourceFailures.gfw = false;
+  renderRuleResourceStatus();
+
+  return fetch('/api/rule-resources/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildConfigPayloadFromFields())
+  })
+    .then(function (response) {
+      if (response.ok) {
+        return loadRuleResourceStatus();
+      }
+
+      return response.text().then(function (text) {
+        throw new Error(text || response.statusText);
+      });
+    })
+    .catch(function (error) {
+      ruleResourceFailures.geo = true;
+      ruleResourceFailures.gfw = true;
+      showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
+      renderRuleResourceStatus();
+    })
+    .finally(function () {
+      resourcesPreparing = false;
       renderRuleResourceStatus();
     });
 }
@@ -425,24 +649,15 @@ function showRestartCountdown() {
 function saveConfig() {
   hideError();
 
-  if (!upstreamProxyStatus || !upstreamProxyStatus.isAvailable) {
+  if (!isProxyReadyForWorkflow()) {
     showError(window.TunProxyI18n.t('Page.Config.ProxyStatus.RequiredBeforeSave'));
     return;
   }
 
-  var payload = JSON.parse(JSON.stringify(cfg));
-  payload.localProxy.listenPort = parseInt(document.getElementById('localPort').value, 10) || 8080;
-  payload.localProxy.setSystemProxy = document.getElementById('setSystemProxy').checked;
-  payload.proxy.host = document.getElementById('proxyHost').value.trim();
-  payload.proxy.port = parseInt(document.getElementById('proxyPort').value, 10) || 7890;
-  payload.proxy.type = document.getElementById('proxyType').value;
-  payload.proxy.username = document.getElementById('proxyUsername').value.trim() || null;
-  payload.proxy.password = document.getElementById('proxyPassword').value || null;
-  payload.route.mode = 'smart';
-  payload.route.proxyDomains = [];
-  payload.route.directDomains = [];
-  payload.route.enableGfwList = true;
-  payload.route.enableGeo = true;
+  savingConfig = true;
+  updateWorkflowControls();
+
+  var payload = buildConfigPayloadFromFields();
 
   fetch('/api/config', {
     method: 'POST',
@@ -451,11 +666,9 @@ function saveConfig() {
   })
     .then(function (response) {
       if (response.ok || response.status === 204) {
-        return prepareRuleResourcesIfNeeded(payload)
-          .then(function () {
-            fetch('/api/restart', { method: 'POST' }).catch(function () {});
-            showRestartCountdown();
-          });
+        fetch('/api/restart', { method: 'POST' }).catch(function () {});
+        showRestartCountdown();
+        return;
       }
 
       return response.text().then(function (text) {
@@ -463,28 +676,9 @@ function saveConfig() {
       });
     })
     .catch(function (error) {
+      savingConfig = false;
+      updateWorkflowControls();
       showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
-    });
-}
-
-function prepareRuleResourcesIfNeeded(payload) {
-  if (!payload.route.enableGeo && !payload.route.enableGfwList) {
-    return Promise.resolve();
-  }
-
-  var alert = document.getElementById('alert-restart');
-  alert.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Preparing');
-  alert.style.display = '';
-
-  return fetch('/api/rule-resources/prepare', { method: 'POST' })
-    .then(function (response) {
-      if (response.ok) {
-        return;
-      }
-
-      return response.text().then(function (text) {
-        throw new Error(text);
-      });
     });
 }
 
@@ -541,11 +735,17 @@ document.addEventListener('tunproxy:i18n-updated', function () {
   if (upstreamProxyStatus) {
     renderProxyStatus(upstreamProxyStatus);
   }
+  else if (isTunMode()) {
+    resetProxyStatus();
+  }
+  renderRuleResourceStatus();
+  updateWorkflowControls();
 });
 
 window.TunProxyI18n.initPage().then(function () {
   document.getElementById('save-button').addEventListener('click', saveConfig);
   document.getElementById('check-proxy-button').addEventListener('click', checkUpstreamProxy);
+  document.getElementById('prepare-resources-button').addEventListener('click', prepareAllRuleResources);
   ['proxyHost', 'proxyPort', 'proxyType', 'proxyUsername', 'proxyPassword'].forEach(function (id) {
     document.getElementById(id).addEventListener('input', resetProxyStatus);
     document.getElementById(id).addEventListener('change', resetProxyStatus);
@@ -561,7 +761,11 @@ window.TunProxyI18n.initPage().then(function () {
   document.getElementById('clear-pac-button').addEventListener('click', clearPac);
 
   setRoutingUnlocked(false);
-  Promise.all([loadMode(), loadConfig().then(checkUpstreamProxy), loadRuleResourceStatus()]).catch(function (error) {
+  Promise.all([loadMode(), loadConfig(), loadRuleResourceStatus()])
+    .then(function () {
+      return isTunMode() ? resetProxyStatus() : checkUpstreamProxy();
+    })
+    .catch(function (error) {
     showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
   });
 });

@@ -27,7 +27,20 @@ public class AppConfigTests
                 AddDefaultRoute = false,
                 DnsServer = "8.8.8.8"
             },
-            LocalProxy = new LocalProxyConfig { ListenPort = 9090, SetSystemProxy = true, BypassList = "<local>" },
+            LocalProxy = new LocalProxyConfig
+            {
+                ListenPort = 9090,
+                SetSystemProxy = true,
+                BypassList = "<local>",
+                SystemProxyBackup = new SystemProxyBackupConfig
+                {
+                    Captured = true,
+                    ProxyEnable = 1,
+                    ProxyServer = "original:8080",
+                    ProxyOverride = "localhost",
+                    AutoConfigUrl = "http://original/pac"
+                }
+            },
             Route = new RouteConfig
             {
                 Mode = "blacklist",
@@ -62,6 +75,11 @@ public class AppConfigTests
         Assert.Equal(9090, target.LocalProxy.ListenPort);
         Assert.True(target.LocalProxy.SetSystemProxy);
         Assert.Equal("<local>", target.LocalProxy.BypassList);
+        Assert.True(target.LocalProxy.SystemProxyBackup.Captured);
+        Assert.Equal(1, target.LocalProxy.SystemProxyBackup.ProxyEnable);
+        Assert.Equal("original:8080", target.LocalProxy.SystemProxyBackup.ProxyServer);
+        Assert.Equal("localhost", target.LocalProxy.SystemProxyBackup.ProxyOverride);
+        Assert.Equal("http://original/pac", target.LocalProxy.SystemProxyBackup.AutoConfigUrl);
         Assert.Equal("blacklist", target.Route.Mode);
         Assert.Equal(["proxy.example"], target.Route.ProxyDomains);
         Assert.Equal(["direct.example"], target.Route.DirectDomains);

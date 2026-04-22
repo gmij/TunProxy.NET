@@ -18,7 +18,8 @@ public class PacGeneratorTests
             },
             LocalProxy = new LocalProxyConfig
             {
-                ListenPort = 18080
+                ListenPort = 18080,
+                SystemProxyMode = SystemProxyModes.Pac
             },
             Route = new RouteConfig
             {
@@ -41,7 +42,8 @@ public class PacGeneratorTests
         {
             LocalProxy = new LocalProxyConfig
             {
-                ListenPort = 18080
+                ListenPort = 18080,
+                SystemProxyMode = SystemProxyModes.Pac
             },
             Route = new RouteConfig
             {
@@ -54,5 +56,30 @@ public class PacGeneratorTests
         var pac = await PacGenerator.GenerateAsync(config);
 
         Assert.Contains("return P;", pac);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_WhenNotPacMode_ReturnsDirectOnlyPac()
+    {
+        var config = new AppConfig
+        {
+            LocalProxy = new LocalProxyConfig
+            {
+                ListenPort = 18080,
+                SystemProxyMode = SystemProxyModes.Global
+            },
+            Route = new RouteConfig
+            {
+                EnableGfwList = false,
+                ProxyDomains = ["google.com"]
+            }
+        };
+
+        var pac = await PacGenerator.GenerateAsync(config);
+
+        Assert.Contains("TunProxy PAC - disabled", pac);
+        Assert.Contains("return \"DIRECT\";", pac);
+        Assert.DoesNotContain("PROXY 127.0.0.1:18080", pac);
+        Assert.DoesNotContain("\"google.com\"", pac);
     }
 }

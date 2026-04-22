@@ -367,7 +367,7 @@
     <value>Unreachable</value>
   </data>
   <data name="Page.Status.ServiceRestart" xml:space="preserve">
-    <value>Start / Restart</value>
+    <value>Restart</value>
   </data>
   <data name="Page.Status.ServiceStop" xml:space="preserve">
     <value>Stop</value>
@@ -380,6 +380,9 @@
   </data>
   <data name="Page.Status.ServiceActionFailed" xml:space="preserve">
     <value>Service action failed: {0}</value>
+  </data>
+  <data name="Page.Status.ServiceUnavailableHint" xml:space="preserve">
+    <value>The service is not reachable. Start it from the system service manager or command line, then refresh this page.</value>
   </data>
   <data name="Page.Status.BytesReceived" xml:space="preserve">
     <value>Received</value>

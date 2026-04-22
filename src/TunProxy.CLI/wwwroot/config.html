@@ -150,6 +150,7 @@ var ruleResourceFailures = {};
 var upstreamProxyStatus = null;
 var routingUnlocked = false;
 var checkedConfigKey = null;
+var savedConfigKey = null;
 var proxyChecking = false;
 var resourcesPreparing = false;
 var savingConfig = false;
@@ -206,8 +207,42 @@ function getCurrentConfigKey() {
   return JSON.stringify(buildProxyConfigFromFields());
 }
 
+function buildSaveComparableConfig() {
+  var payload = buildConfigPayloadFromFields();
+  return {
+    proxy: payload.proxy,
+    localProxy: {
+      listenPort: payload.localProxy.listenPort,
+      systemProxyMode: payload.localProxy.systemProxyMode,
+      setSystemProxy: payload.localProxy.setSystemProxy
+    },
+    tun: {
+      enabled: payload.tun.enabled
+    },
+    route: {
+      mode: payload.route.mode
+    }
+  };
+}
+
+function getSaveConfigKey() {
+  return JSON.stringify(buildSaveComparableConfig());
+}
+
+function updateSavedConfigKeyFromFields() {
+  savedConfigKey = getSaveConfigKey();
+}
+
+function hasConfigChanges() {
+  return savedConfigKey !== null && getSaveConfigKey() !== savedConfigKey;
+}
+
 function isProxyCheckCurrent() {
   return !!(upstreamProxyStatus && upstreamProxyStatus.isAvailable && checkedConfigKey === getCurrentConfigKey());
+}
+
+function canSaveConfig() {
+  return isProxyCheckCurrent() && hasConfigChanges();
 }
 
 function getSystemProxyMode() {
@@ -293,10 +328,10 @@ function updateWorkflowControls() {
 
   routingUnlocked = true;
   checkButton.disabled = proxyChecking || resourcesPreparing || savingConfig || !hasProxyEndpoint();
-  checkButton.textContent = isProxyCheckCurrent()
+  checkButton.textContent = canSaveConfig()
     ? window.TunProxyI18n.t('Page.Config.Save')
     : window.TunProxyI18n.t('Page.Config.ProxyCheck');
-  checkButton.className = isProxyCheckCurrent()
+  checkButton.className = canSaveConfig()
     ? 'btn btn-sm btn-success'
     : 'btn btn-sm btn-outline-primary';
   geoButton.disabled = !proxyReady || resourcesPreparing || savingConfig;
@@ -461,6 +496,7 @@ function loadConfig() {
       document.getElementById('enableGfw').checked = config.route.enableGfwList;
       document.getElementById('enableGeo').checked = config.route.enableGeo;
       renderRuleResourceStatus();
+      updateSavedConfigKeyFromFields();
       resetProxyStatus();
       updateModeDependentControls();
     });
@@ -639,7 +675,7 @@ function showRestartCountdown() {
 function saveConfig() {
   hideError();
 
-  if (!isProxyCheckCurrent()) {
+  if (!canSaveConfig()) {
     showError(window.TunProxyI18n.t('Page.Config.ProxyStatus.RequiredBeforeSave'));
     return;
   }
@@ -739,6 +775,7 @@ function applyPac() {
       cfg.localProxy.setSystemProxy = true;
       cfg.tun.enabled = false;
       document.getElementById('systemProxyMode').value = 'pac';
+      updateSavedConfigKeyFromFields();
       updateWorkflowControls();
       var result = document.getElementById('pac-result');
       result.textContent = window.TunProxyI18n.format('Page.Config.PacSet', data.url);
@@ -758,6 +795,7 @@ function clearPac() {
       cfg.localProxy.setSystemProxy = false;
       cfg.tun.enabled = false;
       document.getElementById('systemProxyMode').value = 'none';
+      updateSavedConfigKeyFromFields();
       updateWorkflowControls();
       var result = document.getElementById('pac-result');
       result.textContent = window.TunProxyI18n.t('Page.Config.PacCleared');
@@ -786,7 +824,7 @@ document.addEventListener('tunproxy:i18n-updated', function () {
 
 window.TunProxyI18n.initPage().then(function () {
   document.getElementById('check-proxy-button').addEventListener('click', function () {
-    if (isProxyCheckCurrent()) {
+    if (canSaveConfig()) {
       saveConfig();
     }
     else {
@@ -807,6 +845,8 @@ window.TunProxyI18n.initPage().then(function () {
     updateModeDependentControls();
     updateWorkflowControls();
   });
+  document.getElementById('localPort').addEventListener('input', updateWorkflowControls);
+  document.getElementById('localPort').addEventListener('change', updateWorkflowControls);
   document.getElementById('geo-resource-button').addEventListener('click', function () {
     downloadRuleResource('geo');
   });

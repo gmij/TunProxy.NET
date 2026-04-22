@@ -13,6 +13,10 @@ namespace TunProxy.CLI;
 [SupportedOSPlatform("windows")]
 public sealed class WintunDevice : ITunDevice
 {
+    private const string AdapterName = "TunProxy";
+    private const string TunnelType = "Wintun";
+    private static readonly Guid AdapterGuid = new("7D7F5B2D-6E4C-4C53-92E3-1F32C50DFE8B");
+
     private WintunAdapter? _adapter;
     private WintunSession? _session;
     private bool _disposed;
@@ -24,7 +28,7 @@ public sealed class WintunDevice : ITunDevice
         var p = Process.Start(new ProcessStartInfo
         {
             FileName = "netsh",
-            Arguments = $"interface ip set address \"TunProxy\" static {ip} {subnetMask}",
+            Arguments = $"interface ip set address \"{AdapterName}\" static {ip} {subnetMask}",
             CreateNoWindow = true, UseShellExecute = false
         });
         p?.WaitForExit(3000);
@@ -32,14 +36,7 @@ public sealed class WintunDevice : ITunDevice
 
     public void Start()
     {
-        try
-        {
-            _adapter = WintunAdapter.OpenAdapter("TunProxy");
-        }
-        catch
-        {
-            _adapter = WintunAdapter.CreateAdapter("TunProxy", "Wintun");
-        }
+        _adapter = WintunAdapter.OpenOrCreateAdapter(AdapterName, TunnelType, AdapterGuid);
         _session = _adapter.StartSession(0x400000);
     }
 

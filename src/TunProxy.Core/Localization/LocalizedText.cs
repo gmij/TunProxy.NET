@@ -35,6 +35,7 @@ public static class LocalizedText
         "Page.Status.ServiceRestarting",
         "Page.Status.ServiceStopping",
         "Page.Status.ServiceActionFailed",
+        "Page.Status.ServiceUnavailableHint",
         "Page.Status.ProxyServer",
         "Page.Status.ActiveConnections",
         "Page.Status.Uptime",

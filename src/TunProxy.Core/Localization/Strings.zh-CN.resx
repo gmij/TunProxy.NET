@@ -367,7 +367,7 @@
     <value>无法连接</value>
   </data>
   <data name="Page.Status.ServiceRestart" xml:space="preserve">
-    <value>启动 / 重启</value>
+    <value>重启</value>
   </data>
   <data name="Page.Status.ServiceStop" xml:space="preserve">
     <value>停止</value>
@@ -380,6 +380,9 @@
   </data>
   <data name="Page.Status.ServiceActionFailed" xml:space="preserve">
     <value>服务操作失败：{0}</value>
+  </data>
+  <data name="Page.Status.ServiceUnavailableHint" xml:space="preserve">
+    <value>服务当前不可访问。请从系统服务或命令行启动服务，然后刷新此页面。</value>
   </data>
   <data name="Page.Status.BytesReceived" xml:space="preserve">
     <value>接收</value>

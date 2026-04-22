@@ -10,6 +10,11 @@ public static class PacGenerator
 {
     public static async Task<string> GenerateAsync(AppConfig config)
     {
+        if (config.LocalProxy.SystemProxyMode != SystemProxyModes.Pac)
+        {
+            return BuildDisabled(config.LocalProxy.SystemProxyMode);
+        }
+
         var route = config.Route;
         var proxyStr = $"PROXY 127.0.0.1:{config.LocalProxy.ListenPort}";
 
@@ -38,6 +43,13 @@ public static class PacGenerator
 
         return Build(proxyStr, defaultStr, directDomains, proxyDomains, mode);
     }
+
+    private static string BuildDisabled(string mode) =>
+        "// TunProxy PAC - disabled\n" +
+        $"// Current mode: {mode}\n" +
+        "function FindProxyForURL(url,host){\n" +
+        "  return \"DIRECT\";\n" +
+        "}\n";
 
     private static async Task<HashSet<string>> LoadGfwDomainsAsync(string path)
     {

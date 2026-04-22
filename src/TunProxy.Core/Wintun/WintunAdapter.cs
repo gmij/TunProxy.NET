@@ -47,6 +47,26 @@ public sealed class WintunAdapter : IDisposable
         return new WintunAdapter(handle);
     }
 
+    public static WintunAdapter OpenOrCreateAdapter(string name, string tunnelType, Guid requestedGuid)
+    {
+        try
+        {
+            return OpenAdapter(name);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return CreateAdapter(name, tunnelType, requestedGuid);
+        }
+        catch
+        {
+            return OpenAdapter(name);
+        }
+    }
+
     public static WintunAdapter OpenAdapter(string name)
     {
         var handle = WintunNative.WintunOpenAdapter(name);

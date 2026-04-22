@@ -135,6 +135,8 @@ function renderStatusBadges(status) {
 
 function renderStatus(status) {
   latestStatus = status;
+  serviceActionBusy = false;
+  hideServiceAction();
   var metrics = status.metrics;
 
   renderStatusBadges(status);
@@ -179,8 +181,13 @@ function renderStatus(status) {
 function updateServiceButtons(isRunning) {
   var restartButton = document.getElementById('restart-service-button');
   var stopButton = document.getElementById('stop-service-button');
+  restartButton.textContent = window.TunProxyI18n.t('Page.Status.ServiceRestart');
   restartButton.disabled = serviceActionBusy || !isRunning;
   stopButton.disabled = serviceActionBusy || !isRunning;
+}
+
+function hideServiceAction() {
+  document.getElementById('service-action-alert').style.display = 'none';
 }
 
 function showServiceAction(messageKey, className) {
@@ -190,27 +197,32 @@ function showServiceAction(messageKey, className) {
   alert.style.display = '';
 }
 
-function controlService(action) {
-  serviceActionBusy = true;
-  updateServiceButtons(latestStatus && latestStatus.isRunning);
-  showServiceAction(
-    action === 'restart' ? 'Page.Status.ServiceRestarting' : 'Page.Status.ServiceStopping',
-    'alert-info');
+function getServiceActionMessageKey(action) {
+  return action === 'restart'
+    ? 'Page.Status.ServiceRestarting'
+    : 'Page.Status.ServiceStopping';
+}
 
-  fetch('/api/service/' + action, { method: 'POST' })
+function postServiceAction(url) {
+  return fetch(url, { method: 'POST' })
     .then(function (response) {
       if (!response.ok) {
         return response.text().then(function (text) {
           throw new Error(text || response.statusText);
         });
       }
+    });
+}
 
-      showServiceAction(
-        action === 'restart' ? 'Page.Status.ServiceRestarting' : 'Page.Status.ServiceStopping',
-        'alert-warning');
-      if (action === 'restart') {
-        window.setTimeout(refreshStatus, 5000);
-      }
+function controlService(action) {
+  serviceActionBusy = true;
+  updateServiceButtons(latestStatus && latestStatus.isRunning);
+  showServiceAction(getServiceActionMessageKey(action), 'alert-info');
+
+  postServiceAction('/api/service/' + action)
+    .then(function (response) {
+      showServiceAction(getServiceActionMessageKey(action), 'alert-warning');
+      window.setTimeout(refreshStatus, action === 'restart' ? 5000 : 1500);
     })
     .catch(function (error) {
       var alert = document.getElementById('service-action-alert');
@@ -227,9 +239,12 @@ function refreshStatus() {
     .then(function (response) { return response.json(); })
     .then(renderStatus)
     .catch(function () {
+      latestStatus = null;
+      serviceActionBusy = false;
       document.getElementById('status-badges').innerHTML =
         '<span class="badge bg-danger">' + window.TunProxyI18n.t('Page.Status.Badge.Unreachable') + '</span>';
       updateServiceButtons(false);
+      showServiceAction('Page.Status.ServiceUnavailableHint', 'alert-warning');
     });
 }
 

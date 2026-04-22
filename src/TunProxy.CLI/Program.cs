@@ -45,18 +45,18 @@ public class Program
 
             var config = LoadConfig(args);
 
-            var configuredTunMode = config.Tun.Enabled;
-            var invalidRuleResources = configuredTunMode
-                ? GetInvalidRuleResourceMessages(config)
-                : [];
-            var bootstrapProxyMode = configuredTunMode && invalidRuleResources.Count > 0;
-            var tunMode = configuredTunMode && !bootstrapProxyMode;
+            var tunMode = config.Tun.Enabled;
 
-            if (bootstrapProxyMode)
+            if (OperatingSystem.IsWindows() && tunMode && Environment.UserInteractive)
             {
-                Log.Warning(
-                    "TUN mode is configured but rule resources are missing or invalid. Starting local proxy setup mode first: {Resources}",
-                    string.Join("; ", invalidRuleResources));
+                Log.Information("TUN mode is configured. Starting the Windows service instead of running TUN in an interactive process...");
+                DisableSystemProxyForTun(config);
+                if (!EnsureTunWindowsService())
+                {
+                    Log.Error("Failed to start or install the Windows service for TUN mode.");
+                }
+
+                return;
             }
 
             if (tunMode && !IsAdministrator())
@@ -75,7 +75,7 @@ public class Program
             }
 
             Log.Information("========================================");
-            Log.Information("TunProxy .NET 8 - {Mode}", tunMode ? "TUN mode" : bootstrapProxyMode ? "Local Proxy setup mode" : "Local Proxy mode");
+            Log.Information("TunProxy .NET 8 - {Mode}", tunMode ? "TUN mode" : "Local Proxy mode");
             Log.Information("Version: {Version}", typeof(Program).Assembly.GetName().Version);
             Log.Information("========================================");
 
@@ -307,15 +307,6 @@ public class Program
         var exePath = Environment.ProcessPath!;
         Log.Information("Installing Windows service from {Path}", exePath);
 
-        var config = LoadConfig([]);
-            var invalidRuleResources = GetInvalidRuleResourceMessages(config);
-            if (invalidRuleResources.Count > 0)
-            {
-                Log.Warning(
-                    "TUN service will be installed in setup mode because rule resources are missing or invalid: {Resources}",
-                    string.Join("; ", invalidRuleResources));
-            }
-
         RunSc($"create {SvcName} binPath= \"{exePath}\" start= auto DisplayName= \"TunProxy Service\"");
         RunSc($"description {SvcName} \"TUN-mode transparent proxy service for Windows\"");
         RunSc($"sdset {SvcName} D:(A;;CCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;LCRPWPCR;;;IU)");
@@ -324,6 +315,7 @@ public class Program
 
         Log.Information("Service installation completed. Use sc start {Name} or the tray menu to start it.", SvcName);
         SetTunEnabledInConfig(true);
+        RunSc($"start {SvcName}");
     }
 
     private static void UninstallService()
@@ -335,30 +327,6 @@ public class Program
         Log.Information("Service uninstalled.");
 
         SetTunEnabledInConfig(false);
-    }
-
-    private static IReadOnlyList<string> GetInvalidRuleResourceMessages(AppConfig config)
-    {
-        var invalid = new List<string>();
-        if (config.Route.EnableGeo)
-        {
-            using var geo = new GeoIpService(config.Route.GeoIpDbPath);
-            if (!geo.HasValidDatabase())
-            {
-                invalid.Add($"GEO database: {geo.DatabasePath}");
-            }
-        }
-
-        if (config.Route.EnableGfwList)
-        {
-            var gfw = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
-            if (!gfw.HasValidListAsync().GetAwaiter().GetResult())
-            {
-                invalid.Add($"GFW list: {gfw.ListPath}");
-            }
-        }
-
-        return invalid;
     }
 
     private static void SetTunEnabledInConfig(bool enabled)
@@ -374,6 +342,15 @@ public class Program
             var json = File.ReadAllText(configPath);
             var config = JsonSerializer.Deserialize(json, AppJsonContext.Default.AppConfig) ?? new AppConfig();
             config.Tun.Enabled = enabled;
+            if (enabled)
+            {
+                config.LocalProxy.SystemProxyMode = SystemProxyModes.Tun;
+            }
+            else if (config.LocalProxy.SystemProxyMode == SystemProxyModes.Tun)
+            {
+                config.LocalProxy.SystemProxyMode = SystemProxyModes.None;
+            }
+
             File.WriteAllText(configPath, JsonSerializer.Serialize(config, AppJsonContext.Default.AppConfig));
             Log.Information("Updated tun.enabled to {Enabled}", enabled);
         }
@@ -383,7 +360,95 @@ public class Program
         }
     }
 
-    private static void RunSc(string args)
+    private static bool EnsureTunWindowsService()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        if (IsWindowsServiceInstalled())
+        {
+            Log.Information("Windows service is already installed. Starting {Name}...", SvcName);
+            var (exitCode, output) = RunSc($"start {SvcName}");
+            if (exitCode == 0 || output.Contains("already", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            Log.Warning("Failed to start installed service. Output: {Output}", output.Trim());
+            return false;
+        }
+
+        if (IsAdministrator())
+        {
+            InstallService();
+            return true;
+        }
+
+        return TryRunElevatedServiceInstaller();
+    }
+
+    private static bool IsWindowsServiceInstalled()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                $@"SYSTEM\CurrentControlSet\Services\{SvcName}");
+            return key != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryRunElevatedServiceInstaller()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = Environment.ProcessPath!,
+                Arguments = "--install",
+                UseShellExecute = true,
+                Verb = "runas",
+                WorkingDirectory = AppContext.BaseDirectory
+            });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Failed to start elevated service installer: {Message}", ex.Message);
+            return false;
+        }
+    }
+
+    private static void DisableSystemProxyForTun(AppConfig config)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            new SystemProxyManager(backupStore: new SystemProxyBackupStore(config)).DisableForTun();
+            var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
+            File.WriteAllText(configPath, JsonSerializer.Serialize(config, AppJsonContext.Default.AppConfig));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Failed to disable system proxy for TUN mode: {Message}", ex.Message);
+        }
+    }
+
+    private static (int ExitCode, string Output) RunSc(string args)
     {
         var process = Process.Start(new ProcessStartInfo
         {
@@ -391,9 +456,29 @@ public class Program
             Arguments = args,
             CreateNoWindow = true,
             UseShellExecute = false,
-            RedirectStandardOutput = true
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
         });
-        process?.WaitForExit(10000);
+        if (process == null)
+        {
+            return (1, "Failed to start sc.exe.");
+        }
+
+        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        if (!process.WaitForExit(10000))
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+            }
+
+            return (1, output + "Command timed out.");
+        }
+
+        return (process.ExitCode, output);
     }
 }
 

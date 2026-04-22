@@ -71,8 +71,31 @@ public class TunConfig
 
 public class LocalProxyConfig
 {
+    private string _systemProxyMode = SystemProxyModes.None;
+
     public int ListenPort { get; set; } = 8080;
-    public bool SetSystemProxy { get; set; } = true;
+    public bool SetSystemProxy
+    {
+        get => SystemProxyMode is SystemProxyModes.Pac or SystemProxyModes.Global;
+        set
+        {
+            if (!value)
+            {
+                SystemProxyMode = SystemProxyModes.None;
+            }
+            else if (SystemProxyMode == SystemProxyModes.None)
+            {
+                SystemProxyMode = SystemProxyModes.Pac;
+            }
+        }
+    }
+
+    public string SystemProxyMode
+    {
+        get => _systemProxyMode;
+        set => _systemProxyMode = SystemProxyModes.Normalize(value);
+    }
+
     public string BypassList { get; set; } = "<local>;localhost;127.0.0.1;10.*;192.168.*";
     public SystemProxyBackupConfig SystemProxyBackup { get; set; } = new();
 
@@ -81,10 +104,28 @@ public class LocalProxyConfig
         ArgumentNullException.ThrowIfNull(other);
 
         ListenPort = other.ListenPort;
-        SetSystemProxy = other.SetSystemProxy;
+        SystemProxyMode = other.SystemProxyMode;
         BypassList = other.BypassList;
         SystemProxyBackup.ApplyFrom(other.SystemProxyBackup);
     }
+}
+
+public static class SystemProxyModes
+{
+    public const string Pac = "pac";
+    public const string Global = "global";
+    public const string Manual = "manual";
+    public const string Tun = "tun";
+    public const string None = "none";
+
+    public static string Normalize(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        Pac => Pac,
+        Global or Manual => Global,
+        Tun => Tun,
+        None => None,
+        _ => None
+    };
 }
 
 public class SystemProxyBackupConfig

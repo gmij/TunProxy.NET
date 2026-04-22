@@ -61,4 +61,86 @@ public class WindowsRouteServiceTests
 
         Assert.False(WindowsRouteService.IsTunDefaultRoute(route, "10.0.0.1"));
     }
+
+    [Fact]
+    public void IsSpecificRouteForDestination_MatchesExistingCorporateRoute()
+    {
+        var route = new RouteEntry
+        {
+            Network = "10.144.0.0",
+            Netmask = "255.255.0.0",
+            Gateway = "On-link",
+            Interface = "10.144.20.231",
+            Metric = "25"
+        };
+
+        Assert.True(WindowsRouteService.IsSpecificRouteForDestination(route, "10.144.20.222", "10.0.0.1"));
+    }
+
+    [Fact]
+    public void IsSpecificRouteForDestination_IgnoresDefaultRoutes()
+    {
+        var route = new RouteEntry
+        {
+            Network = "0.0.0.0",
+            Netmask = "0.0.0.0",
+            Gateway = "192.168.66.1",
+            Interface = "192.168.66.76",
+            Metric = "25"
+        };
+
+        Assert.False(WindowsRouteService.IsSpecificRouteForDestination(route, "10.144.20.222", "10.0.0.1"));
+    }
+
+    [Fact]
+    public void GetPrefixLength_ReturnsMaskBits()
+    {
+        Assert.Equal(16, WindowsRouteService.GetPrefixLength("255.255.0.0"));
+        Assert.Equal(24, WindowsRouteService.GetPrefixLength("255.255.255.0"));
+        Assert.Equal(32, WindowsRouteService.GetPrefixLength("255.255.255.255"));
+    }
+
+    [Fact]
+    public void ResolveTunInterfaceName_PrefersInterfaceWithTunIpOverEarlierWintunAdapter()
+    {
+        var candidates = new[]
+        {
+            new TunInterfaceCandidate(
+                "OtherVpn",
+                "Wintun Userspace Tunnel",
+                true,
+                ["172.16.10.2"]),
+            new TunInterfaceCandidate(
+                "TunProxy",
+                "Wintun Userspace Tunnel",
+                true,
+                ["10.0.0.1"])
+        };
+
+        var name = WindowsRouteService.ResolveTunInterfaceName(candidates, "10.0.0.1");
+
+        Assert.Equal("TunProxy", name);
+    }
+
+    [Fact]
+    public void ResolveTunInterfaceName_PrefersTunIpWhenTunProxyNameIsStale()
+    {
+        var candidates = new[]
+        {
+            new TunInterfaceCandidate(
+                "TunProxy",
+                "Wintun Userspace Tunnel",
+                false,
+                []),
+            new TunInterfaceCandidate(
+                "TunProxy 2",
+                "Wintun Userspace Tunnel",
+                true,
+                ["10.0.0.1"])
+        };
+
+        var name = WindowsRouteService.ResolveTunInterfaceName(candidates, "10.0.0.1");
+
+        Assert.Equal("TunProxy 2", name);
+    }
 }

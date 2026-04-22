@@ -11,6 +11,7 @@ public sealed class RouteDecisionService
     private readonly AppConfig _config;
     private readonly Func<string, bool> _isInGfwList;
     private readonly Func<IPAddress, string?> _getCountryCode;
+    private readonly Func<bool> _isGeoReady;
     private readonly Func<string, CancellationToken, Task<IPAddress?>> _resolveHost;
     private readonly ConcurrentDictionary<string, HostResolutionCacheEntry> _hostResolutionCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -19,6 +20,7 @@ public sealed class RouteDecisionService
             config,
             domain => gfwListService?.IsInGfwList(domain) == true,
             ip => geoIpService?.GetCountryCode(ip),
+            () => geoIpService?.IsInitialized == true,
             ResolveHostAsync)
     {
     }
@@ -27,11 +29,13 @@ public sealed class RouteDecisionService
         AppConfig config,
         Func<string, bool>? isInGfwList = null,
         Func<IPAddress, string?>? getCountryCode = null,
+        Func<bool>? isGeoReady = null,
         Func<string, CancellationToken, Task<IPAddress?>>? resolveHost = null)
     {
         _config = config;
         _isInGfwList = isInGfwList ?? (_ => false);
         _getCountryCode = getCountryCode ?? (_ => null);
+        _isGeoReady = isGeoReady ?? (() => getCountryCode != null);
         _resolveHost = resolveHost ?? ResolveHostAsync;
     }
 
@@ -74,8 +78,13 @@ public sealed class RouteDecisionService
             }
         }
 
+        if (IsGlobalRouteMode())
+        {
+            return RouteDecision.Proxy("Global", domain, destinationIp ?? resolvedIp);
+        }
+
         var geoIp = destinationIp ?? resolvedIp;
-        if (_config.Route.EnableGeo && geoIp != null)
+        if (_config.Route.EnableGeo && geoIp != null && _isGeoReady())
         {
             var country = _getCountryCode(geoIp);
             if (country == null &&
@@ -175,6 +184,9 @@ public sealed class RouteDecisionService
 
     private static bool ContainsCountry(IEnumerable<string> countries, string country) =>
         countries.Any(item => item.Equals(country, StringComparison.OrdinalIgnoreCase));
+
+    private bool IsGlobalRouteMode() =>
+        string.Equals(_config.Route.Mode, "global", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<IPAddress?> ResolveHostAsync(string domain, CancellationToken ct)
     {

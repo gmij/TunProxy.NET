@@ -1,4 +1,6 @@
 using TunProxy.Core.Configuration;
+using TunProxy.CLI;
+using System.Text.Json;
 
 namespace TunProxy.Tests;
 
@@ -30,7 +32,7 @@ public class AppConfigTests
             LocalProxy = new LocalProxyConfig
             {
                 ListenPort = 9090,
-                SetSystemProxy = true,
+                SystemProxyMode = SystemProxyModes.Global,
                 BypassList = "<local>",
                 SystemProxyBackup = new SystemProxyBackupConfig
                 {
@@ -74,6 +76,7 @@ public class AppConfigTests
         Assert.Equal("8.8.8.8", target.Tun.DnsServer);
         Assert.Equal(9090, target.LocalProxy.ListenPort);
         Assert.True(target.LocalProxy.SetSystemProxy);
+        Assert.Equal(SystemProxyModes.Global, target.LocalProxy.SystemProxyMode);
         Assert.Equal("<local>", target.LocalProxy.BypassList);
         Assert.True(target.LocalProxy.SystemProxyBackup.Captured);
         Assert.Equal(1, target.LocalProxy.SystemProxyBackup.ProxyEnable);
@@ -125,5 +128,68 @@ public class AppConfigTests
         Assert.Equal(["US"], target.Route.GeoProxy);
         Assert.Equal(["CN"], target.Route.GeoDirect);
         Assert.Equal(["app.exe"], target.Route.TunRouteApps);
+    }
+
+    [Fact]
+    public void LocalProxyConfig_DefaultsToNoSystemProxyChanges()
+    {
+        var config = new LocalProxyConfig();
+
+        Assert.False(config.SetSystemProxy);
+        Assert.Equal(SystemProxyModes.None, config.SystemProxyMode);
+    }
+
+    [Fact]
+    public void LocalProxyConfig_SetSystemProxyFalseMapsToNoneMode()
+    {
+        var config = JsonSerializer.Deserialize(
+            """{"listenPort":8080,"setSystemProxy":false}""",
+            AppJsonContext.Default.LocalProxyConfig);
+
+        Assert.NotNull(config);
+        Assert.False(config.SetSystemProxy);
+        Assert.Equal(SystemProxyModes.None, config.SystemProxyMode);
+    }
+
+    [Fact]
+    public void LocalProxyConfig_SetSystemProxyTrueMapsLegacyConfigToPacMode()
+    {
+        var config = JsonSerializer.Deserialize(
+            """{"listenPort":8080,"setSystemProxy":true}""",
+            AppJsonContext.Default.LocalProxyConfig);
+
+        Assert.NotNull(config);
+        Assert.True(config.SetSystemProxy);
+        Assert.Equal(SystemProxyModes.Pac, config.SystemProxyMode);
+    }
+
+    [Fact]
+    public void LocalProxyConfig_LegacyManualSystemProxyModeMapsToGlobalMode()
+    {
+        var config = JsonSerializer.Deserialize(
+            """{"listenPort":8080,"systemProxyMode":"manual"}""",
+            AppJsonContext.Default.LocalProxyConfig);
+
+        Assert.NotNull(config);
+        Assert.True(config.SetSystemProxy);
+        Assert.Equal(SystemProxyModes.Global, config.SystemProxyMode);
+    }
+
+    [Fact]
+    public void LocalProxyConfig_TunModeDoesNotMeanSystemProxyIsSet()
+    {
+        var config = new LocalProxyConfig { SystemProxyMode = SystemProxyModes.Tun };
+
+        Assert.False(config.SetSystemProxy);
+        Assert.Equal(SystemProxyModes.Tun, config.SystemProxyMode);
+    }
+
+    [Fact]
+    public void LocalProxyConfig_NormalizesUnknownSystemProxyModeToNone()
+    {
+        var config = new LocalProxyConfig { SystemProxyMode = "unexpected" };
+
+        Assert.False(config.SetSystemProxy);
+        Assert.Equal(SystemProxyModes.None, config.SystemProxyMode);
     }
 }

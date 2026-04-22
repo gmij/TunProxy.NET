@@ -28,7 +28,8 @@ internal sealed class TunConfigDto
 internal sealed class LocalProxyConfigDto
 {
     public int ListenPort { get; set; } = 8080;
-    public bool SetSystemProxy { get; set; } = true;
+    public bool SetSystemProxy { get; set; }
+    public string? SystemProxyMode { get; set; }
     public string BypassList { get; set; } = "<local>;localhost;127.0.0.1;10.*;192.168.*";
 }
 

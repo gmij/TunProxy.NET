@@ -61,9 +61,12 @@ public class GeoIpService : IDisposable
         DynamicallyAccessedMemberTypes.PublicProperties |
         DynamicallyAccessedMemberTypes.NonPublicProperties,
         typeof(MaxMind.GeoIP2.Model.Traits))]
-    public async Task<bool> InitializeAsync(CancellationToken ct = default, ProxyConfig? proxyConfig = null)
+    public async Task<bool> InitializeAsync(
+        CancellationToken ct = default,
+        ProxyConfig? proxyConfig = null,
+        bool downloadIfMissing = true)
     {
-        if (!File.Exists(_dbPath))
+        if (!File.Exists(_dbPath) && downloadIfMissing)
         {
             await DownloadGeoIpDbAsync(ct, proxyConfig);
         }

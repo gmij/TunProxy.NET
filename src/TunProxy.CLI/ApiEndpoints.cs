@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Hosting;
@@ -9,6 +11,8 @@ namespace TunProxy.CLI;
 
 public static class ApiEndpoints
 {
+    private const string SvcName = "TunProxyService";
+
     public static WebApplication MapApiEndpoints(this WebApplication app)
     {
         app.UseStaticFiles();
@@ -53,13 +57,14 @@ public static class ApiEndpoints
             return Results.Json(catalog, AppJsonContext.Default.DictionaryStringString);
         });
 
-        app.MapPost("/api/config", async (HttpContext ctx, AppConfig cfg) =>
+        app.MapPost("/api/config", async (HttpContext ctx, AppConfig cfg, IProxyService svc, CancellationToken ct) =>
         {
             try
             {
                 var incoming = await JsonSerializer.DeserializeAsync(
                     ctx.Request.Body,
-                    AppJsonContext.Default.AppConfig);
+                    AppJsonContext.Default.AppConfig,
+                    ct);
 
                 if (incoming == null)
                 {
@@ -72,11 +77,18 @@ public static class ApiEndpoints
                 {
                     cfg.LocalProxy.SystemProxyBackup.ApplyFrom(activeSystemProxyBackup);
                 }
+                if (cfg.Tun.Enabled && OperatingSystem.IsWindows())
+                {
+                    CreateSystemProxyManager(cfg).DisableForTun();
+                }
 
                 var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
                 await File.WriteAllTextAsync(
                     configPath,
-                    JsonSerializer.Serialize(cfg, AppJsonContext.Default.AppConfig));
+                    JsonSerializer.Serialize(cfg, AppJsonContext.Default.AppConfig),
+                    ct);
+
+                await svc.RefreshRuleResourcesAsync(ct);
 
                 return Results.NoContent();
             }
@@ -86,7 +98,7 @@ public static class ApiEndpoints
             }
         });
 
-        app.MapPost("/api/rule-resources/prepare", async (HttpContext ctx, AppConfig cfg, CancellationToken ct) =>
+        app.MapPost("/api/rule-resources/prepare", async (HttpContext ctx, AppConfig cfg, IProxyService svc, CancellationToken ct) =>
         {
             try
             {
@@ -118,6 +130,11 @@ public static class ApiEndpoints
                     result["gfw"] = "disabled";
                 }
 
+                if (allReady)
+                {
+                    await svc.RefreshRuleResourcesAsync(ct);
+                }
+
                 return allReady
                     ? Results.Json(result, AppJsonContext.Default.DictionaryStringString)
                     : Results.Problem("One or more enabled rule resources failed to download or load.");
@@ -128,7 +145,7 @@ public static class ApiEndpoints
             }
         });
 
-        app.MapPost("/api/rule-resources/download", async (HttpContext ctx, AppConfig cfg, CancellationToken ct) =>
+        app.MapPost("/api/rule-resources/download", async (HttpContext ctx, AppConfig cfg, IProxyService svc, CancellationToken ct) =>
         {
             try
             {
@@ -153,6 +170,11 @@ public static class ApiEndpoints
                     default:
                         ok = false;
                         break;
+                }
+
+                if (ok)
+                {
+                    await svc.RefreshRuleResourcesAsync(ct);
                 }
 
                 return ok
@@ -223,63 +245,129 @@ public static class ApiEndpoints
                 await PacGenerator.GenerateAsync(cfg),
                 "application/x-ns-proxy-autoconfig"));
 
-        app.MapPost("/api/set-pac", (HttpContext ctx) =>
+        app.MapPost("/api/set-pac", async (HttpContext ctx, AppConfig cfg, CancellationToken ct) =>
         {
             if (!OperatingSystem.IsWindows())
             {
                 return Results.BadRequest(LocalizedText.Get("Api.WindowsOnly"));
             }
 
+            cfg.LocalProxy.SystemProxyMode = SystemProxyModes.Pac;
+            cfg.Tun.Enabled = false;
+            await SaveConfigAsync(cfg, ct);
+
             var pacUrl = $"http://127.0.0.1:{ctx.Connection.LocalPort}/proxy.pac";
-            SystemProxyManager.SetPacUrl(pacUrl);
+            var manager = CreateSystemProxyManager(cfg);
+            manager.SetPacUrl(pacUrl);
             return Results.Json(
                 new Dictionary<string, string> { ["url"] = pacUrl },
                 AppJsonContext.Default.DictionaryStringString);
         });
 
-        app.MapPost("/api/clear-pac", () =>
+        app.MapPost("/api/clear-pac", async (AppConfig cfg, CancellationToken ct) =>
         {
+            cfg.LocalProxy.SystemProxyMode = SystemProxyModes.None;
+            cfg.Tun.Enabled = false;
+            await SaveConfigAsync(cfg, ct);
+
             if (OperatingSystem.IsWindows())
             {
-                SystemProxyManager.ClearPacUrl();
+                var manager = CreateSystemProxyManager(cfg);
+                manager.ClearPacUrl();
             }
 
             return Results.Ok();
         });
 
-        app.MapPost("/api/enable-tun", async (AppConfig cfg, IHostApplicationLifetime lifetime) =>
+        app.MapPost("/api/enable-tun", async (AppConfig cfg, IHostApplicationLifetime lifetime, CancellationToken ct) =>
         {
             cfg.Tun.Enabled = true;
-            var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
-
-            await File.WriteAllTextAsync(
-                    configPath,
-                    JsonSerializer.Serialize(cfg, AppJsonContext.Default.AppConfig));
-
-            RequestTrayRestart();
-            Log.Warning("Manual TUN mode repair triggered. Configuration updated; requesting tray-managed restart...");
-            _ = Task.Run(async () =>
+            cfg.LocalProxy.SystemProxyMode = SystemProxyModes.Tun;
+            if (OperatingSystem.IsWindows())
             {
-                await Task.Delay(400);
-                lifetime.StopApplication();
-            });
+                CreateSystemProxyManager(cfg).DisableForTun();
+            }
+            await SaveConfigAsync(cfg, ct);
+
+            Log.Warning("Manual TUN mode repair triggered. Configuration updated; requesting service-mode restart...");
+            RequestServiceRestart(lifetime, cfg);
 
             return Results.Ok();
         });
 
-        app.MapPost("/api/restart", (IHostApplicationLifetime lifetime) =>
+        app.MapPost("/api/restart", (IHostApplicationLifetime lifetime, AppConfig cfg) =>
         {
-            RequestTrayRestart();
+            RequestServiceRestart(lifetime, cfg);
+            return Results.Json(
+                new Dictionary<string, string> { ["status"] = "restarting" },
+                AppJsonContext.Default.DictionaryStringString);
+        });
+
+        app.MapPost("/api/service/restart", (IHostApplicationLifetime lifetime, AppConfig cfg) =>
+        {
+            RequestServiceRestart(lifetime, cfg);
+            return Results.Json(
+                new Dictionary<string, string> { ["status"] = "restarting" },
+                AppJsonContext.Default.DictionaryStringString);
+        });
+
+        app.MapPost("/api/service/stop", (IHostApplicationLifetime lifetime) =>
+        {
             Task.Run(async () =>
             {
                 await Task.Delay(300);
                 lifetime.StopApplication();
             });
 
-            return Results.Ok();
+            return Results.Json(
+                new Dictionary<string, string> { ["status"] = "stopping" },
+                AppJsonContext.Default.DictionaryStringString);
         });
 
         return app;
+    }
+
+    private static void RequestServiceRestart(IHostApplicationLifetime lifetime, AppConfig cfg)
+    {
+        RequestTrayRestart();
+        var helperStarted = TryStartRestartHelper(cfg);
+        Log.Information("[RESTART] Web restart requested. HelperStarted={HelperStarted}", helperStarted);
+
+        if (helperStarted)
+        {
+            Task.Run(async () =>
+            {
+                await Task.Delay(300);
+                lifetime.StopApplication();
+            });
+        }
+        else
+        {
+            Log.Warning("[RESTART] Restart helper was not started; keeping the current process alive.");
+        }
+    }
+
+    private static async Task SaveConfigAsync(AppConfig cfg, CancellationToken ct)
+    {
+        var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
+        await File.WriteAllTextAsync(
+            configPath,
+            JsonSerializer.Serialize(cfg, AppJsonContext.Default.AppConfig),
+            ct);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static SystemProxyManager CreateSystemProxyManager(AppConfig cfg)
+    {
+        var backupStore = new SystemProxyBackupStore(cfg);
+        if (OperatingSystem.IsWindows() &&
+            !Environment.UserInteractive &&
+            WindowsInteractiveUserRegistry.TryGetInternetSettingsPath(out var settingsPath))
+        {
+            return new SystemProxyManager(Microsoft.Win32.Registry.Users, settingsPath, backupStore);
+        }
+
+        return new SystemProxyManager(backupStore: backupStore);
     }
 
     private static void RequestTrayRestart()
@@ -293,6 +381,106 @@ public static class ApiEndpoints
         catch (Exception ex)
         {
             Log.Warning(ex, "[RESTART] Failed to write restart marker: {Path}", markerPath);
+        }
+    }
+
+    private static bool TryStartRestartHelper(AppConfig cfg)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                if (!IsWindowsServiceInstalled() && cfg.Tun.Enabled)
+                {
+                    return TryStartElevatedServiceInstallHelper();
+                }
+
+                var command = IsWindowsServiceInstalled()
+                    ? $"timeout /t 2 /nobreak > nul & sc stop {SvcName} & timeout /t 2 /nobreak > nul & sc start {SvcName}"
+                    : $"timeout /t 2 /nobreak > nul & start \"\" \"{Environment.ProcessPath}\"";
+                return TryStartDetachedProcess("cmd.exe", "/c " + command);
+            }
+
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exePath))
+            {
+                return false;
+            }
+
+            return TryStartDetachedProcess("/bin/sh", $"-c \"sleep 2; \\\"{exePath}\\\"\"");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[RESTART] Failed to start restart helper.");
+            return false;
+        }
+    }
+
+    private static bool TryStartElevatedServiceInstallHelper()
+    {
+        try
+        {
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exePath))
+            {
+                return false;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = exePath,
+                Arguments = "--install",
+                UseShellExecute = true,
+                Verb = "runas",
+                WorkingDirectory = AppContext.BaseDirectory
+            });
+            Log.Information("[RESTART] Started elevated service installer for TUN mode.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[RESTART] Failed to start elevated service installer.");
+            return false;
+        }
+    }
+
+    private static bool TryStartDetachedProcess(string fileName, string arguments)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WorkingDirectory = AppContext.BaseDirectory
+            });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[RESTART] Failed to start helper process: {FileName} {Arguments}", fileName, arguments);
+            return false;
+        }
+    }
+
+    private static bool IsWindowsServiceInstalled()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                $@"SYSTEM\CurrentControlSet\Services\{SvcName}");
+            return key != null;
+        }
+        catch
+        {
+            return false;
         }
     }
 

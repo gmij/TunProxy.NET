@@ -91,10 +91,10 @@
     <value>本地代理端口</value>
   </data>
   <data name="Page.Config.ModeHintProxyHtml" xml:space="preserve">
-    <value>&lt;strong&gt;本地代理模式&lt;/strong&gt;监听本机端口，并可自动设置系统代理，无需管理员权限。&lt;br&gt;如需切换到 TUN 模式，请通过托盘菜单安装系统服务。</value>
+    <value>&lt;strong&gt;本地代理模式&lt;/strong&gt;监听本机端口，并可自动设置系统代理，无需管理员权限。&lt;br&gt;可在状态页重启或停止当前服务。</value>
   </data>
   <data name="Page.Config.ModeHintTunHtml" xml:space="preserve">
-    <value>&lt;strong&gt;TUN 模式&lt;/strong&gt;通过虚拟网卡透明接管 TCP 流量。&lt;br&gt;如需切回本地代理模式，请通过托盘菜单卸载系统服务。</value>
+    <value>&lt;strong&gt;TUN 模式&lt;/strong&gt;通过虚拟网卡透明接管 TCP 流量。&lt;br&gt;可在状态页重启或停止当前服务。</value>
   </data>
   <data name="Page.Config.ModeUnknown" xml:space="preserve">
     <value>未知（服务未运行）</value>
@@ -142,13 +142,13 @@
     <value>可用</value>
   </data>
   <data name="Page.Config.ProxyStatus.AvailableHint" xml:space="preserve">
-    <value>上游代理可用，可以配置智能路由。</value>
+    <value>上游代理可用，保存配置后将在重启后生效。</value>
   </data>
   <data name="Page.Config.ProxyStatus.Unavailable" xml:space="preserve">
     <value>不可用</value>
   </data>
   <data name="Page.Config.ProxyStatus.UnavailableHint" xml:space="preserve">
-    <value>请先修复上游代理，再修改路由规则。</value>
+    <value>请先修复上游代理，再保存此配置。</value>
   </data>
   <data name="Page.Config.ProxyStatus.TargetOk" xml:space="preserve">
     <value>{0} ms 内返回 200</value>
@@ -160,7 +160,7 @@
     <value>代理检测失败：{0}</value>
   </data>
   <data name="Page.Config.ProxyStatus.RequiredBeforeSave" xml:space="preserve">
-    <value>请先检测上游代理。只有三个网站都通过代理返回 HTTP 200 后，才能保存路由配置。</value>
+    <value>请先检测上游代理。只有三个网站都通过代理返回 HTTP 200 后，才能保存配置。</value>
   </data>
   <data name="Page.Config.ProxyPort" xml:space="preserve">
     <value>端口</value>
@@ -193,7 +193,7 @@
     <value>上游代理检测通过前，路由规则暂不可配置。</value>
   </data>
   <data name="Page.Config.SmartRoutingDescription" xml:space="preserve">
-    <value>已启用智能路由：优先匹配 GFWList，再通过 GeoIP 判断；DNS 结果会被缓存并复用，用于加速后续路由决策。</value>
+    <value>智能路由只会使用已勾选且文件存在、有效的规则；优先匹配 GFWList，再通过 GeoIP 判断。</value>
   </data>
   <data name="Page.Config.DnsCacheHint" xml:space="preserve">
     <value>DNS 缓存记录可在 DNS 页面查看和清理。</value>
@@ -206,6 +206,24 @@
   </data>
   <data name="Page.Config.SetSystemProxy" xml:space="preserve">
     <value>自动设置系统代理</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode" xml:space="preserve">
+    <value>&#x7CFB;&#x7EDF;&#x4EE3;&#x7406;&#x65B9;&#x5F0F;</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.Pac" xml:space="preserve">
+    <value>PAC &#x81EA;&#x52A8;&#x4EE3;&#x7406;</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.Global" xml:space="preserve">
+    <value>&#x5168;&#x5C40;&#x4EE3;&#x7406;</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.Tun" xml:space="preserve">
+    <value>TUN</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.Manual" xml:space="preserve">
+    <value>&#x5168;&#x5C40;&#x4EE3;&#x7406;</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.None" xml:space="preserve">
+    <value>&#x4E0D;&#x4FEE;&#x6539;&#x7CFB;&#x7EDF;&#x4EE3;&#x7406;</value>
   </data>
   <data name="Page.Config.ApplyPac" xml:space="preserve">
     <value>设为系统 PAC</value>
@@ -347,6 +365,21 @@
   </data>
   <data name="Page.Status.Badge.Unreachable" xml:space="preserve">
     <value>无法连接</value>
+  </data>
+  <data name="Page.Status.ServiceRestart" xml:space="preserve">
+    <value>启动 / 重启</value>
+  </data>
+  <data name="Page.Status.ServiceStop" xml:space="preserve">
+    <value>停止</value>
+  </data>
+  <data name="Page.Status.ServiceRestarting" xml:space="preserve">
+    <value>已请求重启服务，页面稍后会重新连接。</value>
+  </data>
+  <data name="Page.Status.ServiceStopping" xml:space="preserve">
+    <value>已请求停止服务，Web 控制台将暂时不可用。</value>
+  </data>
+  <data name="Page.Status.ServiceActionFailed" xml:space="preserve">
+    <value>服务操作失败：{0}</value>
   </data>
   <data name="Page.Status.BytesReceived" xml:space="preserve">
     <value>接收</value>

@@ -10,17 +10,14 @@ public static class PacGenerator
 {
     public static async Task<string> GenerateAsync(AppConfig config)
     {
-        var proxy = config.Proxy;
         var route = config.Route;
+        var proxyStr = $"PROXY 127.0.0.1:{config.LocalProxy.ListenPort}";
 
-        var proxyStr = proxy.Type switch
-        {
-            "Socks5" => $"SOCKS5 {proxy.Host}:{proxy.Port}; SOCKS {proxy.Host}:{proxy.Port}",
-            "Http" => $"PROXY {proxy.Host}:{proxy.Port}",
-            _ => "DIRECT"
-        };
-
-        var defaultStr = route.Mode == "global" ? proxyStr : "DIRECT";
+        var mode = route.Mode ?? "smart";
+        var defaultStr = mode.Equals("blacklist", StringComparison.OrdinalIgnoreCase) ||
+                         mode.Equals("whitelist", StringComparison.OrdinalIgnoreCase)
+            ? "DIRECT"
+            : proxyStr;
 
         var directDomains = new HashSet<string>(
             route.DirectDomains ?? [],
@@ -39,7 +36,7 @@ public static class PacGenerator
             }
         }
 
-        return Build(proxyStr, defaultStr, directDomains, proxyDomains, route.Mode ?? "blacklist");
+        return Build(proxyStr, defaultStr, directDomains, proxyDomains, mode);
     }
 
     private static async Task<HashSet<string>> LoadGfwDomainsAsync(string path)

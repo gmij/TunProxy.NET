@@ -16,11 +16,6 @@
   <div id="alert-error" class="alert alert-danger" style="display:none"></div>
 
   <h4 class="mb-3" data-i18n="Page.Config.Title"></h4>
-  <div class="d-flex flex-wrap align-items-center gap-2 small mb-3" id="config-flow">
-    <span class="badge bg-secondary" id="flow-proxy"></span>
-    <span class="badge bg-secondary" id="flow-resources"></span>
-    <span class="badge bg-secondary" id="flow-save"></span>
-  </div>
   <div class="mb-4">
     <div class="d-flex align-items-center gap-2 mb-2">
       <span class="text-muted small" data-i18n="Page.Config.CurrentMode"></span>
@@ -29,21 +24,32 @@
     <div id="mode-hint-proxy" class="alert alert-info py-2 small mb-2" style="display:none" data-i18n-html="Page.Config.ModeHintProxyHtml"></div>
     <div id="mode-hint-tun" class="alert alert-warning py-2 small mb-2" style="display:none" data-i18n-html="Page.Config.ModeHintTunHtml"></div>
     <div id="local-port-row" class="row g-2 mb-2" style="display:none">
-      <div class="col-4 col-md-2">
+      <div id="local-port-col" class="col-4 col-md-2">
         <label class="form-label small text-muted" for="localPort" data-i18n="Page.Config.LocalProxyPort"></label>
         <input type="number" class="form-control form-control-sm" id="localPort" value="8080" />
       </div>
-      <div class="col-auto d-flex align-items-end">
-        <div class="form-check mb-0">
-          <input type="checkbox" class="form-check-input" id="setSystemProxy" checked />
-          <label class="form-check-label small" for="setSystemProxy" data-i18n="Page.Config.SetSystemProxy"></label>
-        </div>
+      <div class="col-8 col-md-3">
+        <label class="form-label small text-muted" for="systemProxyMode" data-i18n="Page.Config.SystemProxyMode"></label>
+        <select class="form-select form-select-sm" id="systemProxyMode">
+          <option value="pac" data-i18n="Page.Config.SystemProxyMode.Pac"></option>
+          <option value="global" data-i18n="Page.Config.SystemProxyMode.Global"></option>
+          <option value="tun" data-i18n="Page.Config.SystemProxyMode.Tun"></option>
+          <option value="none" data-i18n="Page.Config.SystemProxyMode.None"></option>
+        </select>
       </div>
     </div>
   </div>
 
-  <h4 class="mb-3" data-i18n="Page.Config.ProxyServer"></h4>
-  <div class="mb-4">
+  <ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button type="button" class="nav-link active" id="proxy-tab-button" data-config-tab="proxy" data-i18n="Page.Config.ProxyServer"></button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button type="button" class="nav-link" id="routing-tab-button" data-config-tab="routing" data-i18n="Page.Config.RoutingRules"></button>
+    </li>
+  </ul>
+
+  <section id="proxy-tab" class="config-tab-panel">
     <div class="row g-2 mb-2">
       <div class="col-8 col-md-5">
         <label class="form-label small text-muted" for="proxyHost" data-i18n="Page.Config.ProxyHost"></label>
@@ -79,23 +85,21 @@
     <div class="border rounded p-2 small" id="proxy-check-panel" style="display:none">
       <div id="proxy-check-targets" class="vstack gap-1"></div>
     </div>
-  </div>
+  </section>
 
-  <h4 class="mb-3" data-i18n="Page.Config.RoutingRules"></h4>
-  <div class="mb-4">
-    <div id="routing-locked" class="alert alert-secondary py-2 small mb-3" data-i18n="Page.Config.RoutingLocked"></div>
+  <section id="routing-tab" class="config-tab-panel" style="display:none">
     <div id="routing-panel">
       <div class="alert alert-info py-2 small mb-3" data-i18n="Page.Config.SmartRoutingDescription"></div>
       <div class="row g-2 mb-3">
         <div class="col-auto">
           <div class="form-check">
-            <input type="checkbox" class="form-check-input" id="enableGfw" checked disabled />
+            <input type="checkbox" class="form-check-input" id="enableGfw" checked />
             <label class="form-check-label small" for="enableGfw" data-i18n="Page.Config.EnableGfw"></label>
           </div>
         </div>
         <div class="col-auto">
           <div class="form-check">
-            <input type="checkbox" class="form-check-input" id="enableGeo" checked disabled />
+            <input type="checkbox" class="form-check-input" id="enableGeo" checked />
             <label class="form-check-label small" for="enableGeo" data-i18n="Page.Config.EnableGeo"></label>
           </div>
         </div>
@@ -114,31 +118,28 @@
           <button type="button" class="btn btn-sm btn-outline-primary" id="geo-resource-button" style="display:none"></button>
         </div>
       </div>
-      <div class="small text-muted" data-i18n="Page.Config.DnsCacheHint"></div>
       <div class="d-flex align-items-center gap-2 flex-wrap mt-2">
         <button type="button" class="btn btn-sm btn-outline-primary" id="prepare-resources-button" style="display:none"></button>
-        <span id="resource-summary-text" class="small text-muted"></span>
       </div>
     </div>
-  </div>
+  </section>
 
-  <button class="btn btn-primary" id="save-button" data-i18n="Page.Config.Save"></button>
-  <p class="text-muted small mt-3" data-i18n-html="Page.Config.ConfigPath"></p>
+  <section id="pac-section" style="display:none">
+    <hr class="my-4" />
 
-  <hr class="my-4" />
-
-  <h4 class="mb-2" data-i18n="Page.Config.PacHeading"></h4>
-  <p class="text-muted small mb-3" data-i18n-html="Page.Config.PacDescriptionHtml"></p>
-  <div class="mb-3 d-flex flex-wrap align-items-center gap-2">
-    <code id="pac-url" class="bg-light border rounded px-2 py-1 small">http://127.0.0.1:50000/proxy.pac</code>
-    <button class="btn btn-sm btn-outline-secondary" id="copy-pac-button" data-i18n="Page.Config.CopyAddress"></button>
-    <a class="btn btn-sm btn-outline-primary" href="/proxy.pac" target="_blank" data-i18n="Page.Config.PreviewPac"></a>
-  </div>
-  <div id="pac-win-controls" class="d-flex gap-2 flex-wrap">
-    <button class="btn btn-sm btn-success" id="apply-pac-button" data-i18n="Page.Config.ApplyPac"></button>
-    <button class="btn btn-sm btn-outline-danger" id="clear-pac-button" data-i18n="Page.Config.ClearPac"></button>
-    <span id="pac-result" class="small align-self-center text-muted"></span>
-  </div>
+    <h4 class="mb-2" data-i18n="Page.Config.PacHeading"></h4>
+    <p class="text-muted small mb-3" data-i18n-html="Page.Config.PacDescriptionHtml"></p>
+    <div class="mb-3 d-flex flex-wrap align-items-center gap-2">
+      <code id="pac-url" class="bg-light border rounded px-2 py-1 small">http://127.0.0.1:50000/proxy.pac</code>
+      <button class="btn btn-sm btn-outline-secondary" id="copy-pac-button" data-i18n="Page.Config.CopyAddress"></button>
+      <a class="btn btn-sm btn-outline-primary" href="/proxy.pac" target="_blank" data-i18n="Page.Config.PreviewPac"></a>
+    </div>
+    <div id="pac-win-controls" class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-sm btn-success" id="apply-pac-button" data-i18n="Page.Config.ApplyPac"></button>
+      <button class="btn btn-sm btn-outline-danger" id="clear-pac-button" data-i18n="Page.Config.ClearPac"></button>
+      <span id="pac-result" class="small align-self-center text-muted"></span>
+    </div>
+  </section>
 </div>
 
 <script>
@@ -183,18 +184,21 @@ function buildProxyConfigFromFields() {
 
 function buildConfigPayloadFromFields() {
   var payload = JSON.parse(JSON.stringify(cfg));
+  var systemProxyMode = getSystemProxyMode();
   payload.localProxy.listenPort = parseInt(document.getElementById('localPort').value, 10) || 8080;
-  payload.localProxy.setSystemProxy = document.getElementById('setSystemProxy').checked;
+  payload.localProxy.systemProxyMode = systemProxyMode;
+  payload.localProxy.setSystemProxy = systemProxyMode === 'pac' || systemProxyMode === 'global';
+  payload.tun.enabled = systemProxyMode === 'tun';
   payload.proxy.host = document.getElementById('proxyHost').value.trim();
   payload.proxy.port = parseInt(document.getElementById('proxyPort').value, 10) || 7890;
   payload.proxy.type = document.getElementById('proxyType').value;
   payload.proxy.username = document.getElementById('proxyUsername').value.trim() || null;
   payload.proxy.password = document.getElementById('proxyPassword').value || null;
-  payload.route.mode = 'smart';
+  payload.route.mode = systemProxyMode === 'global' ? 'global' : 'smart';
   payload.route.proxyDomains = [];
   payload.route.directDomains = [];
-  payload.route.enableGfwList = true;
-  payload.route.enableGeo = true;
+  payload.route.enableGfwList = document.getElementById('enableGfw').checked;
+  payload.route.enableGeo = document.getElementById('enableGeo').checked;
   return payload;
 }
 
@@ -204,6 +208,29 @@ function getCurrentConfigKey() {
 
 function isProxyCheckCurrent() {
   return !!(upstreamProxyStatus && upstreamProxyStatus.isAvailable && checkedConfigKey === getCurrentConfigKey());
+}
+
+function getSystemProxyMode() {
+  var modeSelect = document.getElementById('systemProxyMode');
+  return normalizeSystemProxyMode(modeSelect ? modeSelect.value : 'none');
+}
+
+function normalizeSystemProxyMode(value) {
+  if (value === 'manual') {
+    return 'global';
+  }
+
+  return value === 'pac' || value === 'global' || value === 'tun' ? value : 'none';
+}
+
+function updateModeDependentControls() {
+  var localPortCol = document.getElementById('local-port-col');
+  if (!localPortCol) {
+    return;
+  }
+
+  var mode = getSystemProxyMode();
+  localPortCol.style.display = mode === 'pac' || mode === 'global' ? '' : 'none';
 }
 
 function isTunMode() {
@@ -244,6 +271,9 @@ function hasMissingRuleResources() {
 
 function setFlowBadge(id, ready, active, label) {
   var badge = document.getElementById(id);
+  if (!badge) {
+    return;
+  }
   badge.textContent = label;
   badge.className = ready
     ? 'badge bg-success'
@@ -256,18 +286,19 @@ function updateWorkflowControls() {
   var proxyReady = isProxyReadyForWorkflow();
   var resourcesReady = areRuleResourcesReady();
   var canPrepareResources = proxyReady && hasMissingRuleResources() && !resourcesPreparing && !savingConfig;
-  var canSave = proxyReady && !resourcesPreparing && !savingConfig;
   var checkButton = document.getElementById('check-proxy-button');
   var geoButton = document.getElementById('geo-resource-button');
   var gfwButton = document.getElementById('gfw-resource-button');
   var prepareButton = document.getElementById('prepare-resources-button');
-  var resourceSummary = document.getElementById('resource-summary-text');
-  var saveButton = document.getElementById('save-button');
 
-  routingUnlocked = proxyReady;
-  document.getElementById('routing-panel').style.opacity = proxyReady ? '1' : '0.45';
-  document.getElementById('routing-locked').style.display = proxyReady ? 'none' : '';
-  checkButton.disabled = isTunMode() || proxyChecking || resourcesPreparing || savingConfig;
+  routingUnlocked = true;
+  checkButton.disabled = proxyChecking || resourcesPreparing || savingConfig || !hasProxyEndpoint();
+  checkButton.textContent = isProxyCheckCurrent()
+    ? window.TunProxyI18n.t('Page.Config.Save')
+    : window.TunProxyI18n.t('Page.Config.ProxyCheck');
+  checkButton.className = isProxyCheckCurrent()
+    ? 'btn btn-sm btn-success'
+    : 'btn btn-sm btn-outline-primary';
   geoButton.disabled = !proxyReady || resourcesPreparing || savingConfig;
   gfwButton.disabled = !proxyReady || resourcesPreparing || savingConfig;
 
@@ -277,47 +308,16 @@ function updateWorkflowControls() {
     ? window.TunProxyI18n.t('Page.Config.RuleResource.Downloading')
     : window.TunProxyI18n.t('Page.Config.RuleResource.Download') + ' GEO/GFW';
 
-  if (!proxyReady) {
-    resourceSummary.textContent = window.TunProxyI18n.t('Page.Config.RoutingLocked');
-  }
-  else if (resourcesReady) {
-    resourceSummary.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Ready');
-  }
-  else if (resourcesPreparing) {
-    resourceSummary.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Preparing');
-  }
-  else {
-    resourceSummary.textContent = window.TunProxyI18n.t('Page.Config.RuleResource.Missing');
+  var pacSection = document.getElementById('pac-section');
+  if (pacSection) {
+    pacSection.style.display = isProxyCheckCurrent() && getSystemProxyMode() === 'pac' ? '' : 'none';
   }
 
-  saveButton.disabled = !canSave;
-
-  setFlowBadge(
-    'flow-proxy',
-    isProxyCheckCurrent(),
-    proxyReady && !isProxyCheckCurrent(),
-    '1 ' + window.TunProxyI18n.t('Page.Config.ProxyServer'));
-  setFlowBadge(
-    'flow-resources',
-    resourcesReady,
-    proxyReady && !resourcesReady,
-    '2 ' + window.TunProxyI18n.t('Page.Config.RoutingRules'));
-  setFlowBadge(
-    'flow-save',
-    canSave,
-    proxyReady,
-    '3 ' + window.TunProxyI18n.t('Page.Config.Save'));
+  updateModeDependentControls();
 }
 
 function setRoutingUnlocked(unlocked) {
-  routingUnlocked = unlocked;
-  var panel = document.getElementById('routing-panel');
-  var locked = document.getElementById('routing-locked');
-  panel.style.opacity = unlocked ? '1' : '0.45';
-  locked.style.display = unlocked ? 'none' : '';
-
-  document.getElementById('geo-resource-button').disabled = !unlocked;
-  document.getElementById('gfw-resource-button').disabled = !unlocked;
+  routingUnlocked = true;
   renderRuleResourceStatus();
   updateWorkflowControls();
 }
@@ -326,16 +326,9 @@ function resetProxyStatus() {
   upstreamProxyStatus = null;
   checkedConfigKey = null;
   var badge = document.getElementById('proxy-status-badge');
-  if (isTunMode()) {
-    badge.textContent = window.TunProxyI18n.t('Mode.Tun');
-    badge.className = 'badge bg-warning text-dark';
-    document.getElementById('proxy-status-text').textContent = window.TunProxyI18n.t('Page.Config.ModeHintTunHtml').replace(/<[^>]+>/g, ' ');
-  }
-  else {
-    badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Unknown');
-    badge.className = 'badge bg-secondary';
-    document.getElementById('proxy-status-text').textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Hint');
-  }
+  badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Unknown');
+  badge.className = 'badge bg-secondary';
+  document.getElementById('proxy-status-text').textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Hint');
   document.getElementById('proxy-check-panel').style.display = 'none';
   setRoutingUnlocked(false);
 }
@@ -374,22 +367,17 @@ function renderProxyStatus(status) {
     badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Available');
     badge.className = 'badge bg-success';
     text.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.AvailableHint');
-    setRoutingUnlocked(true);
     return;
   }
 
   badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Unavailable');
   badge.className = 'badge bg-danger';
   text.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.UnavailableHint');
-  setRoutingUnlocked(false);
+  updateWorkflowControls();
 }
 
 function checkUpstreamProxy() {
   hideError();
-  if (isTunMode()) {
-    resetProxyStatus();
-    return Promise.resolve();
-  }
 
   var proxyConfig = buildProxyConfigFromFields();
   var requestConfigKey = JSON.stringify(proxyConfig);
@@ -402,7 +390,7 @@ function checkUpstreamProxy() {
   button.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Checking');
   badge.textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Checking');
   badge.className = 'badge bg-info text-dark';
-  setRoutingUnlocked(false);
+  updateWorkflowControls();
 
   return fetch('/api/upstream-proxy/check', {
     method: 'POST',
@@ -428,7 +416,6 @@ function checkUpstreamProxy() {
     })
     .finally(function () {
       proxyChecking = false;
-      button.textContent = window.TunProxyI18n.t('Page.Config.ProxyCheck');
       updateWorkflowControls();
     });
 }
@@ -445,7 +432,8 @@ function renderMode(status) {
 
   document.getElementById('mode-hint-tun').style.display = isTun ? '' : 'none';
   document.getElementById('mode-hint-proxy').style.display = isTun ? 'none' : '';
-  document.getElementById('local-port-row').style.display = isTun ? 'none' : '';
+  document.getElementById('local-port-row').style.display = '';
+  updateModeDependentControls();
 }
 
 function loadMode() {
@@ -463,16 +451,18 @@ function loadConfig() {
     .then(function (config) {
       cfg = config;
       document.getElementById('localPort').value = config.localProxy.listenPort;
-      document.getElementById('setSystemProxy').checked = config.localProxy.setSystemProxy;
+      document.getElementById('systemProxyMode').value = normalizeSystemProxyMode(
+        config.tun.enabled ? 'tun' : (config.localProxy.systemProxyMode || (config.localProxy.setSystemProxy ? 'pac' : 'none')));
       document.getElementById('proxyHost').value = config.proxy.host;
       document.getElementById('proxyPort').value = config.proxy.port;
       document.getElementById('proxyType').value = config.proxy.type;
       document.getElementById('proxyUsername').value = config.proxy.username || '';
       document.getElementById('proxyPassword').value = config.proxy.password || '';
-      document.getElementById('enableGfw').checked = true;
-      document.getElementById('enableGeo').checked = true;
+      document.getElementById('enableGfw').checked = config.route.enableGfwList;
+      document.getElementById('enableGeo').checked = config.route.enableGeo;
       renderRuleResourceStatus();
       resetProxyStatus();
+      updateModeDependentControls();
     });
 }
 
@@ -649,7 +639,7 @@ function showRestartCountdown() {
 function saveConfig() {
   hideError();
 
-  if (!isProxyReadyForWorkflow()) {
+  if (!isProxyCheckCurrent()) {
     showError(window.TunProxyI18n.t('Page.Config.ProxyStatus.RequiredBeforeSave'));
     return;
   }
@@ -682,6 +672,48 @@ function saveConfig() {
     });
 }
 
+function saveRouteSettings() {
+  hideError();
+  savingConfig = true;
+  updateWorkflowControls();
+
+  var payload = buildConfigPayloadFromFields();
+  payload.tun.enabled = cfg.tun.enabled;
+  payload.localProxy.systemProxyMode = cfg.localProxy.systemProxyMode;
+  payload.localProxy.setSystemProxy = cfg.localProxy.setSystemProxy;
+  payload.route.mode = cfg.route.mode;
+
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function (response) {
+      if (!response.ok && response.status !== 204) {
+        return response.text().then(function (text) {
+          throw new Error(text);
+        });
+      }
+
+      cfg = payload;
+      return loadRuleResourceStatus();
+    })
+    .catch(function (error) {
+      showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
+    })
+    .finally(function () {
+      savingConfig = false;
+      updateWorkflowControls();
+    });
+}
+
+function selectConfigTab(name) {
+  document.getElementById('proxy-tab').style.display = name === 'proxy' ? '' : 'none';
+  document.getElementById('routing-tab').style.display = name === 'routing' ? '' : 'none';
+  document.getElementById('proxy-tab-button').classList.toggle('active', name === 'proxy');
+  document.getElementById('routing-tab-button').classList.toggle('active', name === 'routing');
+}
+
 function copyPacUrl() {
   var url = document.getElementById('pac-url').textContent;
   navigator.clipboard.writeText(url).then(function () {
@@ -703,6 +735,11 @@ function applyPac() {
       return response.json();
     })
     .then(function (data) {
+      cfg.localProxy.systemProxyMode = 'pac';
+      cfg.localProxy.setSystemProxy = true;
+      cfg.tun.enabled = false;
+      document.getElementById('systemProxyMode').value = 'pac';
+      updateWorkflowControls();
       var result = document.getElementById('pac-result');
       result.textContent = window.TunProxyI18n.format('Page.Config.PacSet', data.url);
       result.className = 'small align-self-center text-success';
@@ -717,6 +754,11 @@ function applyPac() {
 function clearPac() {
   fetch('/api/clear-pac', { method: 'POST' })
     .then(function () {
+      cfg.localProxy.systemProxyMode = 'none';
+      cfg.localProxy.setSystemProxy = false;
+      cfg.tun.enabled = false;
+      document.getElementById('systemProxyMode').value = 'none';
+      updateWorkflowControls();
       var result = document.getElementById('pac-result');
       result.textContent = window.TunProxyI18n.t('Page.Config.PacCleared');
       result.className = 'small align-self-center text-muted';
@@ -743,12 +785,27 @@ document.addEventListener('tunproxy:i18n-updated', function () {
 });
 
 window.TunProxyI18n.initPage().then(function () {
-  document.getElementById('save-button').addEventListener('click', saveConfig);
-  document.getElementById('check-proxy-button').addEventListener('click', checkUpstreamProxy);
+  document.getElementById('check-proxy-button').addEventListener('click', function () {
+    if (isProxyCheckCurrent()) {
+      saveConfig();
+    }
+    else {
+      checkUpstreamProxy();
+    }
+  });
+  document.querySelectorAll('[data-config-tab]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      selectConfigTab(button.dataset.configTab);
+    });
+  });
   document.getElementById('prepare-resources-button').addEventListener('click', prepareAllRuleResources);
   ['proxyHost', 'proxyPort', 'proxyType', 'proxyUsername', 'proxyPassword'].forEach(function (id) {
     document.getElementById(id).addEventListener('input', resetProxyStatus);
     document.getElementById(id).addEventListener('change', resetProxyStatus);
+  });
+  document.getElementById('systemProxyMode').addEventListener('change', function () {
+    updateModeDependentControls();
+    updateWorkflowControls();
   });
   document.getElementById('geo-resource-button').addEventListener('click', function () {
     downloadRuleResource('geo');
@@ -756,14 +813,23 @@ window.TunProxyI18n.initPage().then(function () {
   document.getElementById('gfw-resource-button').addEventListener('click', function () {
     downloadRuleResource('gfw');
   });
+  document.getElementById('enableGeo').addEventListener('change', function () {
+    renderRuleResourceStatus();
+    saveRouteSettings();
+  });
+  document.getElementById('enableGfw').addEventListener('change', function () {
+    renderRuleResourceStatus();
+    saveRouteSettings();
+  });
   document.getElementById('copy-pac-button').addEventListener('click', copyPacUrl);
   document.getElementById('apply-pac-button').addEventListener('click', applyPac);
   document.getElementById('clear-pac-button').addEventListener('click', clearPac);
 
-  setRoutingUnlocked(false);
+  selectConfigTab('proxy');
+  setRoutingUnlocked(true);
   Promise.all([loadMode(), loadConfig(), loadRuleResourceStatus()])
     .then(function () {
-      return isTunMode() ? resetProxyStatus() : checkUpstreamProxy();
+      return hasProxyEndpoint() ? checkUpstreamProxy() : resetProxyStatus();
     })
     .catch(function (error) {
     showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));

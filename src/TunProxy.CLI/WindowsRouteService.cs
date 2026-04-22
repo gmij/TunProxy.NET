@@ -12,6 +12,7 @@ namespace TunProxy.CLI;
 /// </summary>
 public class WindowsRouteService : IRouteService
 {
+    private const string PreferredTunInterfaceName = "TunProxy";
     private readonly string _tunIpAddress;
     private readonly string _tunSubnetMask;
     private readonly HashSet<string> _addedBypassRoutes = new(StringComparer.OrdinalIgnoreCase);
@@ -27,13 +28,14 @@ public class WindowsRouteService : IRouteService
     {
         try
         {
-            var adapter = NetworkInterface.GetAllNetworkInterfaces()
-                .FirstOrDefault(IsTunInterface);
-            return adapter?.Name ?? "TunProxy";
+            var candidates = NetworkInterface.GetAllNetworkInterfaces()
+                .Select(CreateTunInterfaceCandidate)
+                .ToList();
+            return ResolveTunInterfaceName(candidates, _tunIpAddress);
         }
         catch
         {
-            return "TunProxy";
+            return PreferredTunInterfaceName;
         }
     }
 
@@ -98,13 +100,6 @@ public class WindowsRouteService : IRouteService
             return _cachedOriginalDefaultGateway;
         }
 
-        var nicGateway = GetGatewayFromNetworkInterfaces();
-        if (!string.IsNullOrWhiteSpace(nicGateway))
-        {
-            _cachedOriginalDefaultGateway = nicGateway;
-            return nicGateway;
-        }
-
         var routeGateway = GetRouteTable()
             .Where(route =>
                 route.Network == "0.0.0.0" &&
@@ -121,11 +116,34 @@ public class WindowsRouteService : IRouteService
             _cachedOriginalDefaultGateway = routeGateway;
         }
 
-        return routeGateway;
+        if (!string.IsNullOrWhiteSpace(routeGateway))
+        {
+            return routeGateway;
+        }
+
+        var nicGateway = GetGatewayFromNetworkInterfaces();
+        if (!string.IsNullOrWhiteSpace(nicGateway))
+        {
+            _cachedOriginalDefaultGateway = nicGateway;
+            return nicGateway;
+        }
+
+        return null;
     }
 
     public bool AddBypassRoute(string ipAddress, int prefixLength = 32)
     {
+        if (prefixLength == 32 && TryFindExistingSpecificRoute(ipAddress, out var existingRoute))
+        {
+            Log.Information(
+                "[ROUTE] Bypass route already covered by existing route: {IP}/{Prefix} via {Gateway} on {Interface}",
+                ipAddress,
+                prefixLength,
+                existingRoute.Gateway,
+                existingRoute.Interface);
+            return true;
+        }
+
         var gateway = GetOriginalDefaultGateway();
         if (string.IsNullOrWhiteSpace(gateway))
         {
@@ -165,6 +183,17 @@ public class WindowsRouteService : IRouteService
             gateway,
             output.Trim());
         return false;
+    }
+
+    internal bool TryFindExistingSpecificRoute(string ipAddress, out RouteEntry route)
+    {
+        route = GetRouteTable()
+            .Where(candidate => IsSpecificRouteForDestination(candidate, ipAddress, _tunIpAddress))
+            .OrderByDescending(candidate => GetPrefixLength(candidate.Netmask))
+            .ThenBy(candidate => int.TryParse(candidate.Metric, out var metric) ? metric : int.MaxValue)
+            .FirstOrDefault() ?? new RouteEntry();
+
+        return !string.IsNullOrWhiteSpace(route.Network);
     }
 
     public bool RemoveBypassRoute(string ipAddress)
@@ -448,8 +477,46 @@ public class WindowsRouteService : IRouteService
 
     private static bool IsTunInterface(NetworkInterface networkInterface)
     {
-        return networkInterface.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
-               networkInterface.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase);
+        return IsTunInterface(networkInterface.Name, networkInterface.Description);
+    }
+
+    internal static bool IsSpecificRouteForDestination(RouteEntry route, string destinationIp, string tunIpAddress)
+    {
+        if (route.Network == "0.0.0.0" ||
+            IsTunDefaultRoute(route, tunIpAddress) ||
+            !IPAddress.TryParse(destinationIp, out var destination) ||
+            !IPAddress.TryParse(route.Network, out var network) ||
+            !IPAddress.TryParse(route.Netmask, out var netmask) ||
+            destination.AddressFamily != AddressFamily.InterNetwork ||
+            network.AddressFamily != AddressFamily.InterNetwork ||
+            netmask.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return false;
+        }
+
+        var destinationValue = ToUInt32(destination);
+        var networkValue = ToUInt32(network);
+        var maskValue = ToUInt32(netmask);
+        return (destinationValue & maskValue) == (networkValue & maskValue);
+    }
+
+    internal static int GetPrefixLength(string netmask)
+    {
+        if (!IPAddress.TryParse(netmask, out var address) ||
+            address.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return 0;
+        }
+
+        var value = ToUInt32(address);
+        var count = 0;
+        while ((value & 0x80000000) != 0)
+        {
+            count++;
+            value <<= 1;
+        }
+
+        return count;
     }
 
     private static bool IsUsablePhysicalInterface(NetworkInterface networkInterface)
@@ -459,10 +526,79 @@ public class WindowsRouteService : IRouteService
                !IsTunInterface(networkInterface);
     }
 
+    internal static string ResolveTunInterfaceName(
+        IReadOnlyCollection<TunInterfaceCandidate> candidates,
+        string tunIpAddress)
+    {
+        var tunCandidates = candidates
+            .Where(candidate => IsTunInterface(candidate.Name, candidate.Description))
+            .ToList();
+
+        return tunCandidates
+                   .FirstOrDefault(candidate =>
+                       candidate.Name.Equals(PreferredTunInterfaceName, StringComparison.OrdinalIgnoreCase) &&
+                       candidate.Ipv4Addresses.Contains(tunIpAddress, StringComparer.OrdinalIgnoreCase))
+                   ?.Name
+               ?? tunCandidates
+                   .FirstOrDefault(candidate =>
+                       candidate.Ipv4Addresses.Contains(tunIpAddress, StringComparer.OrdinalIgnoreCase))
+                   ?.Name
+               ?? tunCandidates
+                   .FirstOrDefault(candidate =>
+                       candidate.Name.Equals(PreferredTunInterfaceName, StringComparison.OrdinalIgnoreCase) &&
+                       candidate.IsUp)
+                   ?.Name
+               ?? tunCandidates
+                   .FirstOrDefault(candidate =>
+                       candidate.Name.Equals(PreferredTunInterfaceName, StringComparison.OrdinalIgnoreCase))
+                   ?.Name
+               ?? tunCandidates.FirstOrDefault(candidate => candidate.IsUp)?.Name
+               ?? tunCandidates.FirstOrDefault()?.Name
+               ?? PreferredTunInterfaceName;
+    }
+
+    private static TunInterfaceCandidate CreateTunInterfaceCandidate(NetworkInterface networkInterface)
+    {
+        var ipv4Addresses = Array.Empty<string>();
+        try
+        {
+            ipv4Addresses = networkInterface
+                .GetIPProperties()
+                .UnicastAddresses
+                .Where(address => address.Address.AddressFamily == AddressFamily.InterNetwork)
+                .Select(address => address.Address.ToString())
+                .ToArray();
+        }
+        catch
+        {
+        }
+
+        return new TunInterfaceCandidate(
+            networkInterface.Name,
+            networkInterface.Description,
+            networkInterface.OperationalStatus == OperationalStatus.Up,
+            ipv4Addresses);
+    }
+
+    private static bool IsTunInterface(string name, string description)
+    {
+        return description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains(PreferredTunInterfaceName, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsIPv4Address(string value)
     {
         return IPAddress.TryParse(value, out var address) &&
                address.AddressFamily == AddressFamily.InterNetwork;
+    }
+
+    private static uint ToUInt32(IPAddress address)
+    {
+        var bytes = address.GetAddressBytes();
+        return ((uint)bytes[0] << 24) |
+               ((uint)bytes[1] << 16) |
+               ((uint)bytes[2] << 8) |
+               bytes[3];
     }
 
     private static bool IsAlreadyExistsOutput(string output)
@@ -558,3 +694,9 @@ public class RouteDiagnosisResult
         }
     }
 }
+
+public sealed record TunInterfaceCandidate(
+    string Name,
+    string Description,
+    bool IsUp,
+    IReadOnlyCollection<string> Ipv4Addresses);

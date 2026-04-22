@@ -66,21 +66,24 @@ internal sealed class SystemProxyManager : IDisposable
         }
     }
 
-    public static void SetPacUrl(string pacUrl)
+    public void SetPacUrl(string pacUrl)
     {
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsKey, writable: true);
+            using var key = _registryRoot.CreateSubKey(_settingsPath, writable: true);
             if (key == null)
             {
                 Log.Warning("Failed to open the registry key for PAC settings");
                 return;
             }
 
+            CaptureOriginalSettingsIfNeeded(key);
+
             key.SetValue("AutoConfigURL", pacUrl, RegistryValueKind.String);
             key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
 
             NotifyProxyChanged();
+            _applied = true;
             Log.Information("System PAC URL set to {Url}", pacUrl);
         }
         catch (Exception ex)
@@ -89,11 +92,17 @@ internal sealed class SystemProxyManager : IDisposable
         }
     }
 
-    public static void ClearPacUrl()
+    public void ClearPacUrl()
     {
+        if (_backupStore?.HasBackup() == true || _applied || _originalCaptured)
+        {
+            RestoreProxy();
+            return;
+        }
+
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsKey, writable: true);
+            using var key = _registryRoot.OpenSubKey(_settingsPath, writable: true);
             if (key == null)
                 return;
 
@@ -104,6 +113,37 @@ internal sealed class SystemProxyManager : IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to clear PAC URL");
+        }
+    }
+
+    public void DisableForTun()
+    {
+        try
+        {
+            using var key = _registryRoot.CreateSubKey(_settingsPath, writable: true);
+            if (key == null)
+            {
+                return;
+            }
+
+            var enabled = Convert.ToInt32(key.GetValue("ProxyEnable", 0) ?? 0);
+            var autoConfigUrl = key.GetValue("AutoConfigURL") as string;
+            if (enabled == 0 && string.IsNullOrWhiteSpace(autoConfigUrl))
+            {
+                return;
+            }
+
+            CaptureOriginalSettingsIfNeeded(key);
+            key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+            key.DeleteValue("AutoConfigURL", throwOnMissingValue: false);
+
+            NotifyProxyChanged();
+            _applied = true;
+            Log.Information("System proxy disabled for TUN mode.");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to disable system proxy for TUN mode");
         }
     }
 

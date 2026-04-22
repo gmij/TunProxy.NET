@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.Versioning;
 using System.Text;
 using Serilog;
 using TunProxy.Core.Configuration;
@@ -25,10 +26,8 @@ public class LocalProxyService : IProxyService
     public LocalProxyService(AppConfig config)
     {
         _config = config;
-        if (config.Route.EnableGeo)
-            _geoIpService = new GeoIpService(config.Route.GeoIpDbPath);
-        if (config.Route.EnableGfwList)
-            _gfwListService = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
+        _geoIpService = new GeoIpService(config.Route.GeoIpDbPath);
+        _gfwListService = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
         _routeDecision = new RouteDecisionService(config, _geoIpService, _gfwListService);
     }
 
@@ -46,6 +45,19 @@ public class LocalProxyService : IProxyService
 
     public IReadOnlyList<string> GetDirectIps() => [];
 
+    public async Task RefreshRuleResourcesAsync(CancellationToken ct)
+    {
+        if (_config.Route.EnableGeo && _geoIpService != null && !_geoIpService.IsInitialized)
+        {
+            await _geoIpService.InitializeAsync(ct, _config.Proxy, downloadIfMissing: false);
+        }
+
+        if (_config.Route.EnableGfwList && _gfwListService != null && !_gfwListService.IsInitialized)
+        {
+            await _gfwListService.InitializeAsync(ct, _config.Proxy, downloadIfMissing: false);
+        }
+    }
+
     public async Task StartAsync(CancellationToken ct)
     {
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -56,10 +68,9 @@ public class LocalProxyService : IProxyService
 
         InitializeBackgroundServices();
 
-        if (_config.LocalProxy.SetSystemProxy && OperatingSystem.IsWindows() && Environment.UserInteractive)
+        if (OperatingSystem.IsWindows())
         {
-            _systemProxy = new SystemProxyManager(backupStore: new SystemProxyBackupStore(_config));
-            _systemProxy.SetProxy($"127.0.0.1:{port}", _config.LocalProxy.BypassList);
+            ApplySystemProxyMode(port);
         }
 
         _listener = new TcpListener(IPAddress.Loopback, port);
@@ -149,6 +160,39 @@ public class LocalProxyService : IProxyService
             if (_metrics.ActiveConnections > 0)
                 _metrics.DecrementActiveConnections();
         }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private void ApplySystemProxyMode(int port)
+    {
+        switch (_config.LocalProxy.SystemProxyMode)
+        {
+            case SystemProxyModes.Pac:
+                _systemProxy = CreateSystemProxyManager();
+                _systemProxy.SetPacUrl("http://127.0.0.1:50000/proxy.pac");
+                break;
+            case SystemProxyModes.Global:
+                _systemProxy = CreateSystemProxyManager();
+                _systemProxy.SetProxy($"127.0.0.1:{port}", _config.LocalProxy.BypassList);
+                break;
+            default:
+                CreateSystemProxyManager().RestoreProxy();
+                Log.Information("System proxy changes are disabled by configuration.");
+                break;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private SystemProxyManager CreateSystemProxyManager()
+    {
+        var backupStore = new SystemProxyBackupStore(_config);
+        if (!Environment.UserInteractive &&
+            WindowsInteractiveUserRegistry.TryGetInternetSettingsPath(out var settingsPath))
+        {
+            return new SystemProxyManager(Microsoft.Win32.Registry.Users, settingsPath, backupStore);
+        }
+
+        return new SystemProxyManager(backupStore: backupStore);
     }
 
     private async Task HandleConnectAsync(NetworkStream clientStream, string requestLine, CancellationToken ct)
@@ -474,7 +518,7 @@ public class LocalProxyService : IProxyService
         Interlocked.Increment(ref _downloadingCount);
         try
         {
-            return await _geoIpService!.InitializeAsync(_cts!.Token, _config.Proxy);
+            return await _geoIpService!.InitializeAsync(_cts!.Token, _config.Proxy, downloadIfMissing: false);
         }
         catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)
         {
@@ -496,7 +540,7 @@ public class LocalProxyService : IProxyService
         Interlocked.Increment(ref _downloadingCount);
         try
         {
-            return await _gfwListService!.InitializeAsync(_cts!.Token, _config.Proxy);
+            return await _gfwListService!.InitializeAsync(_cts!.Token, _config.Proxy, downloadIfMissing: false);
         }
         catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)
         {

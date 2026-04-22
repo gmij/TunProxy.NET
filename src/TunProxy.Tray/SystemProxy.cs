@@ -65,6 +65,31 @@ internal sealed class SystemProxy
         }
     }
 
+    public bool SetPacUrl(string pacUrl)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsKey, writable: true);
+            if (key == null)
+            {
+                return false;
+            }
+
+            SaveSnapshotIfNeeded(key);
+
+            key.SetValue("AutoConfigURL", pacUrl, RegistryValueKind.String);
+            key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+
+            Notify();
+            _applied = true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public void DisableForTun()
     {
         try

@@ -20,14 +20,17 @@ public class GfwListService
         _gfwListPath = AppPathResolver.ResolveAppFilePath(gfwListPath);
     }
 
-    public async Task<bool> InitializeAsync(CancellationToken ct = default, ProxyConfig? proxyConfig = null)
+    public async Task<bool> InitializeAsync(
+        CancellationToken ct = default,
+        ProxyConfig? proxyConfig = null,
+        bool downloadIfMissing = true)
     {
         if (_initialized)
         {
             return true;
         }
 
-        if (!File.Exists(_gfwListPath))
+        if (!File.Exists(_gfwListPath) && downloadIfMissing)
         {
             await DownloadGfwListAsync(ct, proxyConfig);
         }

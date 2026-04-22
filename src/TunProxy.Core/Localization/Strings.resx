@@ -91,10 +91,10 @@
     <value>Local proxy port</value>
   </data>
   <data name="Page.Config.ModeHintProxyHtml" xml:space="preserve">
-    <value>&lt;strong&gt;Local Proxy mode&lt;/strong&gt; listens on a local port and can automatically update the system proxy. No administrator rights are required.&lt;br&gt;To switch to TUN mode, use the tray menu to install the system service.</value>
+    <value>&lt;strong&gt;Local Proxy mode&lt;/strong&gt; listens on a local port and can automatically update the system proxy. No administrator rights are required.&lt;br&gt;Use the status page to restart or stop the current service.</value>
   </data>
   <data name="Page.Config.ModeHintTunHtml" xml:space="preserve">
-    <value>&lt;strong&gt;TUN mode&lt;/strong&gt; transparently captures TCP traffic through the virtual adapter.&lt;br&gt;To switch back, uninstall the system service from the tray menu.</value>
+    <value>&lt;strong&gt;TUN mode&lt;/strong&gt; transparently captures TCP traffic through the virtual adapter.&lt;br&gt;Use the status page to restart or stop the current service.</value>
   </data>
   <data name="Page.Config.ModeUnknown" xml:space="preserve">
     <value>Unknown (service unavailable)</value>
@@ -142,13 +142,13 @@
     <value>Available</value>
   </data>
   <data name="Page.Config.ProxyStatus.AvailableHint" xml:space="preserve">
-    <value>Upstream proxy is ready. Smart routing can be configured.</value>
+    <value>Upstream proxy is ready. Save the configuration to apply it after restart.</value>
   </data>
   <data name="Page.Config.ProxyStatus.Unavailable" xml:space="preserve">
     <value>Unavailable</value>
   </data>
   <data name="Page.Config.ProxyStatus.UnavailableHint" xml:space="preserve">
-    <value>Fix the upstream proxy before changing routing rules.</value>
+    <value>Fix the upstream proxy before saving this configuration.</value>
   </data>
   <data name="Page.Config.ProxyStatus.TargetOk" xml:space="preserve">
     <value>OK in {0} ms</value>
@@ -160,7 +160,7 @@
     <value>Proxy check failed: {0}</value>
   </data>
   <data name="Page.Config.ProxyStatus.RequiredBeforeSave" xml:space="preserve">
-    <value>Please check the upstream proxy first. Routing configuration can only be saved after all three sites return HTTP 200 through the proxy.</value>
+    <value>Please check the upstream proxy first. Configuration can only be saved after all three sites return HTTP 200 through the proxy.</value>
   </data>
   <data name="Page.Config.ProxyPort" xml:space="preserve">
     <value>Port</value>
@@ -193,7 +193,7 @@
     <value>Routing rules are locked until the upstream proxy check passes.</value>
   </data>
   <data name="Page.Config.SmartRoutingDescription" xml:space="preserve">
-    <value>Smart routing is enabled: GFWList is evaluated first, then GeoIP. DNS answers are cached and reused to speed up later route decisions.</value>
+    <value>Smart routing evaluates enabled rules only when their files are present and valid. GFWList is evaluated first, then GeoIP.</value>
   </data>
   <data name="Page.Config.DnsCacheHint" xml:space="preserve">
     <value>DNS cache records can be viewed and cleared from the DNS page.</value>
@@ -206,6 +206,24 @@
   </data>
   <data name="Page.Config.SetSystemProxy" xml:space="preserve">
     <value>Automatically set system proxy</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode" xml:space="preserve">
+    <value>System proxy mode</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.Pac" xml:space="preserve">
+    <value>PAC auto proxy</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.Global" xml:space="preserve">
+    <value>Global proxy</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.Tun" xml:space="preserve">
+    <value>TUN</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.Manual" xml:space="preserve">
+    <value>Global proxy</value>
+  </data>
+  <data name="Page.Config.SystemProxyMode.None" xml:space="preserve">
+    <value>Do not change system proxy</value>
   </data>
   <data name="Page.Config.ApplyPac" xml:space="preserve">
     <value>Use as system PAC</value>
@@ -347,6 +365,21 @@
   </data>
   <data name="Page.Status.Badge.Unreachable" xml:space="preserve">
     <value>Unreachable</value>
+  </data>
+  <data name="Page.Status.ServiceRestart" xml:space="preserve">
+    <value>Start / Restart</value>
+  </data>
+  <data name="Page.Status.ServiceStop" xml:space="preserve">
+    <value>Stop</value>
+  </data>
+  <data name="Page.Status.ServiceRestarting" xml:space="preserve">
+    <value>Service restart requested. The page will reconnect shortly.</value>
+  </data>
+  <data name="Page.Status.ServiceStopping" xml:space="preserve">
+    <value>Service stop requested. The web console will become unavailable.</value>
+  </data>
+  <data name="Page.Status.ServiceActionFailed" xml:space="preserve">
+    <value>Service action failed: {0}</value>
   </data>
   <data name="Page.Status.BytesReceived" xml:space="preserve">
     <value>Received</value>

@@ -13,13 +13,18 @@
 
 <div class="container-fluid px-4">
   <h4 class="mb-3" data-i18n="Page.Status.Heading"></h4>
+  <div id="service-action-alert" class="alert alert-info py-2 small" style="display:none"></div>
 
   <div class="card mb-3">
     <div class="card-body">
-      <div class="d-flex align-items-center gap-3 mb-3">
+      <div class="d-flex align-items-center justify-content-between gap-3 mb-3 flex-wrap">
         <span class="fs-5 fw-bold" id="status-badges">
           <span class="badge bg-secondary" data-i18n="Page.Status.Badge.Loading"></span>
         </span>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-sm btn-outline-primary" id="restart-service-button" data-i18n="Page.Status.ServiceRestart"></button>
+          <button type="button" class="btn btn-sm btn-outline-danger" id="stop-service-button" data-i18n="Page.Status.ServiceStop"></button>
+        </div>
       </div>
       <table class="table table-sm table-borderless mb-0">
         <tbody>
@@ -91,6 +96,7 @@
 
 <script>
 var latestStatus = null;
+var serviceActionBusy = false;
 
 function fmtBytes(bytes) {
   if (bytes >= 1e9) return (bytes / 1e9).toFixed(2) + ' GB';
@@ -132,6 +138,7 @@ function renderStatus(status) {
   var metrics = status.metrics;
 
   renderStatusBadges(status);
+  updateServiceButtons(status.isRunning);
   document.getElementById('proxy-info').innerHTML =
     status.proxyHost + ':' + status.proxyPort + ' <span class="badge bg-light text-dark">' + status.proxyType + '</span>';
   document.getElementById('active-conn').textContent = status.activeConnections;
@@ -169,6 +176,52 @@ function renderStatus(status) {
     window.TunProxyI18n.format('Shared.RefreshAt', 5, window.TunProxyI18n.timeString(new Date()));
 }
 
+function updateServiceButtons(isRunning) {
+  var restartButton = document.getElementById('restart-service-button');
+  var stopButton = document.getElementById('stop-service-button');
+  restartButton.disabled = serviceActionBusy || !isRunning;
+  stopButton.disabled = serviceActionBusy || !isRunning;
+}
+
+function showServiceAction(messageKey, className) {
+  var alert = document.getElementById('service-action-alert');
+  alert.textContent = window.TunProxyI18n.t(messageKey);
+  alert.className = 'alert py-2 small ' + className;
+  alert.style.display = '';
+}
+
+function controlService(action) {
+  serviceActionBusy = true;
+  updateServiceButtons(latestStatus && latestStatus.isRunning);
+  showServiceAction(
+    action === 'restart' ? 'Page.Status.ServiceRestarting' : 'Page.Status.ServiceStopping',
+    'alert-info');
+
+  fetch('/api/service/' + action, { method: 'POST' })
+    .then(function (response) {
+      if (!response.ok) {
+        return response.text().then(function (text) {
+          throw new Error(text || response.statusText);
+        });
+      }
+
+      showServiceAction(
+        action === 'restart' ? 'Page.Status.ServiceRestarting' : 'Page.Status.ServiceStopping',
+        'alert-warning');
+      if (action === 'restart') {
+        window.setTimeout(refreshStatus, 5000);
+      }
+    })
+    .catch(function (error) {
+      var alert = document.getElementById('service-action-alert');
+      alert.textContent = window.TunProxyI18n.format('Page.Status.ServiceActionFailed', error.message);
+      alert.className = 'alert alert-danger py-2 small';
+      alert.style.display = '';
+      serviceActionBusy = false;
+      updateServiceButtons(latestStatus && latestStatus.isRunning);
+    });
+}
+
 function refreshStatus() {
   fetch('/api/status')
     .then(function (response) { return response.json(); })
@@ -176,6 +229,7 @@ function refreshStatus() {
     .catch(function () {
       document.getElementById('status-badges').innerHTML =
         '<span class="badge bg-danger">' + window.TunProxyI18n.t('Page.Status.Badge.Unreachable') + '</span>';
+      updateServiceButtons(false);
     });
 }
 
@@ -186,6 +240,12 @@ document.addEventListener('tunproxy:i18n-updated', function () {
 });
 
 window.TunProxyI18n.initPage().then(function () {
+  document.getElementById('restart-service-button').addEventListener('click', function () {
+    controlService('restart');
+  });
+  document.getElementById('stop-service-button').addEventListener('click', function () {
+    controlService('stop');
+  });
   refreshStatus();
   window.setInterval(refreshStatus, 5000);
 });

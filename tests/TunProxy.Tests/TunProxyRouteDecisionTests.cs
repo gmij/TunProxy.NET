@@ -65,6 +65,42 @@ public class TunProxyRouteDecisionTests
     }
 
     [Fact]
+    public async Task GlobalRouteMode_ProxiesNonPrivateDestinations()
+    {
+        var config = new AppConfig
+        {
+            Route =
+            {
+                Mode = "global",
+                EnableGeo = true
+            }
+        };
+        var service = new RouteDecisionService(
+            config,
+            getCountryCode: _ => "CN",
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("203.0.113.1")));
+
+        var decision = await service.DecideForDomainAsync("cdn.example.cn", CancellationToken.None);
+
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("Global", decision.Reason);
+    }
+
+    [Fact]
+    public async Task GlobalRouteMode_StillDirectsResolvedPrivateIp()
+    {
+        var config = new AppConfig { Route = { Mode = "global" } };
+        var service = new RouteDecisionService(
+            config,
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("192.168.98.246")));
+
+        var decision = await service.DecideForDomainAsync("printer.lan", CancellationToken.None);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("ResolvedPrivateIP", decision.Reason);
+    }
+
+    [Fact]
     public async Task DomainGeoResolution_CnDefaultsToDirect()
     {
         var config = new AppConfig { Route = { EnableGeo = true } };

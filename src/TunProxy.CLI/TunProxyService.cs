@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using Serilog;
 using TunProxy.Core.Configuration;
@@ -52,15 +53,8 @@ public class TunProxyService : IProxyService
     {
         _config = config;
 
-        if (config.Route.EnableGeo)
-        {
-            _geoIpService = new GeoIpService(config.Route.GeoIpDbPath);
-        }
-
-        if (config.Route.EnableGfwList)
-        {
-            _gfwListService = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
-        }
+        _geoIpService = new GeoIpService(config.Route.GeoIpDbPath);
+        _gfwListService = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
 
         _routeDecision = new RouteDecisionService(config, _geoIpService, _gfwListService);
         _routeService = RouteServiceFactory.Create(config.Tun);
@@ -128,6 +122,20 @@ public class TunProxyService : IProxyService
 
     public bool ClearDnsCacheEntry(string? hostname, string ipAddress) =>
         _dnsStore?.RemoveCachedAddress(hostname, ipAddress) == true;
+
+    public async Task RefreshRuleResourcesAsync(CancellationToken ct)
+    {
+        if (!NeedsRuleResourceInitialization())
+        {
+            return;
+        }
+
+        await InitializeRuleServicesAsync(
+            ct,
+            _config.Proxy,
+            waitForProxyReadyWhenNeeded: false,
+            downloadIfMissing: false);
+    }
 
     public TunDiagnosticsSnapshot GetDiagnostics()
     {
@@ -207,20 +215,16 @@ public class TunProxyService : IProxyService
 
         try
         {
-            var missingRuleResources = GetMissingRequiredRuleResourceFiles();
-            if (missingRuleResources.Count > 0)
-            {
-                throw new InvalidOperationException(
-                    "Enabled route rule resources are missing; TUN startup aborted. Missing: " +
-                    string.Join("; ", missingRuleResources));
-            }
-
             if (NeedsRuleResourceInitialization())
             {
-                Log.Information("[TUN ] Loading enabled GFWList/GeoIP resources before applying TUN routes.");
-                if (!await InitializeRuleServicesAsync(ct, _config.Proxy, waitForProxyReadyWhenNeeded: false))
+                Log.Information("[TUN ] Loading existing GFWList/GeoIP resources before applying TUN routes.");
+                if (!await InitializeRuleServicesAsync(
+                        ct,
+                        _config.Proxy,
+                        waitForProxyReadyWhenNeeded: false,
+                        downloadIfMissing: false))
                 {
-                    throw new InvalidOperationException("Enabled route rule resources failed to load; TUN startup aborted.");
+                    Log.Warning("[TUN ] One or more enabled route rule resources are missing or invalid; those rules will stay inactive.");
                 }
             }
 
@@ -273,6 +277,7 @@ public class TunProxyService : IProxyService
 
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             Log.Information("[TUN ] Starting packet workers and background services...");
+            InitializeBackgroundServices();
             StartPacketWorkers(_cts.Token);
             StartRuntimeCleanup(_cts.Token);
             StartMetricsLogger(_cts.Token);
@@ -1094,7 +1099,11 @@ public class TunProxyService : IProxyService
             _ = Task.Run(() => InitializeRuleServiceWithRetryAsync(
                 "GEO",
                 () => _geoIpService.IsInitialized,
-                token => InitializeGeoIpServiceAsync(token, _config.Proxy, waitForProxyReadyWhenNeeded: true),
+                token => InitializeGeoIpServiceAsync(
+                    token,
+                    _config.Proxy,
+                    waitForProxyReadyWhenNeeded: true,
+                    downloadIfMissing: false),
                 _cts!.Token));
         }
 
@@ -1103,7 +1112,11 @@ public class TunProxyService : IProxyService
             _ = Task.Run(() => InitializeRuleServiceWithRetryAsync(
                 "GFW",
                 () => _gfwListService.IsInitialized,
-                token => InitializeGfwListServiceAsync(token, _config.Proxy, waitForProxyReadyWhenNeeded: true),
+                token => InitializeGfwListServiceAsync(
+                    token,
+                    _config.Proxy,
+                    waitForProxyReadyWhenNeeded: true,
+                    downloadIfMissing: false),
                 _cts!.Token));
         }
     }
@@ -1157,30 +1170,11 @@ public class TunProxyService : IProxyService
         (_config.Route.EnableGeo && _geoIpService?.IsInitialized != true) ||
         (_config.Route.EnableGfwList && _gfwListService?.IsInitialized != true);
 
-    private IReadOnlyList<string> GetMissingRequiredRuleResourceFiles()
-    {
-        var missing = new List<string>();
-        if (_config.Route.EnableGeo &&
-            _geoIpService?.DatabasePath is { } geoPath &&
-            !File.Exists(geoPath))
-        {
-            missing.Add($"GEO database: {geoPath}");
-        }
-
-        if (_config.Route.EnableGfwList &&
-            _gfwListService?.ListPath is { } gfwPath &&
-            !File.Exists(gfwPath))
-        {
-            missing.Add($"GFW list: {gfwPath}");
-        }
-
-        return missing;
-    }
-
     private async Task<bool> InitializeRuleServicesAsync(
         CancellationToken ct,
         ProxyConfig? proxyConfig,
-        bool waitForProxyReadyWhenNeeded)
+        bool waitForProxyReadyWhenNeeded,
+        bool downloadIfMissing)
     {
         var ready = true;
         if (_config.Route.EnableGeo && _geoIpService != null)
@@ -1188,7 +1182,7 @@ public class TunProxyService : IProxyService
             Interlocked.Increment(ref _downloadingCount);
             try
             {
-                ready &= await InitializeGeoIpServiceAsync(ct, proxyConfig, waitForProxyReadyWhenNeeded);
+                ready &= await InitializeGeoIpServiceAsync(ct, proxyConfig, waitForProxyReadyWhenNeeded, downloadIfMissing);
             }
             finally
             {
@@ -1201,7 +1195,7 @@ public class TunProxyService : IProxyService
             Interlocked.Increment(ref _downloadingCount);
             try
             {
-                ready &= await InitializeGfwListServiceAsync(ct, proxyConfig, waitForProxyReadyWhenNeeded);
+                ready &= await InitializeGfwListServiceAsync(ct, proxyConfig, waitForProxyReadyWhenNeeded, downloadIfMissing);
             }
             finally
             {
@@ -1215,27 +1209,29 @@ public class TunProxyService : IProxyService
     private async Task<bool> InitializeGeoIpServiceAsync(
         CancellationToken ct,
         ProxyConfig? proxyConfig,
-        bool waitForProxyReadyWhenNeeded)
+        bool waitForProxyReadyWhenNeeded,
+        bool downloadIfMissing)
     {
         if (ProxyHttpClientFactory.BuildProxyUri(proxyConfig) == null && waitForProxyReadyWhenNeeded)
         {
             await _proxyReady.Task;
         }
 
-        return await _geoIpService!.InitializeAsync(ct, proxyConfig);
+        return await _geoIpService!.InitializeAsync(ct, proxyConfig, downloadIfMissing);
     }
 
     private async Task<bool> InitializeGfwListServiceAsync(
         CancellationToken ct,
         ProxyConfig? proxyConfig,
-        bool waitForProxyReadyWhenNeeded)
+        bool waitForProxyReadyWhenNeeded,
+        bool downloadIfMissing)
     {
         if (ProxyHttpClientFactory.BuildProxyUri(proxyConfig) == null && waitForProxyReadyWhenNeeded)
         {
             await _proxyReady.Task;
         }
 
-        return await _gfwListService!.InitializeAsync(ct, proxyConfig);
+        return await _gfwListService!.InitializeAsync(ct, proxyConfig, downloadIfMissing);
     }
 
     private void StartMetricsLogger(CancellationToken ct)
@@ -1262,18 +1258,49 @@ public class TunProxyService : IProxyService
 
     private IPAddress? DeterminePreferredBindAddress()
     {
+        if (IPAddress.TryParse(_config.Proxy.Host, out var proxyAddress) &&
+            IPAddress.IsLoopback(proxyAddress))
+        {
+            return null;
+        }
+
         var probed = ProbeLocalIpForHost(_config.Proxy.Host, _config.Proxy.Port);
         if (probed != null && !IPAddress.IsLoopback(probed))
         {
             return probed;
         }
 
+        var originalGateway = _routeService?.GetOriginalDefaultGateway();
+        if (!string.IsNullOrWhiteSpace(originalGateway))
+        {
+            var gatewayAddress = FindLocalAddressForGateway(originalGateway);
+            if (gatewayAddress != null)
+            {
+                Log.Information(
+                    "[TUN ] Outbound bind address selected from gateway {Gateway}: {BindAddress}",
+                    originalGateway,
+                    gatewayAddress);
+                return gatewayAddress;
+            }
+        }
+
+        if (probed != null)
+        {
+            return null;
+        }
+
+        Log.Warning("[TUN ] Could not select a stable outbound bind address; proxy connections will use the OS route table.");
+        return null;
+    }
+
+    private static IPAddress? FindLocalAddressForGateway(string gateway)
+    {
         try
         {
-            foreach (var networkInterface in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
             {
-                if (networkInterface.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up ||
-                    networkInterface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback ||
+                if (networkInterface.OperationalStatus != OperationalStatus.Up ||
+                    networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
                     networkInterface.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
                     networkInterface.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1281,7 +1308,9 @@ public class TunProxyService : IProxyService
                 }
 
                 var properties = networkInterface.GetIPProperties();
-                if (!properties.GatewayAddresses.Any(static gateway => gateway.Address.AddressFamily == AddressFamily.InterNetwork))
+                if (!properties.GatewayAddresses.Any(address =>
+                        address.Address.AddressFamily == AddressFamily.InterNetwork &&
+                        address.Address.ToString().Equals(gateway, StringComparison.OrdinalIgnoreCase)))
                 {
                     continue;
                 }
@@ -1300,10 +1329,10 @@ public class TunProxyService : IProxyService
         }
         catch (Exception ex)
         {
-            Log.Warning("[TUN ] Failed to select outbound bind address: {Message}", ex.Message);
+            Log.Warning("[TUN ] Failed to select outbound bind address for gateway {Gateway}: {Message}", gateway, ex.Message);
         }
 
-        return probed;
+        return null;
     }
 
     private static IPAddress? ProbeLocalIpForHost(string host, int port)

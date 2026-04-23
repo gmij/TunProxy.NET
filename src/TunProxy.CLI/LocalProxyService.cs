@@ -43,8 +43,6 @@ public class LocalProxyService : IProxyService
         Metrics = _metrics.GetSnapshot()
     };
 
-    public IReadOnlyList<string> GetDirectIps() => [];
-
     public async Task RefreshRuleResourcesAsync(CancellationToken ct)
     {
         if (_config.Route.EnableGeo && _geoIpService != null && !_geoIpService.IsInitialized)

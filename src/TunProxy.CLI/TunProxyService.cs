@@ -83,13 +83,9 @@ public class TunProxyService : IProxyService
         Metrics = _metrics.GetSnapshot()
     };
 
-    public IReadOnlyList<string> GetDirectIps() =>
-        _ipCache?.GetDirectIpSnapshot() ?? [];
-
     public async Task<IReadOnlyList<DnsRouteRecord>> GetDnsRouteRecordsAsync(CancellationToken ct)
     {
         var snapshots = _dnsStore?.GetResolutionSnapshot() ?? [];
-        var directIps = new HashSet<string>(GetDirectIps(), StringComparer.OrdinalIgnoreCase);
         var records = new List<DnsRouteRecord>(snapshots.Count);
 
         foreach (var snapshot in snapshots)
@@ -105,11 +101,10 @@ public class TunProxyService : IProxyService
                 snapshot.Hostname,
                 decision.ShouldProxy ? "PROXY" : "DIRECT",
                 decision.Reason,
+                snapshot.SeenCount,
                 ProtocolInspector.IsPrivateIp(ipAddress),
-                directIps.Contains(snapshot.IpAddress),
                 snapshot.IsDnsCached,
-                snapshot.DnsLastActiveUtc ?? snapshot.LastSeenUtc,
-                snapshot.DnsExpiresUtc));
+                snapshot.DnsLastActiveUtc ?? snapshot.LastSeenUtc));
         }
 
         return records

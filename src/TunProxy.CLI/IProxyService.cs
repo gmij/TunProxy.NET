@@ -10,6 +10,5 @@ public interface IProxyService
     ServiceStatus GetStatus();
     Task StartAsync(CancellationToken ct);
     Task StopAsync();
-    IReadOnlyList<string> GetDirectIps();
     Task RefreshRuleResourcesAsync(CancellationToken ct);
 }

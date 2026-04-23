@@ -5,11 +5,10 @@ public sealed record DnsRouteRecord(
     string Hostname,
     string Route,
     string Reason,
+    long SeenCount,
     bool IsPrivateIp,
-    bool IsDirectBypass,
     bool IsDnsCached,
-    DateTime? LastActiveUtc,
-    DateTime? DnsExpiresUtc);
+    DateTime? LastActiveUtc);
 
 public sealed record DnsCacheRecord(
     string Hostname,

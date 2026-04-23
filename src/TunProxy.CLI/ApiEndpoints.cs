@@ -215,11 +215,6 @@ public static class ApiEndpoints
                 : Results.NotFound();
         });
 
-        app.MapGet("/api/direct-ips", (IProxyService svc) =>
-            Results.Json(
-                new List<string>(svc.GetDirectIps()),
-                AppJsonContext.Default.ListString));
-
         app.MapGet("/api/diagnostics/tun", (IProxyService svc) =>
         {
             if (svc is not TunProxyService tunService)

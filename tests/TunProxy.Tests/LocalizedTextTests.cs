@@ -38,4 +38,12 @@ public class LocalizedTextTests
         Assert.Equal("日志", catalog["Nav.Logs"]);
         Assert.Contains("Page.Status.Title", catalog.Keys);
     }
+
+    [Fact]
+    public void GetFrontendCatalog_ContainsDnsLastActive()
+    {
+        var catalog = LocalizedText.GetFrontendCatalog("en");
+
+        Assert.Equal("Last active", catalog["Page.Dns.LastActive"]);
+    }
 }

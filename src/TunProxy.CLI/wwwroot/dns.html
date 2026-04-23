@@ -6,6 +6,40 @@
   <title>TunProxy</title>
   <link rel="stylesheet" href="/bootstrap/bootstrap.min.css" />
   <link rel="icon" href="/favicon.png" />
+  <style>
+    #dns-table {
+      table-layout: fixed;
+      min-width: 980px;
+    }
+
+    #dns-table th,
+    #dns-table td {
+      vertical-align: middle;
+    }
+
+    .dns-sort-button {
+      align-items: center;
+      background: transparent;
+      border: 0;
+      color: inherit;
+      display: inline-flex;
+      font: inherit;
+      gap: 0.25rem;
+      padding: 0;
+      text-align: left;
+      width: 100%;
+    }
+
+    .dns-sort-button:hover,
+    .dns-sort-button:focus {
+      color: #0d6efd;
+    }
+
+    .sort-indicator {
+      color: #6c757d;
+      min-width: 1em;
+    }
+  </style>
 </head>
 <body data-page-title-key="Page.Dns.Title">
 <script src="/i18n.js"></script>
@@ -37,15 +71,24 @@
     </div>
 
     <div id="dns-table-wrap" class="table-responsive mb-4">
-      <table class="table table-sm table-hover">
+      <table class="table table-sm table-hover" id="dns-table">
+        <colgroup>
+          <col style="width:28%" />
+          <col style="width:16%" />
+          <col style="width:8%" />
+          <col style="width:14%" />
+          <col style="width:14%" />
+          <col style="width:12%" />
+          <col style="width:8%" />
+        </colgroup>
         <thead class="table-light">
           <tr>
-            <th data-i18n="Page.Dns.ResolvedDomain"></th>
-            <th data-i18n="Page.Dns.IpAddress"></th>
-            <th data-i18n="Page.Dns.Route"></th>
-            <th data-i18n="Page.Dns.Reason"></th>
-            <th>Last active</th>
-            <th>Expires</th>
+            <th><button type="button" class="dns-sort-button" data-sort-key="hostname"><span data-i18n="Page.Dns.ResolvedDomain"></span><span class="sort-indicator"></span></button></th>
+            <th><button type="button" class="dns-sort-button" data-sort-key="ipAddress"><span data-i18n="Page.Dns.IpAddress"></span><span class="sort-indicator"></span></button></th>
+            <th><button type="button" class="dns-sort-button" data-sort-key="seenCount"><span data-i18n="Page.Dns.SeenCount"></span><span class="sort-indicator"></span></button></th>
+            <th><button type="button" class="dns-sort-button" data-sort-key="route"><span data-i18n="Page.Dns.Route"></span><span class="sort-indicator"></span></button></th>
+            <th><button type="button" class="dns-sort-button" data-sort-key="reason"><span data-i18n="Page.Dns.Reason"></span><span class="sort-indicator"></span></button></th>
+            <th><button type="button" class="dns-sort-button" data-sort-key="lastActiveUtc"><span data-i18n="Page.Dns.LastActive"></span><span class="sort-indicator"></span></button></th>
             <th></th>
           </tr>
         </thead>
@@ -54,23 +97,15 @@
       <p id="dns-empty" class="text-muted" style="display:none" data-i18n="Page.Dns.Empty"></p>
     </div>
 
-    <hr class="my-4" />
-
-    <div class="d-flex align-items-center gap-2 mb-2">
-      <h5 class="mb-0" data-i18n="Page.Dns.DirectHeading"></h5>
-      <span class="badge bg-secondary" id="direct-count">0</span>
-    </div>
-    <p class="text-muted small mb-2" data-i18n="Page.Dns.DirectHint"></p>
-    <div id="direct-ips" class="d-flex flex-wrap gap-2 mb-3"></div>
-
     <p class="text-muted small mt-2" id="last-update"></p>
   </div>
 </div>
 
 <script>
 var dnsRecords = [];
-var latestDirectIps = [];
 var isTunMode = false;
+var sortKey = 'hostname';
+var sortDirection = 'asc';
 
 function escapeHtml(value) {
   return String(value == null ? '' : value)
@@ -148,10 +183,6 @@ function renderRouteBadges(record) {
     html += ' <span class="badge bg-light text-dark border">' + escapeHtml(window.TunProxyI18n.t('Page.Dns.PrivateIp')) + '</span>';
   }
 
-  if (record.isDirectBypass) {
-    html += ' <span class="badge bg-light text-dark border">' + escapeHtml(window.TunProxyI18n.t('Page.Dns.BypassRoute')) + '</span>';
-  }
-
   return html;
 }
 
@@ -182,6 +213,66 @@ function clearDnsCache(record) {
     .then(function () { return loadData(); });
 }
 
+function sortValue(record, key) {
+  if (key === 'seenCount') {
+    return Number(record.seenCount || 0);
+  }
+
+  if (key === 'lastActiveUtc') {
+    var time = new Date(record.lastActiveUtc || 0).getTime();
+    return Number.isNaN(time) ? 0 : time;
+  }
+
+  return String(record[key] || '').toLowerCase();
+}
+
+function compareRecords(left, right) {
+  var leftValue = sortValue(left, sortKey);
+  var rightValue = sortValue(right, sortKey);
+  var result = 0;
+
+  if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+    result = leftValue === rightValue ? 0 : (leftValue < rightValue ? -1 : 1);
+  } else {
+    result = String(leftValue).localeCompare(String(rightValue));
+  }
+
+  if (result === 0) {
+    result = String(left.hostname || '').localeCompare(String(right.hostname || '')) ||
+      String(left.ipAddress || '').localeCompare(String(right.ipAddress || ''));
+  }
+
+  return sortDirection === 'desc' ? -result : result;
+}
+
+function defaultSortDirection(key) {
+  return key === 'seenCount' || key === 'lastActiveUtc' ? 'desc' : 'asc';
+}
+
+function setSort(key) {
+  if (sortKey === key) {
+    sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortKey = key;
+    sortDirection = defaultSortDirection(key);
+  }
+
+  filterDns();
+}
+
+function updateSortIndicators() {
+  document.querySelectorAll('.dns-sort-button').forEach(function (button) {
+    var indicator = button.querySelector('.sort-indicator');
+    if (!indicator) {
+      return;
+    }
+
+    indicator.textContent = button.getAttribute('data-sort-key') === sortKey
+      ? (sortDirection === 'asc' ? '^' : 'v')
+      : '';
+  });
+}
+
 function filterDns() {
   var query = document.getElementById('search-input').value.toLowerCase();
   var tbody = document.getElementById('dns-tbody');
@@ -192,83 +283,41 @@ function filterDns() {
     entries = entries.filter(function (record) {
       return String(record.ipAddress || '').toLowerCase().includes(query) ||
         String(record.hostname || '').toLowerCase().includes(query) ||
+        String(record.seenCount || '').toLowerCase().includes(query) ||
         String(record.route || '').toLowerCase().includes(query) ||
         String(record.reason || '').toLowerCase().includes(query) ||
-        String(record.lastActiveUtc || '').toLowerCase().includes(query) ||
-        String(record.dnsExpiresUtc || '').toLowerCase().includes(query);
+        String(record.lastActiveUtc || '').toLowerCase().includes(query);
     });
   }
 
-  entries.sort(function (left, right) {
-    return String(left.hostname || '').localeCompare(String(right.hostname || '')) ||
-      String(left.route || '').localeCompare(String(right.route || '')) ||
-      String(left.reason || '').localeCompare(String(right.reason || '')) ||
-      String(left.ipAddress || '').localeCompare(String(right.ipAddress || ''));
-  });
+  entries.sort(compareRecords);
 
-  var groups = [];
   entries.forEach(function (record) {
-    var last = groups[groups.length - 1];
-    var hostname = String(record.hostname || '');
-    if (!last || last.hostname !== hostname) {
-      last = {
-        hostname: hostname,
-        records: []
-      };
-      groups.push(last);
-    }
-
-    last.records.push(record);
-  });
-
-  groups.forEach(function (group) {
-    group.records.forEach(function (record, index) {
-      var row = document.createElement('tr');
-      row.className = rowClass(record);
-      row.innerHTML =
-        (index === 0
-          ? '<td rowspan="' + group.records.length + '">' + escapeHtml(group.hostname) + '</td>'
+    var row = document.createElement('tr');
+    row.className = rowClass(record);
+    row.innerHTML =
+      '<td class="text-break">' + escapeHtml(record.hostname) + '</td>' +
+      '<td class="font-monospace text-nowrap">' + escapeHtml(record.ipAddress) + '</td>' +
+      '<td class="font-monospace text-nowrap">' + escapeHtml(record.seenCount || 0) + '</td>' +
+      '<td class="text-nowrap">' + renderRouteBadges(record) + '</td>' +
+      '<td class="font-monospace small text-break">' + escapeHtml(record.reason) + '</td>' +
+      '<td class="font-monospace small text-nowrap">' + escapeHtml(formatDateTime(record.lastActiveUtc)) + '</td>' +
+      '<td class="text-end">' +
+        (record.isDnsCached
+          ? '<button type="button" class="btn btn-sm btn-outline-danger dns-clear-button">Clear</button>'
           : '') +
-        '<td class="font-monospace text-nowrap">' + escapeHtml(record.ipAddress) + '</td>' +
-        '<td class="text-nowrap">' + renderRouteBadges(record) + '</td>' +
-        '<td class="font-monospace small">' + escapeHtml(record.reason) + '</td>' +
-        '<td class="font-monospace small text-nowrap">' + escapeHtml(formatDateTime(record.lastActiveUtc)) + '</td>' +
-        '<td class="font-monospace small text-nowrap">' + escapeHtml(formatDateTime(record.dnsExpiresUtc)) + '</td>' +
-        '<td class="text-end">' +
-          (record.isDnsCached
-            ? '<button type="button" class="btn btn-sm btn-outline-danger dns-clear-button">Clear</button>'
-            : '') +
-        '</td>';
-      var button = row.querySelector('.dns-clear-button');
-      if (button) {
-        button.addEventListener('click', function () {
-          clearDnsCache(record);
-        });
-      }
-      tbody.appendChild(row);
-    });
+      '</td>';
+    var button = row.querySelector('.dns-clear-button');
+    if (button) {
+      button.addEventListener('click', function () {
+        clearDnsCache(record);
+      });
+    }
+    tbody.appendChild(row);
   });
 
+  updateSortIndicators();
   document.getElementById('dns-empty').style.display = entries.length === 0 ? '' : 'none';
-}
-
-function renderDirectIps() {
-  var container = document.getElementById('direct-ips');
-  container.innerHTML = '';
-
-  latestDirectIps.slice(0, 200).forEach(function (ip) {
-    var badge = document.createElement('span');
-    badge.className = 'badge bg-light text-dark font-monospace';
-    badge.textContent = ip;
-    container.appendChild(badge);
-  });
-
-  if (latestDirectIps.length > 200) {
-    var more = document.createElement('span');
-    more.className = 'text-muted small';
-    more.textContent = window.TunProxyI18n.format('Page.Dns.MoreEntries', latestDirectIps.length - 200);
-    container.appendChild(more);
-  }
 }
 
 function renderPage() {
@@ -280,9 +329,7 @@ function renderPage() {
   }
 
   document.getElementById('dns-count').textContent = dnsRecords.length;
-  document.getElementById('direct-count').textContent = latestDirectIps.length;
   filterDns();
-  renderDirectIps();
   document.getElementById('last-update').textContent =
     window.TunProxyI18n.format('Shared.RefreshAt', 10, window.TunProxyI18n.timeString(new Date()));
 }
@@ -297,14 +344,12 @@ function loadData() {
         return;
       }
 
-      return Promise.all([
-        fetch('/api/dns-records').then(function (response) { return response.json(); }),
-        fetch('/api/direct-ips').then(function (response) { return response.json(); })
-      ]).then(function (payload) {
-        dnsRecords = Array.isArray(payload[0]) ? payload[0] : [];
-        latestDirectIps = Array.isArray(payload[1]) ? payload[1] : [];
-        renderPage();
-      });
+      return fetch('/api/dns-records')
+        .then(function (response) { return response.json(); })
+        .then(function (payload) {
+          dnsRecords = Array.isArray(payload) ? payload : [];
+          renderPage();
+        });
     });
 }
 
@@ -315,6 +360,11 @@ window.TunProxyI18n.initPage().then(function () {
   document.getElementById('clear-search-button').addEventListener('click', function () {
     document.getElementById('search-input').value = '';
     filterDns();
+  });
+  document.querySelectorAll('.dns-sort-button').forEach(function (button) {
+    button.addEventListener('click', function () {
+      setSort(button.getAttribute('data-sort-key'));
+    });
   });
 
   loadData();

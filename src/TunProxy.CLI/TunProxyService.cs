@@ -1500,7 +1500,7 @@ public class TunProxyService : IProxyService
 
     private static async Task EnsureWintunDllAsync(CancellationToken ct)
     {
-        var wintunPath = Path.Combine(AppContext.BaseDirectory, "wintun.dll");
+        var wintunPath = AppPaths.WintunDllPath;
         if (File.Exists(wintunPath))
         {
             return;

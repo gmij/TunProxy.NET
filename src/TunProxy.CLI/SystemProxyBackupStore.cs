@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Serilog;
 using TunProxy.Core.Configuration;
 
@@ -7,13 +6,13 @@ namespace TunProxy.CLI;
 internal sealed class SystemProxyBackupStore
 {
     private readonly AppConfig _config;
-    private readonly string _configPath;
+    private readonly AppConfigStore _configStore;
     private readonly object _sync = new();
 
     public SystemProxyBackupStore(AppConfig config, string? configPath = null)
     {
         _config = config;
-        _configPath = configPath ?? Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
+        _configStore = new AppConfigStore(configPath);
     }
 
     public SystemProxyBackupConfig? GetBackup()
@@ -72,16 +71,9 @@ internal sealed class SystemProxyBackupStore
 
     private AppConfig LoadLatestConfig()
     {
-        if (!File.Exists(_configPath))
-        {
-            return CloneCurrentConfig();
-        }
-
         try
         {
-            var json = File.ReadAllText(_configPath);
-            return JsonSerializer.Deserialize(json, AppJsonContext.Default.AppConfig)
-                   ?? CloneCurrentConfig();
+            return _configStore.LoadOrClone(_config);
         }
         catch (Exception ex)
         {
@@ -92,13 +84,7 @@ internal sealed class SystemProxyBackupStore
 
     private void Save(AppConfig config)
     {
-        var directory = Path.GetDirectoryName(_configPath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        File.WriteAllText(_configPath, JsonSerializer.Serialize(config, AppJsonContext.Default.AppConfig));
+        _configStore.Save(config);
     }
 
     private AppConfig CloneCurrentConfig()

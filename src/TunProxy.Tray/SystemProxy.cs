@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Win32;
+using TunProxy.Core;
 using TunProxy.Core.Configuration;
 
 namespace TunProxy.Tray;
@@ -33,7 +34,7 @@ internal sealed class SystemProxy
 
     public SystemProxy(string? appDir = null)
     {
-        _configPath = Path.Combine(appDir ?? AppContext.BaseDirectory, "tunproxy.json");
+        _configPath = Path.Combine(appDir ?? AppContext.BaseDirectory, TunProxyProduct.ConfigFileName);
     }
 
     public bool Set(

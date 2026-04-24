@@ -1,20 +1,18 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
-using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
+using TunProxy.Core;
 using TunProxy.Core.Configuration;
 
 namespace TunProxy.CLI;
 
 public class Program
 {
-    private const string SvcName = "TunProxyService";
-
     public static async Task Main(string[] args)
     {
         Log.Logger = new LoggerConfiguration()
@@ -22,7 +20,7 @@ public class Program
             .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
             .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
             .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-            .WriteTo.File(Path.Combine(AppContext.BaseDirectory, "logs", "tunproxy-.log"), rollingInterval: RollingInterval.Day)
+            .WriteTo.File(AppPaths.DefaultLogFilePath, rollingInterval: RollingInterval.Day)
             .WriteTo.Sink(MemoryLogSink.Instance)
             .CreateLogger();
 
@@ -112,7 +110,7 @@ public class Program
                 Log.Information("Configuring Windows service integration. UserInteractive={UserInteractive}", Environment.UserInteractive);
                 builder.Host.UseWindowsService(options =>
                 {
-                    options.ServiceName = SvcName;
+                    options.ServiceName = TunProxyProduct.ServiceName;
                 });
             }
 
@@ -121,9 +119,9 @@ public class Program
 
             builder.WebHost.ConfigureKestrel(options =>
             {
-                options.ListenLocalhost(50000);
+                options.ListenLocalhost(TunProxyProduct.ApiPort);
             });
-            Log.Information("Kestrel configured on http://localhost:50000.");
+            Log.Information("Kestrel configured on {ApiBaseUrl}.", TunProxyProduct.ApiBaseUrl);
 
             builder.Services.AddSingleton(config);
             builder.Services.ConfigureHttpJsonOptions(options =>
@@ -164,34 +162,7 @@ public class Program
 
     private static AppConfig LoadConfig(string[] args)
     {
-        var config = new AppConfig();
-        var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
-
-        if (File.Exists(configPath))
-        {
-            try
-            {
-                var json = File.ReadAllText(configPath);
-                var loaded = JsonSerializer.Deserialize(json, AppJsonContext.Default.AppConfig);
-                if (loaded != null)
-                {
-                    config = loaded;
-                }
-
-                Log.Information("Configuration loaded from {Path}", configPath);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Failed to read configuration file. Using defaults.");
-            }
-        }
-        else
-        {
-            Log.Information("Configuration file not found. Creating sample file at {Path}", configPath);
-            ApplyWindowsSystemProxyDefaults(config);
-            var json = JsonSerializer.Serialize(config, AppJsonContext.Default.AppConfig);
-            File.WriteAllText(configPath, json);
-        }
+        var config = new AppConfigStore().LoadOrCreate(ApplyWindowsSystemProxyDefaults);
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -307,23 +278,17 @@ public class Program
         var exePath = Environment.ProcessPath!;
         Log.Information("Installing Windows service from {Path}", exePath);
 
-        RunSc($"create {SvcName} binPath= \"{exePath}\" start= auto DisplayName= \"TunProxy Service\"");
-        RunSc($"description {SvcName} \"TUN-mode transparent proxy service for Windows\"");
-        RunSc($"sdset {SvcName} D:(A;;CCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;LCRPWPCR;;;IU)");
-        RunSc($"failure {SvcName} reset= 60 actions= restart/1000");
-        RunSc($"failureflag {SvcName} 1");
+        WindowsServiceManager.Install(exePath);
 
-        Log.Information("Service installation completed. Use sc start {Name} or the tray menu to start it.", SvcName);
+        Log.Information("Service installation completed. Use sc start {Name} or the tray menu to start it.", TunProxyProduct.ServiceName);
         SetTunEnabledInConfig(true);
-        RunSc($"start {SvcName}");
+        WindowsServiceManager.StartInstalledService();
     }
 
     private static void UninstallService()
     {
-        Log.Information("Uninstalling service {Name}...", SvcName);
-        RunSc($"stop {SvcName}");
-        Thread.Sleep(2000);
-        RunSc($"delete {SvcName}");
+        Log.Information("Uninstalling service {Name}...", TunProxyProduct.ServiceName);
+        WindowsServiceManager.Uninstall();
         Log.Information("Service uninstalled.");
 
         SetTunEnabledInConfig(false);
@@ -331,16 +296,15 @@ public class Program
 
     private static void SetTunEnabledInConfig(bool enabled)
     {
-        var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
-        if (!File.Exists(configPath))
+        var store = new AppConfigStore();
+        if (!File.Exists(store.ConfigPath))
         {
             return;
         }
 
         try
         {
-            var json = File.ReadAllText(configPath);
-            var config = JsonSerializer.Deserialize(json, AppJsonContext.Default.AppConfig) ?? new AppConfig();
+            var config = store.LoadOrCreate();
             config.Tun.Enabled = enabled;
             if (enabled)
             {
@@ -351,7 +315,7 @@ public class Program
                 config.LocalProxy.SystemProxyMode = SystemProxyModes.None;
             }
 
-            File.WriteAllText(configPath, JsonSerializer.Serialize(config, AppJsonContext.Default.AppConfig));
+            store.Save(config);
             Log.Information("Updated tun.enabled to {Enabled}", enabled);
         }
         catch (Exception ex)
@@ -367,17 +331,10 @@ public class Program
             return false;
         }
 
-        if (IsWindowsServiceInstalled())
+        if (WindowsServiceManager.IsInstalled())
         {
-            Log.Information("Windows service is already installed. Starting {Name}...", SvcName);
-            var (exitCode, output) = RunSc($"start {SvcName}");
-            if (exitCode == 0 || output.Contains("already", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            Log.Warning("Failed to start installed service. Output: {Output}", output.Trim());
-            return false;
+            Log.Information("Windows service is already installed. Starting {Name}...", TunProxyProduct.ServiceName);
+            return WindowsServiceManager.StartInstalledService();
         }
 
         if (IsAdministrator())
@@ -387,25 +344,6 @@ public class Program
         }
 
         return TryRunElevatedServiceInstaller();
-    }
-
-    private static bool IsWindowsServiceInstalled()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return false;
-        }
-
-        try
-        {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                $@"SYSTEM\CurrentControlSet\Services\{SvcName}");
-            return key != null;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private static bool TryRunElevatedServiceInstaller()
@@ -438,47 +376,13 @@ public class Program
 
         try
         {
-            new SystemProxyManager(backupStore: new SystemProxyBackupStore(config)).DisableForTun();
-            var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
-            File.WriteAllText(configPath, JsonSerializer.Serialize(config, AppJsonContext.Default.AppConfig));
+            SystemProxyManagerFactory.Create(config).DisableForTun();
+            new AppConfigStore().Save(config);
         }
         catch (Exception ex)
         {
             Log.Warning("Failed to disable system proxy for TUN mode: {Message}", ex.Message);
         }
-    }
-
-    private static (int ExitCode, string Output) RunSc(string args)
-    {
-        var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = "sc.exe",
-            Arguments = args,
-            CreateNoWindow = true,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        });
-        if (process == null)
-        {
-            return (1, "Failed to start sc.exe.");
-        }
-
-        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        if (!process.WaitForExit(10000))
-        {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-            }
-
-            return (1, output + "Command timed out.");
-        }
-
-        return (process.ExitCode, output);
     }
 }
 

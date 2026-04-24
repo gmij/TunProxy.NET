@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Runtime.Versioning;
 using System.Text;
 using Serilog;
+using TunProxy.Core;
 using TunProxy.Core.Configuration;
 using TunProxy.Core.Connections;
 using TunProxy.Core.Metrics;
@@ -166,31 +167,18 @@ public class LocalProxyService : IProxyService
         switch (_config.LocalProxy.SystemProxyMode)
         {
             case SystemProxyModes.Pac:
-                _systemProxy = CreateSystemProxyManager();
-                _systemProxy.SetPacUrl("http://127.0.0.1:50000/proxy.pac");
+                _systemProxy = SystemProxyManagerFactory.Create(_config);
+                _systemProxy.SetPacUrl($"{TunProxyProduct.ApiBaseUrl}/proxy.pac");
                 break;
             case SystemProxyModes.Global:
-                _systemProxy = CreateSystemProxyManager();
+                _systemProxy = SystemProxyManagerFactory.Create(_config);
                 _systemProxy.SetProxy($"127.0.0.1:{port}", _config.LocalProxy.BypassList);
                 break;
             default:
-                CreateSystemProxyManager().RestoreProxy();
+                SystemProxyManagerFactory.Create(_config).RestoreProxy();
                 Log.Information("System proxy changes are disabled by configuration.");
                 break;
         }
-    }
-
-    [SupportedOSPlatform("windows")]
-    private SystemProxyManager CreateSystemProxyManager()
-    {
-        var backupStore = new SystemProxyBackupStore(_config);
-        if (!Environment.UserInteractive &&
-            WindowsInteractiveUserRegistry.TryGetInternetSettingsPath(out var settingsPath))
-        {
-            return new SystemProxyManager(Microsoft.Win32.Registry.Users, settingsPath, backupStore);
-        }
-
-        return new SystemProxyManager(backupStore: backupStore);
     }
 
     private async Task HandleConnectAsync(NetworkStream clientStream, string requestLine, CancellationToken ct)

@@ -1,9 +1,9 @@
 using System.Diagnostics;
-using System.Runtime.Versioning;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Hosting;
 using Serilog;
+using TunProxy.Core;
 using TunProxy.Core.Configuration;
 using TunProxy.Core.Localization;
 
@@ -11,8 +11,6 @@ namespace TunProxy.CLI;
 
 public static class ApiEndpoints
 {
-    private const string SvcName = "TunProxyService";
-
     public static WebApplication MapApiEndpoints(this WebApplication app)
     {
         app.UseStaticFiles();
@@ -79,14 +77,10 @@ public static class ApiEndpoints
                 }
                 if (cfg.Tun.Enabled && OperatingSystem.IsWindows())
                 {
-                    CreateSystemProxyManager(cfg).DisableForTun();
+                    SystemProxyManagerFactory.Create(cfg).DisableForTun();
                 }
 
-                var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
-                await File.WriteAllTextAsync(
-                    configPath,
-                    JsonSerializer.Serialize(cfg, AppJsonContext.Default.AppConfig),
-                    ct);
+                await SaveConfigAsync(cfg, ct);
 
                 await svc.RefreshRuleResourcesAsync(ct);
 
@@ -252,7 +246,7 @@ public static class ApiEndpoints
             await SaveConfigAsync(cfg, ct);
 
             var pacUrl = $"http://127.0.0.1:{ctx.Connection.LocalPort}/proxy.pac";
-            var manager = CreateSystemProxyManager(cfg);
+            var manager = SystemProxyManagerFactory.Create(cfg);
             manager.SetPacUrl(pacUrl);
             return Results.Json(
                 new Dictionary<string, string> { ["url"] = pacUrl },
@@ -267,7 +261,7 @@ public static class ApiEndpoints
 
             if (OperatingSystem.IsWindows())
             {
-                var manager = CreateSystemProxyManager(cfg);
+                var manager = SystemProxyManagerFactory.Create(cfg);
                 manager.ClearPacUrl();
             }
 
@@ -280,7 +274,7 @@ public static class ApiEndpoints
             cfg.LocalProxy.SystemProxyMode = SystemProxyModes.Tun;
             if (OperatingSystem.IsWindows())
             {
-                CreateSystemProxyManager(cfg).DisableForTun();
+                SystemProxyManagerFactory.Create(cfg).DisableForTun();
             }
             await SaveConfigAsync(cfg, ct);
 
@@ -344,38 +338,19 @@ public static class ApiEndpoints
 
     private static async Task SaveConfigAsync(AppConfig cfg, CancellationToken ct)
     {
-        var configPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.json");
-        await File.WriteAllTextAsync(
-            configPath,
-            JsonSerializer.Serialize(cfg, AppJsonContext.Default.AppConfig),
-            ct);
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static SystemProxyManager CreateSystemProxyManager(AppConfig cfg)
-    {
-        var backupStore = new SystemProxyBackupStore(cfg);
-        if (OperatingSystem.IsWindows() &&
-            !Environment.UserInteractive &&
-            WindowsInteractiveUserRegistry.TryGetInternetSettingsPath(out var settingsPath))
-        {
-            return new SystemProxyManager(Microsoft.Win32.Registry.Users, settingsPath, backupStore);
-        }
-
-        return new SystemProxyManager(backupStore: backupStore);
+        await new AppConfigStore().SaveAsync(cfg, ct);
     }
 
     private static void RequestTrayRestart()
     {
-        var markerPath = Path.Combine(AppContext.BaseDirectory, "tunproxy.restart");
         try
         {
-            File.WriteAllText(markerPath, DateTimeOffset.UtcNow.ToString("O"));
-            Log.Information("[RESTART] Restart marker written for tray: {Path}", markerPath);
+            File.WriteAllText(AppPaths.RestartRequestPath, DateTimeOffset.UtcNow.ToString("O"));
+            Log.Information("[RESTART] Restart marker written for tray: {Path}", AppPaths.RestartRequestPath);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "[RESTART] Failed to write restart marker: {Path}", markerPath);
+            Log.Warning(ex, "[RESTART] Failed to write restart marker: {Path}", AppPaths.RestartRequestPath);
         }
     }
 
@@ -385,13 +360,13 @@ public static class ApiEndpoints
         {
             if (OperatingSystem.IsWindows())
             {
-                if (!IsWindowsServiceInstalled() && cfg.Tun.Enabled)
+                if (!WindowsServiceManager.IsInstalled() && cfg.Tun.Enabled)
                 {
                     return TryStartElevatedServiceInstallHelper();
                 }
 
-                var command = IsWindowsServiceInstalled()
-                    ? $"timeout /t 2 /nobreak > nul & sc stop {SvcName} & timeout /t 2 /nobreak > nul & sc start {SvcName}"
+                var command = WindowsServiceManager.IsInstalled()
+                    ? $"timeout /t 2 /nobreak > nul & sc stop {TunProxyProduct.ServiceName} & timeout /t 2 /nobreak > nul & sc start {TunProxyProduct.ServiceName}"
                     : $"timeout /t 2 /nobreak > nul & start \"\" \"{Environment.ProcessPath}\"";
                 return TryStartDetachedProcess("cmd.exe", "/c " + command);
             }
@@ -456,25 +431,6 @@ public static class ApiEndpoints
         catch (Exception ex)
         {
             Log.Warning(ex, "[RESTART] Failed to start helper process: {FileName} {Arguments}", fileName, arguments);
-            return false;
-        }
-    }
-
-    private static bool IsWindowsServiceInstalled()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return false;
-        }
-
-        try
-        {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                $@"SYSTEM\CurrentControlSet\Services\{SvcName}");
-            return key != null;
-        }
-        catch
-        {
             return false;
         }
     }

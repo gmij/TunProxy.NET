@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Runtime.InteropServices;
 using System.ServiceProcess;
 using System.ComponentModel;
+using TunProxy.Core;
 using TunProxy.Core.Configuration;
 using TunProxy.Core.Localization;
 using static TunProxy.Tray.NativeMethods;
@@ -28,9 +29,9 @@ internal enum ServiceControlAction
 internal sealed class TrayApp : IDisposable
 {
     private const string ClassName = "TunProxyTrayWnd";
-    private const string SvcName = "TunProxyService";
-    private const string ApiBase = "http://localhost:50000";
-    private const string RestartRequestFileName = "tunproxy.restart";
+    private const string SvcName = TunProxyProduct.ServiceName;
+    private const string ApiBase = TunProxyProduct.ApiBaseUrl;
+    private const string RestartRequestFileName = TunProxyProduct.RestartRequestFileName;
     private const uint TimerId = 1;
     private static readonly TimeSpan ServiceControlTimeout = TimeSpan.FromSeconds(20);
 

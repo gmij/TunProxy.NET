@@ -54,5 +54,7 @@ public sealed class RouteDiagnosticsSnapshot
     public bool? HasTunDefaultRoute { get; set; }
     public string? TunDefaultMetric { get; set; }
     public List<string> ProxyBypassRoutes { get; set; } = new();
+    public int DirectBypassRouteCount { get; set; }
+    public List<string> DirectBypassRoutes { get; set; } = new();
     public List<string> Issues { get; set; } = new();
 }

@@ -46,6 +46,22 @@ public sealed class LinuxRouteService : IRouteService
         return code == 0;
     }
 
+    public bool RemoveTrackedBypassRoute(string ip)
+    {
+        if (!_addedBypassRoutes.Remove(ip))
+        {
+            return false;
+        }
+
+        if (RemoveBypassRoute(ip))
+        {
+            return true;
+        }
+
+        _addedBypassRoutes.Add(ip);
+        return false;
+    }
+
     public bool AddDefaultRoute()
     {
         var (code, _) = Run("ip", $"route add default dev {_devName} metric 1");

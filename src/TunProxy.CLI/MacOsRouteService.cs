@@ -50,6 +50,22 @@ public sealed class MacOsRouteService : IRouteService
         return code == 0;
     }
 
+    public bool RemoveTrackedBypassRoute(string ip)
+    {
+        if (!_addedBypassRoutes.Remove(ip))
+        {
+            return false;
+        }
+
+        if (RemoveBypassRoute(ip))
+        {
+            return true;
+        }
+
+        _addedBypassRoutes.Add(ip);
+        return false;
+    }
+
     public bool AddDefaultRoute()
     {
         // 默认路由由 MacOsTunDevice.Configure 中的 `route add default -interface utunX` 设置

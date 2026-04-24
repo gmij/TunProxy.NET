@@ -207,6 +207,22 @@ public class WindowsRouteService : IRouteService
         return exitCode == 0;
     }
 
+    public bool RemoveTrackedBypassRoute(string ipAddress)
+    {
+        if (!_addedBypassRoutes.Remove(ipAddress))
+        {
+            return false;
+        }
+
+        if (RemoveBypassRoute(ipAddress))
+        {
+            return true;
+        }
+
+        _addedBypassRoutes.Add(ipAddress);
+        return false;
+    }
+
     public bool RemoveDefaultRoute()
     {
         var tunInterfaceName = GetTunInterfaceName();

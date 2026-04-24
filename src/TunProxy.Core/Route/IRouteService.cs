@@ -11,6 +11,9 @@ public interface IRouteService
     /// <summary>删除绕过路由</summary>
     bool RemoveBypassRoute(string ip);
 
+    /// <summary>删除由当前服务实例添加并跟踪的绕过路由</summary>
+    bool RemoveTrackedBypassRoute(string ip) => RemoveBypassRoute(ip);
+
     /// <summary>添加默认路由（全局流量走 TUN）</summary>
     bool AddDefaultRoute();
 

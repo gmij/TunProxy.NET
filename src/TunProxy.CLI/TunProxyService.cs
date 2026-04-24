@@ -40,7 +40,7 @@ public class TunProxyService : IProxyService
     private IPAddress? _outboundBindAddress;
     private int _packetWorkerCount;
     private readonly ConcurrentBag<string> _proxyBypassRoutes = new();
-    private readonly ConcurrentDictionary<string, Lazy<Task>> _directBypassRoutes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DirectBypassRouteManager _directBypassRoutes;
     private string? _lastTcpConnectFailure;
     private DateTime? _lastTcpConnectFailureUtc;
     private DateTime? _lastPacketReadUtc;
@@ -48,6 +48,7 @@ public class TunProxyService : IProxyService
 
     private const int PacketQueueCapacity = 4096;
     private const int MaxInitialPayloadBufferBytes = 64 * 1024;
+    private static readonly TimeSpan PendingRelayStateIdleTimeout = TimeSpan.FromSeconds(30);
 
     public TunProxyService(AppConfig config)
     {
@@ -58,6 +59,7 @@ public class TunProxyService : IProxyService
 
         _routeDecision = new RouteDecisionService(config, _geoIpService, _gfwListService);
         _routeService = RouteServiceFactory.Create(config.Tun);
+        _directBypassRoutes = new DirectBypassRouteManager(_routeService);
         _ipCache = new IpCacheManager(_routeService);
         _dnsStore = new DnsResolutionStore();
         _dnsProxy = new DnsProxyService(
@@ -136,7 +138,9 @@ public class TunProxyService : IProxyService
     {
         var route = new RouteDiagnosticsSnapshot
         {
-            ProxyBypassRoutes = _proxyBypassRoutes.Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+            ProxyBypassRoutes = _proxyBypassRoutes.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            DirectBypassRoutes = _directBypassRoutes.GetSnapshot(),
+            DirectBypassRouteCount = _directBypassRoutes.Count
         };
 
         try
@@ -340,6 +344,8 @@ public class TunProxyService : IProxyService
                 {
                     _connectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(2));
                     _directConnectionManager?.CleanupIdleConnections(TimeSpan.FromMinutes(2));
+                    CleanupPendingRelayStates(PendingRelayStateIdleTimeout);
+                    _directBypassRoutes.CleanupExpired();
                     _dnsStore?.CleanupExpired();
                 }
             }
@@ -347,6 +353,26 @@ public class TunProxyService : IProxyService
             {
             }
         }, ct);
+    }
+
+    private void CleanupPendingRelayStates(TimeSpan idleTimeout)
+    {
+        var now = DateTime.UtcNow;
+        foreach (var (connKey, state) in _relayStates)
+        {
+            if (state.IsProxyConnected || now - state.LastActivityUtc <= idleTimeout)
+            {
+                continue;
+            }
+
+            if (_relayStates.TryRemove(connKey, out var removed))
+            {
+                removed.Dispose();
+                Log.Debug("[CONN] removed pending relay state after {Seconds}s idle: {ConnKey}",
+                    idleTimeout.TotalSeconds,
+                    connKey);
+            }
+        }
     }
 
     private async Task PacketLoopAsync(ITunDevice device, CancellationToken ct)
@@ -411,6 +437,19 @@ public class TunProxyService : IProxyService
             if (packet.IsUDP)
             {
                 _metrics.IncrementNonTcpUdpPackets();
+                var udpDecision = await _routeDecision.DecideForTunAsync(null, packet.Header.DestinationAddress, ct);
+                if (!udpDecision.ShouldProxy)
+                {
+                    _metrics.IncrementDirectRoutedPackets();
+                    var routeIp = udpDecision.EvaluatedIp ?? packet.Header.DestinationAddress;
+                    await EnsureDirectBypassRouteAsync(routeIp.ToString(), routeIp, udpDecision, ct);
+                    Log.Debug("[UDP ] {DestIP}:{Port}  DIRECT  ({Reason}); first packet dropped for route refresh",
+                        packet.Header.DestinationAddress,
+                        packet.DestinationPort,
+                        udpDecision.Reason);
+                    return;
+                }
+
                 TunWriter.WriteIcmpPortUnreachable(device, packet);
                 return;
             }
@@ -454,6 +493,7 @@ public class TunProxyService : IProxyService
 
                 if (_relayStates.TryGetValue(connKey, out var existingState))
                 {
+                    existingState.MarkActivity();
                     TunWriter.WriteSynAck(device, packet, existingState.ServerIsn);
                     return;
                 }
@@ -482,11 +522,14 @@ public class TunProxyService : IProxyService
                 return;
             }
 
+            state.MarkActivity();
+
             if (tcpFlags.FIN || tcpFlags.RST)
             {
                 if (_relayStates.TryRemove(connKey, out _))
                 {
                     (state.ConnectionManager ?? connManager).RemoveConnectionByKey(connKey);
+                    state.Dispose();
                     if (state.IsProxyConnected)
                     {
                         _metrics.DecrementActiveConnections();
@@ -573,7 +616,8 @@ public class TunProxyService : IProxyService
                     {
                         _metrics.IncrementDirectRoutedPackets();
                         var routeIp = finalDecision.EvaluatedIp ?? packet.Header.DestinationAddress;
-                        await EnsureDirectBypassRouteAsync(routeIp.ToString(), routeIp, finalDecision);
+                        await EnsureDirectBypassRouteAsync(routeIp.ToString(), routeIp, finalDecision, ct);
+                        state.DirectBypassIp = routeIp.ToString();
                     }
 
                     var upstreamHost = shouldProxy
@@ -834,6 +878,7 @@ public class TunProxyService : IProxyService
                 payloadToSend = initialPayload;
             }
 
+            _directBypassRoutes.Touch(state.DirectBypassIp);
             await conn.SendAsync(payloadToSend, ct);
             _metrics.AddBytesSent(payloadToSend.Length);
 
@@ -891,6 +936,7 @@ public class TunProxyService : IProxyService
             }
 
             state.ExpectedClientSeq = incomingEnd;
+            _directBypassRoutes.Touch(state.DirectBypassIp);
             await conn.SendAsync(packet.Payload, ct);
             _metrics.AddBytesSent(packet.Payload.Length);
             TunWriter.WriteAck(device, packet, state.NextServerSeq, state.ExpectedClientSeq);
@@ -948,37 +994,21 @@ public class TunProxyService : IProxyService
         HandleConnectionFail(connKey, device, packet);
     }
 
-    private async Task EnsureDirectBypassRouteAsync(string destIP, IPAddress destinationAddress, RouteDecision decision)
+    private async Task EnsureDirectBypassRouteAsync(
+        string destIP,
+        IPAddress destinationAddress,
+        RouteDecision decision,
+        CancellationToken ct)
     {
-        if (_routeService == null || ShouldSkipDirectBypassRoute(destinationAddress))
+        if (_routeService == null ||
+            _proxyBypassRoutes.Contains(destIP, StringComparer.OrdinalIgnoreCase) ||
+            ShouldSkipDirectBypassRoute(destinationAddress))
         {
             return;
         }
 
-        var routeTask = _directBypassRoutes.GetOrAdd(
-            destIP,
-            static (ip, state) => new Lazy<Task>(
-                () => state.service.AddDirectBypassRouteAsync(ip, state.decision),
-                LazyThreadSafetyMode.ExecutionAndPublication),
-            (service: this, decision));
-
-        await routeTask.Value;
+        await _directBypassRoutes.EnsureRouteAsync(destIP, decision, ct);
     }
-
-    private Task AddDirectBypassRouteAsync(string destIP, RouteDecision decision) =>
-        Task.Run(() =>
-        {
-            var ok = _routeService?.AddBypassRoute(destIP) == true;
-            if (!ok)
-            {
-                _directBypassRoutes.TryRemove(destIP, out _);
-            }
-
-            Log.Information("[ROUTE] Direct bypass route {Status}: {IP} ({Reason})",
-                ok ? "ready" : "failed",
-                destIP,
-                decision.Reason);
-        });
 
     private bool ShouldSkipDirectBypassRoute(IPAddress destinationAddress)
     {
@@ -1012,6 +1042,7 @@ public class TunProxyService : IProxyService
         if (_relayStates.TryRemove(connKey, out var state))
         {
             (state.ConnectionManager ?? _connectionManager)?.RemoveConnectionByKey(connKey);
+            state.Dispose();
         }
 
         TunWriter.WriteRst(device, packet);
@@ -1053,6 +1084,8 @@ public class TunProxyService : IProxyService
                     break;
                 }
 
+                state.MarkActivity();
+                _directBypassRoutes.Touch(state.DirectBypassIp);
                 _metrics.AddBytesReceived(bytesRead);
 
                 const int Mss = 1460;
@@ -1079,9 +1112,10 @@ public class TunProxyService : IProxyService
                 TunWriter.WriteFinAck(device, state.SynPacket, state.NextServerSeq, state.ExpectedClientSeq);
             }
 
-            if (_relayStates.TryRemove(connKey, out _))
+            if (_relayStates.TryRemove(connKey, out var removed))
             {
                 connManager.RemoveConnectionByKey(connKey);
+                removed.Dispose();
                 _metrics.DecrementActiveConnections();
             }
         }
@@ -1452,9 +1486,10 @@ internal readonly record struct PreConnectPayloadDecision(
     public static PreConnectPayloadDecision Wait { get; } = new(false, [], false);
 }
 
-internal class TcpRelayState
+internal class TcpRelayState : IDisposable
 {
     private MemoryStream? _initialPayload;
+    private long _lastActivityTicks;
 
     public uint NextServerSeq;
     public uint ExpectedClientSeq;
@@ -1464,7 +1499,9 @@ internal class TcpRelayState
     public int ConnectStarted;
     public TcpConnectionManager? ConnectionManager;
     public readonly SemaphoreSlim SendLock = new(1, 1);
+    public string? DirectBypassIp;
     public int InitialPayloadLength => (int)(_initialPayload?.Length ?? 0);
+    public DateTime LastActivityUtc => new(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
 
     public TcpRelayState(IPPacket synPacket, uint serverIsn, uint clientIsn)
     {
@@ -1472,7 +1509,10 @@ internal class TcpRelayState
         ServerIsn = serverIsn;
         NextServerSeq = serverIsn + 1;
         ExpectedClientSeq = clientIsn + 1;
+        _lastActivityTicks = DateTime.UtcNow.Ticks;
     }
+
+    public void MarkActivity() => Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
 
     public byte[] AppendInitialPayload(byte[] payload)
     {
@@ -1494,5 +1534,10 @@ internal class TcpRelayState
     {
         _initialPayload?.Dispose();
         _initialPayload = null;
+    }
+
+    public void Dispose()
+    {
+        ClearInitialPayload();
     }
 }

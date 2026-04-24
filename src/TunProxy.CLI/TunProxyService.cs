@@ -70,7 +70,8 @@ public class TunProxyService : IProxyService
             config.Tun.DnsServer,
             config.Proxy.Username,
             config.Proxy.Password,
-            _routeDecision);
+            _routeDecision,
+            ScheduleDirectBypassRouteAsync);
     }
 
     public ServiceStatus GetStatus() => new()
@@ -437,12 +438,16 @@ public class TunProxyService : IProxyService
             if (packet.IsUDP)
             {
                 _metrics.IncrementNonTcpUdpPackets();
-                var udpDecision = await _routeDecision.DecideForTunAsync(null, packet.Header.DestinationAddress, ct);
-                if (!udpDecision.ShouldProxy)
+                var cachedHost = _dnsStore!.GetCachedHostname(packet.Header.DestinationAddress.ToString());
+                var udpDecision = await _routeDecision.DecideForTunAsync(
+                    cachedHost,
+                    packet.Header.DestinationAddress,
+                    ct);
+                if (!ShouldRejectUdpPacket(udpDecision))
                 {
                     _metrics.IncrementDirectRoutedPackets();
                     var routeIp = udpDecision.EvaluatedIp ?? packet.Header.DestinationAddress;
-                    await EnsureDirectBypassRouteAsync(routeIp.ToString(), routeIp, udpDecision, ct);
+                    _ = ScheduleDirectBypassRouteAsync(routeIp, udpDecision, ct);
                     Log.Debug("[UDP ] {DestIP}:{Port}  DIRECT  ({Reason}); first packet dropped for route refresh",
                         packet.Header.DestinationAddress,
                         packet.DestinationPort,
@@ -1008,6 +1013,46 @@ public class TunProxyService : IProxyService
         }
 
         await _directBypassRoutes.EnsureRouteAsync(destIP, decision, ct);
+    }
+
+    private Task ScheduleDirectBypassRouteAsync(
+        IPAddress destinationAddress,
+        RouteDecision decision,
+        CancellationToken ct) =>
+        Task.Run(async () =>
+        {
+            try
+            {
+                await EnsureDirectBypassRouteAsync(destinationAddress.ToString(), destinationAddress, decision, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "[ROUTE] Failed to schedule direct bypass route for {IP}", destinationAddress);
+            }
+        }, ct);
+
+    internal static bool ShouldRejectUdpPacket(RouteDecision decision)
+    {
+        if (!decision.ShouldProxy)
+        {
+            return false;
+        }
+
+        if (decision.Reason.Equals("GFW", StringComparison.OrdinalIgnoreCase) ||
+            decision.Reason.Equals("Global", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (decision.Reason.StartsWith("Geo:", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private bool ShouldSkipDirectBypassRoute(IPAddress destinationAddress)

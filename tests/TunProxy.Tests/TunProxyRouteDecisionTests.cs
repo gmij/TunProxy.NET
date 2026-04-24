@@ -206,4 +206,15 @@ public class TunProxyRouteDecisionTests
         Assert.Equal(0, resolveCalls);
     }
 
+    [Fact]
+    public void UdpDecision_RejectedOnlyWhenRouteIsKnownProxy()
+    {
+        Assert.True(TunProxyService.ShouldRejectUdpPacket(RouteDecision.Proxy("GFW", "blocked.example", null)));
+        Assert.True(TunProxyService.ShouldRejectUdpPacket(RouteDecision.Proxy("Global", null, IPAddress.Parse("8.8.8.8"))));
+        Assert.True(TunProxyService.ShouldRejectUdpPacket(RouteDecision.Proxy("Geo:US", null, IPAddress.Parse("8.8.8.8"))));
+        Assert.False(TunProxyService.ShouldRejectUdpPacket(RouteDecision.Proxy("GeoUnknown", null, IPAddress.Parse("203.0.113.1"))));
+        Assert.False(TunProxyService.ShouldRejectUdpPacket(RouteDecision.Proxy("Default", null, IPAddress.Parse("203.0.113.1"))));
+        Assert.False(TunProxyService.ShouldRejectUdpPacket(RouteDecision.Direct("Geo:CN", null, IPAddress.Parse("203.0.113.1"))));
+    }
+
 }

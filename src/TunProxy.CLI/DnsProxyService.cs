@@ -21,6 +21,7 @@ public class DnsProxyService
     private readonly string? _proxyPassword;
     private readonly ProxyConfig _proxyConfig;
     private readonly RouteDecisionService? _routeDecision;
+    private readonly Func<IPAddress, RouteDecision, CancellationToken, Task>? _onDirectRouteCandidate;
     private long _tcpQueries;
     private long _tcpSuccesses;
     private long _tcpFailures;
@@ -42,7 +43,8 @@ public class DnsProxyService
         string upstreamDns = "8.8.8.8",
         string? proxyUsername = null,
         string? proxyPassword = null,
-        RouteDecisionService? routeDecision = null)
+        RouteDecisionService? routeDecision = null,
+        Func<IPAddress, RouteDecision, CancellationToken, Task>? onDirectRouteCandidate = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
@@ -52,6 +54,7 @@ public class DnsProxyService
         _proxyUsername = proxyUsername;
         _proxyPassword = proxyPassword;
         _routeDecision = routeDecision;
+        _onDirectRouteCandidate = onDirectRouteCandidate;
         _proxyConfig = new ProxyConfig
         {
             Host = proxyHost,
@@ -84,6 +87,7 @@ public class DnsProxyService
                 _lastSuccessUtc = DateTime.UtcNow;
                 _lastError = null;
                 Log.Debug("[DNS ] Cache hit for {Domain}", domain);
+                await RecordResolvedAddressesAsync(cachedResponse, domain, ct);
                 TunWriter.WriteUdpResponse(device, requestPacket, cachedResponse);
                 return;
             }
@@ -111,31 +115,7 @@ public class DnsProxyService
                 if (dnsRespPacket != null)
                 {
                     _resolutionStore.StoreDnsResponseInCache(dnsRespPacket);
-
-                    var resolvedIps = new List<string>();
-                    foreach (var answer in dnsRespPacket.Answers)
-                    {
-                        if (answer.Type == 1 && answer.Data.Length == 4)
-                        {
-                            var ipAddress = new IPAddress(answer.Data);
-                            var ip = ipAddress.ToString();
-                            var decision = _routeDecision == null
-                                ? null
-                                : await _routeDecision.DecideForObservedAddressAsync(domain, ipAddress, ct);
-                            _resolutionStore.RecordObservedHostname(
-                                ip,
-                                domain,
-                                "DNS",
-                                decision == null ? "UNKNOWN" : decision.ShouldProxy ? "PROXY" : "DIRECT",
-                                decision?.Reason);
-                            resolvedIps.Add(ip);
-                        }
-                    }
-
-                    if (resolvedIps.Count > 0)
-                    {
-                        Log.Debug("[DNS ] {Domain} returned {IPs}", domain, string.Join(", ", resolvedIps));
-                    }
+                    await RecordResolvedAddressesAsync(dnsRespPacket, domain, ct);
                 }
             }
             catch
@@ -168,6 +148,50 @@ public class DnsProxyService
         LastSuccessUtc = _lastSuccessUtc,
         LastFailureUtc = _lastFailureUtc
     };
+
+    private async Task RecordResolvedAddressesAsync(byte[] dnsResponse, string domain, CancellationToken ct)
+    {
+        var dnsRespPacket = DnsPacket.Parse(dnsResponse);
+        if (dnsRespPacket != null)
+        {
+            await RecordResolvedAddressesAsync(dnsRespPacket, domain, ct);
+        }
+    }
+
+    private async Task RecordResolvedAddressesAsync(DnsPacket dnsRespPacket, string domain, CancellationToken ct)
+    {
+        var resolvedIps = new List<string>();
+        foreach (var answer in dnsRespPacket.Answers)
+        {
+            if (answer.Type != 1 || answer.Data.Length != 4)
+            {
+                continue;
+            }
+
+            var ipAddress = new IPAddress(answer.Data);
+            var ip = ipAddress.ToString();
+            var decision = _routeDecision == null
+                ? null
+                : await _routeDecision.DecideForObservedAddressAsync(domain, ipAddress, ct);
+            _resolutionStore.RecordObservedHostname(
+                ip,
+                domain,
+                "DNS",
+                decision == null ? "UNKNOWN" : decision.ShouldProxy ? "PROXY" : "DIRECT",
+                decision?.Reason);
+            if (decision is { ShouldProxy: false } && _onDirectRouteCandidate != null)
+            {
+                _ = _onDirectRouteCandidate(ipAddress, decision, ct);
+            }
+
+            resolvedIps.Add(ip);
+        }
+
+        if (resolvedIps.Count > 0)
+        {
+            Log.Debug("[DNS ] {Domain} returned {IPs}", domain, string.Join(", ", resolvedIps));
+        }
+    }
 
     internal Task<byte[]?> QueryDnsViaProxyAsync(string domain, string dnsServer, CancellationToken ct)
     {

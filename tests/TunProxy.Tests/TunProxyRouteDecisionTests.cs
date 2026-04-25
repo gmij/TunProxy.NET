@@ -217,4 +217,61 @@ public class TunProxyRouteDecisionTests
         Assert.False(TunPacketDecisions.ShouldRejectUdpPacket(RouteDecision.Direct("Geo:CN", null, IPAddress.Parse("203.0.113.1"))));
     }
 
+    // ── FakeIP routing correctness ───────────────────────────────────────────
+
+    [Fact]
+    public async Task FakeIp_GfwDomain_IsProxied_WhenDestinationIsNull()
+    {
+        // Simulates a TCP connection to a fake IP (null destinationIp) whose domain is in
+        // the GFW list.  The route decision must be PROXY regardless of geo lookup.
+        var config = new AppConfig { Route = { EnableGfwList = true, EnableGeo = true } };
+        var service = new RouteDecisionService(
+            config,
+            isInGfwList: domain => domain == "blocked.example",
+            getCountryCode: _ => "CN",
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("203.0.113.1")));
+
+        var decision = await service.DecideForTunAsync("blocked.example", (IPAddress?)null, CancellationToken.None);
+
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("GFW", decision.Reason);
+    }
+
+    [Fact]
+    public async Task FakeIp_DirectDomain_IsDirected_WhenDestinationIsNull()
+    {
+        // Simulates a TCP connection to a fake IP (null destinationIp) for a CN-direct domain.
+        // The route decision must be DIRECT via geo lookup on the resolved real IP.
+        var config = new AppConfig { Route = { EnableGeo = true } };
+        var service = new RouteDecisionService(
+            config,
+            getCountryCode: _ => "CN",
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("203.0.113.1")));
+
+        var decision = await service.DecideForTunAsync("cdn.example.cn", (IPAddress?)null, CancellationToken.None);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("Geo:CN", decision.Reason);
+    }
+
+    [Fact]
+    public async Task FakeIp_GlobalMode_StillProxiesAllDomains()
+    {
+        var config = new AppConfig { Route = { Mode = "global" } };
+        var service = new RouteDecisionService(config);
+
+        var decision = await service.DecideForTunAsync("any.example.com", (IPAddress?)null, CancellationToken.None);
+
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("Global", decision.Reason);
+    }
+
+    [Fact]
+    public void FakeIpPool_IsDefaultEnabled()
+    {
+        // FakeIpMode must default to true so new deployments get FakeIP without explicit config.
+        var config = new TunProxy.Core.Configuration.TunConfig();
+        Assert.True(config.FakeIpMode);
+    }
+
 }

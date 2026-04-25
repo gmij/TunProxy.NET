@@ -360,6 +360,15 @@ public class TunProxyService : IProxyService
             {
                 _metrics.IncrementNonTcpUdpPackets();
                 var udpDestIp = packet.Header.DestinationAddress;
+
+                // Fake IPs are virtual 198.18.0.0/16 addresses managed by the FakeIP pool.
+                // UDP to them cannot be forwarded to a real peer; reject so apps fall back to TCP.
+                if (_fakeIpPool != null && FakeIpPool.IsFakeIp(udpDestIp))
+                {
+                    TunWriter.WriteIcmpPortUnreachable(device, packet);
+                    return;
+                }
+
                 var cachedHost = GetCachedHostnameForIp(udpDestIp);
                 var udpDecision = await _routeDecision.DecideForTunAsync(cachedHost, udpDestIp, ct);
 
@@ -493,9 +502,17 @@ public class TunProxyService : IProxyService
                         initialPayload,
                         GetCachedHostnameForIp(packet.Header.DestinationAddress));
 
+                    // For fake-IP destinations the destination address is a virtual placeholder
+                    // from the 198.18.0.0/16 pool.  Pass null so that geo / private-IP checks
+                    // are based on the domain name (or the real IP resolved from it) rather
+                    // than the fake address, which has no geographic meaning.
+                    var effectiveDestIp = (_fakeIpPool != null && FakeIpPool.IsFakeIp(packet.Header.DestinationAddress))
+                        ? null
+                        : (IPAddress?)packet.Header.DestinationAddress;
+
                     var finalDecision = await _routeDecision.DecideForTunAsync(
                         target.DomainHint,
-                        packet.Header.DestinationAddress,
+                        effectiveDestIp,
                         ct);
                     if (target.HasDomainHint)
                     {

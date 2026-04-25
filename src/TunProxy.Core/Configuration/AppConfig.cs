@@ -63,7 +63,7 @@ public class TunConfig
     /// forwards them to the correct upstream host via the configured proxy.
     /// Requires <see cref="AutoAddDefaultRoute"/> = true (or a manual 198.18.0.0/16 → TUN route).
     /// </summary>
-    public bool FakeIpMode { get; set; }
+    public bool FakeIpMode { get; set; } = true;
 
     public void ApplyFrom(TunConfig other)
     {

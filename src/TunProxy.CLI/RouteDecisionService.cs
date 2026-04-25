@@ -42,7 +42,13 @@ public sealed class RouteDecisionService
     public Task<RouteDecision> DecideForDomainAsync(string host, CancellationToken ct) =>
         DecideAsync(host, destinationIp: null, resolveHost: true, ct);
 
-    public Task<RouteDecision> DecideForTunAsync(string? host, IPAddress destinationIp, CancellationToken ct) =>
+    /// <summary>
+    /// Makes a routing decision for a packet arriving from the TUN device.
+    /// Pass <c>null</c> for <paramref name="destinationIp"/> when the raw destination address
+    /// is not meaningful (e.g. a fake-IP pool address) so that routing relies on domain-based
+    /// checks and real IP resolution rather than the virtual address.
+    /// </summary>
+    public Task<RouteDecision> DecideForTunAsync(string? host, IPAddress? destinationIp, CancellationToken ct) =>
         DecideAsync(host, destinationIp, resolveHost: true, ct);
 
     public Task<RouteDecision> DecideForObservedAddressAsync(string? host, IPAddress destinationIp, CancellationToken ct) =>

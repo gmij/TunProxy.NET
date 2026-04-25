@@ -12,6 +12,46 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    name: Validate
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Restore
+      shell: pwsh
+      run: |
+        dotnet restore tests/TunProxy.Tests/TunProxy.Tests.csproj
+        dotnet restore src/TunProxy.Tray/TunProxy.Tray.csproj
+        dotnet restore src/TunProxy.Tray.macOS/TunProxy.Tray.macOS.csproj
+
+    - name: Build CLI
+      shell: pwsh
+      run: dotnet build src/TunProxy.CLI/TunProxy.CLI.csproj -v minimal --no-restore
+
+    - name: Build Windows Tray
+      shell: pwsh
+      run: dotnet build src/TunProxy.Tray/TunProxy.Tray.csproj -v minimal --no-restore
+
+    - name: Build macOS Tray
+      shell: pwsh
+      run: dotnet build src/TunProxy.Tray.macOS/TunProxy.Tray.macOS.csproj -v minimal --no-restore
+
+    - name: Test
+      shell: pwsh
+      run: dotnet test tests/TunProxy.Tests/TunProxy.Tests.csproj -v minimal --no-restore
+
+    - name: Whitespace check
+      shell: pwsh
+      run: git diff --check
 
   # ─────────────────────────────────────────────────────────────
   # Windows  win-x64   CLI (AOT) + Tray (AOT)

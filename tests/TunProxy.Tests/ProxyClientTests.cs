@@ -34,6 +34,19 @@ public class Socks5ClientTests
 
 public class HttpProxyClientTests
 {
+    [Theory]
+    [InlineData(ProxyType.Direct, 80, UpstreamConnectionMode.Direct)]
+    [InlineData(ProxyType.Socks5, 443, UpstreamConnectionMode.Socks5Tunnel)]
+    [InlineData(ProxyType.Http, 443, UpstreamConnectionMode.HttpTunnel)]
+    [InlineData(ProxyType.Http, 80, UpstreamConnectionMode.HttpForward)]
+    public void SelectMode_MapsProxyTypeAndDestinationPort(
+        ProxyType proxyType,
+        int destPort,
+        UpstreamConnectionMode expected)
+    {
+        Assert.Equal(expected, UpstreamTcpConnector.SelectMode(proxyType, destPort));
+    }
+
     [Fact]
     public void Constructor_ValidParameters_CreatesClient()
     {

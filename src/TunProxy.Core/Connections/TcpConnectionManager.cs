@@ -222,41 +222,26 @@ public class TcpConnection : IDisposable
                 try
                 {
                     _client?.Dispose();
-                    _client = new TcpClient();
-
-                    // 绑定到物理网卡 IP，防止连接通过 TUN 接口路由（导致环路）
-                    if (_bindAddress != null)
-                        _client.Client.Bind(new IPEndPoint(_bindAddress, 0));
-
-                    // 设置连接超时
-                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    cts.CancelAfter(_connectionTimeout);
-
-                    var targetHost = _proxyType == ProxyType.Direct ? destHost : _proxyHost;
-                    var targetPort = _proxyType == ProxyType.Direct ? destPort : _proxyPort;
-
-                    await _client.ConnectAsync(targetHost, targetPort, cts.Token);
+                    var mode = UpstreamTcpConnector.SelectMode(_proxyType, destPort);
+                    _client = await UpstreamTcpConnector.ConnectAsync(
+                        destHost,
+                        destPort,
+                        new UpstreamConnectionOptions(
+                            _proxyHost,
+                            _proxyPort,
+                            _username,
+                            _password,
+                            _connectionTimeout,
+                            _bindAddress),
+                        mode,
+                        ct);
                     _stream = _client.GetStream();
 
-                    // SOCKS5 握手
-                    if (_proxyType == ProxyType.Socks5)
+                    if (mode == UpstreamConnectionMode.HttpForward)
                     {
-                        await Socks5HandshakeAsync(destHost, destPort, cts.Token);
-                    }
-                    else if (_proxyType == ProxyType.Http)
-                    {
-                        if (destPort == 443)
-                        {
-                            await HttpConnectAsync(destHost, destPort, cts.Token);
-                        }
-                        else
-                        {
-                            // HTTP 代理 + port 80：直转发模式，不用 CONNECT
-                            // 第一个请求包需改写请求行加上完整 URL
-                            _isHttpPlainMode = true;
-                            _needsHttpRewrite = true;
-                            _destHost = destHost;
-                        }
+                        _isHttpPlainMode = true;
+                        _needsHttpRewrite = true;
+                        _destHost = destHost;
                     }
 
                     _connected = true;
@@ -295,126 +280,6 @@ public class TcpConnection : IDisposable
             // _disposed 已提前置 true，此处安全跳过 Release
             if (!_disposed)
                 _connectLock.Release();
-        }
-    }
-
-    /// <summary>
-    /// SOCKS5 握手
-    /// </summary>
-    private async Task Socks5HandshakeAsync(string destHost, int destPort, CancellationToken ct)
-    {
-        if (_stream == null) throw new InvalidOperationException("No stream");
-
-        // 1. 发送支持的认证方法
-        var handshake = new byte[] { 0x05, 0x02, 0x00, 0x02 };
-        await _stream.WriteAsync(handshake, ct);
-
-        var response = new byte[2];
-        await _stream.ReadExactlyAsync(response, ct);
-
-        if (response[0] != 0x05)
-            throw new InvalidOperationException("Not SOCKS5");
-
-        // 2. 认证（如果需要）
-        if (response[1] == 0x02 && !string.IsNullOrEmpty(_username))
-        {
-            var authRequest = new List<byte> { 0x01, (byte)_username.Length };
-            authRequest.AddRange(System.Text.Encoding.UTF8.GetBytes(_username));
-            authRequest.Add((byte)_password!.Length);
-            authRequest.AddRange(System.Text.Encoding.UTF8.GetBytes(_password));
-
-            await _stream.WriteAsync(authRequest.ToArray(), ct);
-
-            var authResponse = new byte[2];
-            await _stream.ReadExactlyAsync(authResponse, ct);
-
-            if (authResponse[1] != 0x00)
-                throw new InvalidOperationException("Authentication failed");
-        }
-        else if (response[1] != 0x00)
-        {
-            throw new InvalidOperationException("Unsupported auth method");
-        }
-
-        // 3. 发送连接请求
-        var connectRequest = new List<byte> { 0x05, 0x01, 0x00 };
-
-        if (IPAddress.TryParse(destHost, out var ip))
-        {
-            var bytes = ip.GetAddressBytes();
-            if (bytes.Length == 4)
-            {
-                connectRequest.Add(0x01); // IPv4
-                connectRequest.AddRange(bytes);
-            }
-            else
-            {
-                connectRequest.Add(0x04); // IPv6
-                connectRequest.AddRange(bytes);
-            }
-        }
-        else
-        {
-            connectRequest.Add(0x03); // 域名
-            connectRequest.Add((byte)destHost.Length);
-            connectRequest.AddRange(System.Text.Encoding.UTF8.GetBytes(destHost));
-        }
-
-        connectRequest.Add((byte)(destPort >> 8));
-        connectRequest.Add((byte)(destPort & 0xFF));
-
-        await _stream.WriteAsync(connectRequest.ToArray(), ct);
-
-        // 4. 读取响应
-        var connectResponse = new byte[256];
-        var bytesRead = await _stream.ReadAsync(connectResponse, ct);
-
-        if (bytesRead < 10 || connectResponse[1] != 0x00)
-            throw new InvalidOperationException($"SOCKS5 error: {connectResponse[1]}");
-    }
-
-    /// <summary>
-    /// HTTP CONNECT 方法
-    /// </summary>
-    private async Task HttpConnectAsync(string destHost, int destPort, CancellationToken ct)
-    {
-        if (_stream == null) throw new InvalidOperationException("No stream");
-
-        var request = $"CONNECT {destHost}:{destPort} HTTP/1.1\r\n";
-        request += $"Host: {destHost}:{destPort}\r\n";
-
-        if (!string.IsNullOrEmpty(_username) && !string.IsNullOrEmpty(_password))
-        {
-            var credentials = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{_username}:{_password}"));
-            request += $"Proxy-Authorization: Basic {credentials}\r\n";
-        }
-
-        request += "Proxy-Connection: Keep-Alive\r\n\r\n";
-
-        var requestBytes = System.Text.Encoding.UTF8.GetBytes(request);
-        await _stream.WriteAsync(requestBytes, ct);
-
-        // 读取响应
-        var responseBuffer = new byte[4096];
-        var responseBuilder = new System.Text.StringBuilder();
-
-        while (true)
-        {
-            var bytesRead = await _stream.ReadAsync(responseBuffer, ct);
-            if (bytesRead == 0)
-                throw new InvalidOperationException("Proxy connection closed");
-
-            responseBuilder.Append(System.Text.Encoding.UTF8.GetString(responseBuffer, 0, bytesRead));
-            var response = responseBuilder.ToString();
-
-            if (response.Contains("\r\n\r\n"))
-            {
-                var statusLine = response.Split('\r')[0];
-                if (!statusLine.Contains("200"))
-                    throw new InvalidOperationException($"HTTP Proxy error: {statusLine}");
-
-                break;
-            }
         }
     }
 

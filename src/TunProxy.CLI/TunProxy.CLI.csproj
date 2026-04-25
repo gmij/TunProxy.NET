@@ -27,6 +27,13 @@
     <InternalsVisibleTo Include="TunProxy.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Remove="wwwroot\**\*" />
+    <EmbeddedResource Include="wwwroot\**\*">
+      <LogicalName>wwwroot/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
   <!-- 配置文件 -->
   <ItemGroup>
     <None Update="tunproxy.json">

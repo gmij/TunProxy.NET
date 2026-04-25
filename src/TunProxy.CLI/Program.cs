@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Security.Principal;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -8,6 +9,7 @@ using Microsoft.Extensions.Hosting;
 using Serilog;
 using TunProxy.Core;
 using TunProxy.Core.Configuration;
+using TunProxy.Core.WindowsServices;
 
 namespace TunProxy.CLI;
 
@@ -124,6 +126,11 @@ public class Program
             Log.Information("Kestrel configured on {ApiBaseUrl}.", TunProxyProduct.ApiBaseUrl);
 
             builder.Services.AddSingleton(config);
+            builder.Services.AddSingleton<AppConfigStore>();
+            builder.Services.AddSingleton<ConfigWorkflowService>();
+            builder.Services.AddSingleton<RuleResourceService>();
+            builder.Services.AddSingleton(sp =>
+                new RestartCoordinator(sp.GetRequiredService<IHostApplicationLifetime>()));
             builder.Services.ConfigureHttpJsonOptions(options =>
                 options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
 
@@ -273,6 +280,7 @@ public class Program
         }
     }
 
+    [SupportedOSPlatform("windows")]
     private static void InstallService()
     {
         var exePath = Environment.ProcessPath!;
@@ -285,6 +293,7 @@ public class Program
         WindowsServiceManager.StartInstalledService();
     }
 
+    [SupportedOSPlatform("windows")]
     private static void UninstallService()
     {
         Log.Information("Uninstalling service {Name}...", TunProxyProduct.ServiceName);
@@ -324,6 +333,7 @@ public class Program
         }
     }
 
+    [SupportedOSPlatform("windows")]
     private static bool EnsureTunWindowsService()
     {
         if (!OperatingSystem.IsWindows())

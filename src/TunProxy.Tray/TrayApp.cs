@@ -7,6 +7,7 @@ using System.ComponentModel;
 using TunProxy.Core;
 using TunProxy.Core.Configuration;
 using TunProxy.Core.Localization;
+using TunProxy.Core.WindowsServices;
 using static TunProxy.Tray.NativeMethods;
 
 namespace TunProxy.Tray;
@@ -18,12 +19,6 @@ internal enum ServiceState
     Running,
     Error,
     Downloading
-}
-
-internal enum ServiceControlAction
-{
-    Start,
-    Stop
 }
 
 internal sealed class TrayApp : IDisposable
@@ -318,24 +313,13 @@ internal sealed class TrayApp : IDisposable
             }
         }
 
-        if (newState == ServiceState.Running)
-        {
-            if (lastDto?.Mode != "tun")
-            {
-                TrySetSystemProxy(appConfig);
-            }
-            else
-            {
-                _sysProxy.DisableForTun();
-            }
-        }
-        else if (newState != ServiceState.Running && _currentState == ServiceState.Running)
-        {
-            if (_sysProxy.IsApplied)
-            {
-                _sysProxy.Restore();
-            }
-        }
+        ApplySystemProxyAction(TraySystemProxyPolicy.Resolve(
+            newState,
+            _currentState,
+            lastDto?.Mode,
+            appConfig,
+            _sysProxy.IsApplied,
+            ApiBase));
 
         if (newState != _currentState || statusText != _statusText)
         {
@@ -364,18 +348,16 @@ internal sealed class TrayApp : IDisposable
     {
         try
         {
-            if (!File.Exists(RestartRequestPath))
+            var serviceInstalled = IsServiceInstalled();
+            var serviceStatus = WindowsServiceManager.TryGetStatus(out var status, SvcName)
+                ? status
+                : (ServiceControllerStatus?)null;
+            if (!TrayRestartRequestPolicy.ShouldConsumeRestartRequest(
+                    File.Exists(RestartRequestPath),
+                    serviceInstalled,
+                    serviceStatus))
             {
                 return false;
-            }
-
-            if (IsServiceInstalled())
-            {
-                using var controller = new ServiceController(SvcName);
-                if (controller.Status != ServiceControllerStatus.Stopped)
-                {
-                    return false;
-                }
             }
 
             File.Delete(RestartRequestPath);
@@ -408,21 +390,16 @@ internal sealed class TrayApp : IDisposable
         _startEnabled = state is ServiceState.Stopped or ServiceState.Unknown;
         _stopEnabled = state is ServiceState.Running or ServiceState.Downloading or ServiceState.Error;
 
-        if (TryGetInstalledServiceStatus(out var serviceStatus))
+        if (WindowsServiceManager.TryGetStatus(out var serviceStatus, SvcName))
         {
-            _startEnabled = serviceStatus == ServiceControllerStatus.Stopped;
-            _stopEnabled = serviceStatus
-                is ServiceControllerStatus.Running
-                or ServiceControllerStatus.StartPending
-                or ServiceControllerStatus.Paused
-                or ServiceControllerStatus.PausePending
-                or ServiceControllerStatus.ContinuePending;
+            _startEnabled = WindowsServiceManager.IsStartEnabled(serviceStatus);
+            _stopEnabled = WindowsServiceManager.IsStopEnabled(serviceStatus);
         }
     }
 
     private static (ServiceState State, string StatusText) ResolveUnavailableStatus()
     {
-        if (!TryGetInstalledServiceStatus(out var serviceStatus))
+        if (!WindowsServiceManager.TryGetStatus(out var serviceStatus, SvcName))
         {
             return (ServiceState.Stopped, Text("Tray.Status.ServiceNotStarted"));
         }
@@ -432,40 +409,7 @@ internal sealed class TrayApp : IDisposable
             : (ServiceState.Error, Text("Tray.Status.ServiceNoResponse"));
     }
 
-    private static bool IsServiceInstalled()
-    {
-        try
-        {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                $@"SYSTEM\CurrentControlSet\Services\{SvcName}");
-            return key != null;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static bool TryGetInstalledServiceStatus(out ServiceControllerStatus status)
-    {
-        status = default;
-
-        if (!IsServiceInstalled())
-        {
-            return false;
-        }
-
-        try
-        {
-            using var controller = new ServiceController(SvcName);
-            status = controller.Status;
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    private static bool IsServiceInstalled() => WindowsServiceManager.IsInstalled(SvcName);
 
     private void UpdateInstallState()
     {
@@ -521,28 +465,20 @@ internal sealed class TrayApp : IDisposable
         }
     }
 
-    private void TrySetSystemProxy(AppConfigDto? dto)
+    private void ApplySystemProxyAction(TraySystemProxyAction action)
     {
-        if (dto == null)
+        switch (action.Kind)
         {
-            return;
-        }
-
-        var systemProxyMode = string.IsNullOrWhiteSpace(dto.LocalProxy.SystemProxyMode)
-            ? dto.LocalProxy.SetSystemProxy ? SystemProxyModes.Pac : SystemProxyModes.None
-            : SystemProxyModes.Normalize(dto.LocalProxy.SystemProxyMode);
-
-        switch (systemProxyMode)
-        {
-            case SystemProxyModes.Pac:
-                _sysProxy.SetPacUrl($"{ApiBase}/proxy.pac");
+            case TraySystemProxyActionKind.SetPac:
+                _sysProxy.SetPacUrl(action.PacUrl!);
                 break;
-            case SystemProxyModes.Global:
-                _sysProxy.Set(
-                    $"127.0.0.1:{dto.LocalProxy.ListenPort}",
-                    dto.LocalProxy.BypassList);
+            case TraySystemProxyActionKind.SetGlobal:
+                _sysProxy.Set(action.ProxyAddress!, action.BypassList!);
                 break;
-            default:
+            case TraySystemProxyActionKind.DisableForTun:
+                _sysProxy.DisableForTun();
+                break;
+            case TraySystemProxyActionKind.Restore:
                 _sysProxy.Restore();
                 break;
         }
@@ -554,7 +490,7 @@ internal sealed class TrayApp : IDisposable
         {
             if (IsServiceInstalled())
             {
-                ControlInstalledService(ServiceControlAction.Start);
+                ControlInstalledService(WindowsServiceControlAction.Start);
                 return;
             }
 
@@ -597,7 +533,7 @@ internal sealed class TrayApp : IDisposable
         {
             if (IsServiceInstalled())
             {
-                ControlInstalledService(ServiceControlAction.Stop);
+                ControlInstalledService(WindowsServiceControlAction.Stop);
                 return;
             }
 
@@ -633,95 +569,13 @@ internal sealed class TrayApp : IDisposable
         }
     }
 
-    private static void ControlInstalledService(ServiceControlAction action)
+    private static void ControlInstalledService(WindowsServiceControlAction action)
     {
-        try
-        {
-            ControlInstalledServiceDirectly(action);
-        }
-        catch (InvalidOperationException ex) when (IsAccessDenied(ex))
-        {
-            RunElevatedServiceControl(action);
-        }
-        catch (Win32Exception ex) when (IsAccessDenied(ex))
-        {
-            RunElevatedServiceControl(action);
-        }
-    }
-
-    private static void ControlInstalledServiceDirectly(ServiceControlAction action)
-    {
-        using var controller = new ServiceController(SvcName);
-        controller.Refresh();
-
-        if (action == ServiceControlAction.Start)
-        {
-            if (controller.Status == ServiceControllerStatus.Running)
-            {
-                return;
-            }
-
-            if (controller.Status == ServiceControllerStatus.StartPending)
-            {
-                controller.WaitForStatus(ServiceControllerStatus.Running, ServiceControlTimeout);
-                return;
-            }
-
-            if (controller.Status == ServiceControllerStatus.StopPending)
-            {
-                controller.WaitForStatus(ServiceControllerStatus.Stopped, ServiceControlTimeout);
-                controller.Refresh();
-            }
-
-            if (controller.Status != ServiceControllerStatus.Stopped)
-            {
-                throw new InvalidOperationException($"Cannot start {SvcName} while it is {controller.Status}.");
-            }
-
-            controller.Start();
-            controller.WaitForStatus(ServiceControllerStatus.Running, ServiceControlTimeout);
-            return;
-        }
-
-        if (controller.Status == ServiceControllerStatus.Stopped)
-        {
-            return;
-        }
-
-        if (controller.Status == ServiceControllerStatus.StopPending)
-        {
-            controller.WaitForStatus(ServiceControllerStatus.Stopped, ServiceControlTimeout);
-            return;
-        }
-
-        if (!controller.CanStop)
-        {
-            throw new InvalidOperationException($"Cannot stop {SvcName} while it is {controller.Status}.");
-        }
-
-        controller.Stop();
-        controller.WaitForStatus(ServiceControllerStatus.Stopped, ServiceControlTimeout);
-    }
-
-    private static bool IsAccessDenied(InvalidOperationException ex) =>
-        ex.InnerException is Win32Exception { NativeErrorCode: 5 };
-
-    private static bool IsAccessDenied(Win32Exception ex) =>
-        ex.NativeErrorCode == 5;
-
-    private static void RunElevatedServiceControl(ServiceControlAction action)
-    {
-        var verb = action == ServiceControlAction.Start ? "start" : "stop";
-        var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = "sc.exe",
-            Arguments = $"{verb} {SvcName}",
-            UseShellExecute = true,
-            Verb = "runas",
-            WindowStyle = ProcessWindowStyle.Hidden
-        });
-
-        process?.WaitForExit((int)ServiceControlTimeout.TotalMilliseconds);
+        WindowsServiceManager.ControlInstalledService(
+            action,
+            SvcName,
+            ServiceControlTimeout,
+            elevateOnAccessDenied: true);
     }
 
     private void InstallService()
@@ -779,8 +633,11 @@ internal sealed class TrayApp : IDisposable
 
             try
             {
-                using var controller = new ServiceController(SvcName);
-                controller.Start();
+                WindowsServiceManager.ControlInstalledService(
+                    WindowsServiceControlAction.Start,
+                    SvcName,
+                    ServiceControlTimeout,
+                    elevateOnAccessDenied: true);
             }
             catch (InvalidOperationException)
             {

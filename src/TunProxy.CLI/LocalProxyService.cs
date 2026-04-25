@@ -17,6 +17,7 @@ public class LocalProxyService : IProxyService
     private readonly ProxyMetrics _metrics = new();
     private readonly GeoIpService? _geoIpService;
     private readonly GfwListService? _gfwListService;
+    private readonly RuleResourceInitializer _ruleResources;
     private readonly RouteDecisionService _routeDecision;
     private SystemProxyManager? _systemProxy;
     private TcpListener? _listener;
@@ -29,6 +30,12 @@ public class LocalProxyService : IProxyService
         _config = config;
         _geoIpService = new GeoIpService(config.Route.GeoIpDbPath);
         _gfwListService = new GfwListService(config.Route.GfwListUrl, config.Route.GfwListPath);
+        _ruleResources = new RuleResourceInitializer(
+            config,
+            _geoIpService,
+            _gfwListService,
+            () => Interlocked.Increment(ref _downloadingCount),
+            () => Interlocked.Decrement(ref _downloadingCount));
         _routeDecision = new RouteDecisionService(config, _geoIpService, _gfwListService);
     }
 
@@ -46,15 +53,16 @@ public class LocalProxyService : IProxyService
 
     public async Task RefreshRuleResourcesAsync(CancellationToken ct)
     {
-        if (_config.Route.EnableGeo && _geoIpService != null && !_geoIpService.IsInitialized)
+        if (!_ruleResources.NeedsInitialization())
         {
-            await _geoIpService.InitializeAsync(ct, _config.Proxy, downloadIfMissing: false);
+            return;
         }
 
-        if (_config.Route.EnableGfwList && _gfwListService != null && !_gfwListService.IsInitialized)
-        {
-            await _gfwListService.InitializeAsync(ct, _config.Proxy, downloadIfMissing: false);
-        }
+        await _ruleResources.InitializeEnabledAsync(
+            ct,
+            _config.Proxy,
+            waitForProxyReadyWhenNeeded: false,
+            downloadIfMissing: false);
     }
 
     public async Task StartAsync(CancellationToken ct)
@@ -300,148 +308,54 @@ public class LocalProxyService : IProxyService
 
     private async Task<TcpClient> ConnectViaUpstreamProxy(string destHost, int destPort, CancellationToken ct)
     {
-        var client = new TcpClient();
-        try
-        {
-            await client.ConnectAsync(_config.Proxy.Host, _config.Proxy.Port, ct);
-            var stream = client.GetStream();
+        var proxyType = _config.Proxy.GetProxyType();
+        var mode = proxyType == ProxyType.Socks5
+            ? UpstreamConnectionMode.Socks5Tunnel
+            : UpstreamConnectionMode.HttpTunnel;
 
-            if (_config.Proxy.GetProxyType() == ProxyType.Socks5)
-                await Socks5HandshakeAsync(stream, destHost, destPort, ct);
-            else
-                await HttpConnectHandshakeAsync(stream, destHost, destPort, ct);
-
-            _metrics.IncrementActiveConnections();
-            return client;
-        }
-        catch
-        {
-            client.Dispose();
-            throw;
-        }
+        var client = await UpstreamTcpConnector.ConnectAsync(
+            destHost,
+            destPort,
+            CreateUpstreamOptions(),
+            mode,
+            ct);
+        _metrics.IncrementActiveConnections();
+        return client;
     }
 
     private async Task<TcpClient> ConnectToUpstreamForHttp(string destHost, int destPort, CancellationToken ct)
     {
-        var client = new TcpClient();
-        try
-        {
-            await client.ConnectAsync(_config.Proxy.Host, _config.Proxy.Port, ct);
-            if (_config.Proxy.GetProxyType() == ProxyType.Socks5)
-            {
-                var stream = client.GetStream();
-                await Socks5HandshakeAsync(stream, destHost, destPort, ct);
-            }
+        var proxyType = _config.Proxy.GetProxyType();
+        var mode = proxyType == ProxyType.Socks5
+            ? UpstreamConnectionMode.Socks5Tunnel
+            : UpstreamConnectionMode.HttpForward;
 
-            _metrics.IncrementActiveConnections();
-            return client;
-        }
-        catch
-        {
-            client.Dispose();
-            throw;
-        }
+        var client = await UpstreamTcpConnector.ConnectAsync(
+            destHost,
+            destPort,
+            CreateUpstreamOptions(),
+            mode,
+            ct);
+        _metrics.IncrementActiveConnections();
+        return client;
     }
 
-    private static async Task<TcpClient> ConnectDirect(string host, int port, CancellationToken ct)
+    private async Task<TcpClient> ConnectDirect(string host, int port, CancellationToken ct)
     {
-        var client = new TcpClient();
-        try
-        {
-            await client.ConnectAsync(host, port, ct);
-            return client;
-        }
-        catch
-        {
-            client.Dispose();
-            throw;
-        }
+        return await UpstreamTcpConnector.ConnectAsync(
+            host,
+            port,
+            CreateUpstreamOptions(),
+            UpstreamConnectionMode.Direct,
+            ct);
     }
 
-    private async Task Socks5HandshakeAsync(NetworkStream stream, string destHost, int destPort, CancellationToken ct)
-    {
-        bool hasAuth = !string.IsNullOrEmpty(_config.Proxy.Username);
-
-        byte[] greeting = hasAuth ? [0x05, 0x02, 0x00, 0x02] : [0x05, 0x01, 0x00];
-        await stream.WriteAsync(greeting, ct);
-
-        var buf = new byte[512];
-        int n = await stream.ReadAsync(buf.AsMemory(0, 2), ct);
-        if (n < 2 || buf[0] != 0x05)
-            throw new Exception("SOCKS5 handshake failed");
-
-        if (buf[1] == 0x02 && hasAuth)
-        {
-            var username = Encoding.ASCII.GetBytes(_config.Proxy.Username!);
-            var password = Encoding.ASCII.GetBytes(_config.Proxy.Password ?? "");
-            var auth = new byte[3 + username.Length + password.Length];
-            auth[0] = 0x01;
-            auth[1] = (byte)username.Length;
-            Buffer.BlockCopy(username, 0, auth, 2, username.Length);
-            auth[2 + username.Length] = (byte)password.Length;
-            Buffer.BlockCopy(password, 0, auth, 3 + username.Length, password.Length);
-            await stream.WriteAsync(auth, ct);
-
-            n = await stream.ReadAsync(buf.AsMemory(0, 2), ct);
-            if (n < 2 || buf[1] != 0x00)
-                throw new Exception("SOCKS5 authentication failed");
-        }
-
-        var hostBytes = Encoding.ASCII.GetBytes(destHost);
-        var request = new byte[7 + hostBytes.Length];
-        request[0] = 0x05;
-        request[1] = 0x01;
-        request[2] = 0x00;
-        request[3] = 0x03;
-        request[4] = (byte)hostBytes.Length;
-        Buffer.BlockCopy(hostBytes, 0, request, 5, hostBytes.Length);
-        request[5 + hostBytes.Length] = (byte)(destPort >> 8);
-        request[6 + hostBytes.Length] = (byte)(destPort & 0xFF);
-        await stream.WriteAsync(request, ct);
-
-        n = await stream.ReadAsync(buf.AsMemory(0, 10), ct);
-        if (n < 4 || buf[1] != 0x00)
-            throw new Exception($"SOCKS5 CONNECT rejected: 0x{buf[1]:X2}");
-    }
-
-    private async Task HttpConnectHandshakeAsync(NetworkStream stream, string destHost, int destPort, CancellationToken ct)
-    {
-        var sb = new StringBuilder();
-        sb.Append($"CONNECT {destHost}:{destPort} HTTP/1.1\r\n");
-        sb.Append($"Host: {destHost}:{destPort}\r\n");
-
-        if (!string.IsNullOrEmpty(_config.Proxy.Username))
-        {
-            var credentials = Convert.ToBase64String(
-                Encoding.ASCII.GetBytes($"{_config.Proxy.Username}:{_config.Proxy.Password ?? ""}"));
-            sb.Append($"Proxy-Authorization: Basic {credentials}\r\n");
-        }
-
-        sb.Append("\r\n");
-        var requestBytes = Encoding.ASCII.GetBytes(sb.ToString());
-        await stream.WriteAsync(requestBytes, ct);
-
-        var buf = new byte[1024];
-        int totalRead = 0;
-        while (totalRead < buf.Length)
-        {
-            int n = await stream.ReadAsync(buf.AsMemory(totalRead, buf.Length - totalRead), ct);
-            if (n == 0)
-                throw new Exception("HTTP CONNECT: proxy closed the connection");
-            totalRead += n;
-
-            if (FindHeaderEnd(buf, totalRead) >= 0)
-                break;
-        }
-
-        var response = Encoding.ASCII.GetString(buf, 0, totalRead);
-        if (!response.StartsWith("HTTP/1.1 200", StringComparison.OrdinalIgnoreCase) &&
-            !response.StartsWith("HTTP/1.0 200", StringComparison.OrdinalIgnoreCase))
-        {
-            var statusLine = response.Split('\r')[0];
-            throw new Exception($"HTTP CONNECT rejected: {statusLine}");
-        }
-    }
+    private UpstreamConnectionOptions CreateUpstreamOptions() => new(
+        _config.Proxy.Host,
+        _config.Proxy.Port,
+        _config.Proxy.Username,
+        _config.Proxy.Password,
+        TimeSpan.FromSeconds(30));
 
     private async Task RelayAsync(NetworkStream clientStream, NetworkStream upstreamStream, CancellationToken ct)
     {
@@ -484,87 +398,7 @@ public class LocalProxyService : IProxyService
 
     private void InitializeBackgroundServices()
     {
-        var initializationTasks = new List<Task<bool>>();
-
-        if (_config.Route.EnableGeo && _geoIpService != null)
-        {
-            initializationTasks.Add(InitializeGeoResourceAsync());
-        }
-
-        if (_config.Route.EnableGfwList && _gfwListService != null)
-        {
-            initializationTasks.Add(InitializeGfwResourceAsync());
-        }
-
-        _ = ObserveRuleResourceInitializationAsync(initializationTasks);
-    }
-
-    private Task<bool> InitializeGeoResourceAsync() => Task.Run(async () =>
-    {
-        Interlocked.Increment(ref _downloadingCount);
-        try
-        {
-            return await _geoIpService!.InitializeAsync(_cts!.Token, _config.Proxy, downloadIfMissing: false);
-        }
-        catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)
-        {
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "[GEO] Rule resource initialization failed in local proxy setup mode.");
-            return false;
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _downloadingCount);
-        }
-    });
-
-    private Task<bool> InitializeGfwResourceAsync() => Task.Run(async () =>
-    {
-        Interlocked.Increment(ref _downloadingCount);
-        try
-        {
-            return await _gfwListService!.InitializeAsync(_cts!.Token, _config.Proxy, downloadIfMissing: false);
-        }
-        catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)
-        {
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "[GFW] Rule resource initialization failed in local proxy setup mode.");
-            return false;
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _downloadingCount);
-        }
-    });
-
-    private static async Task ObserveRuleResourceInitializationAsync(IReadOnlyList<Task<bool>> initializationTasks)
-    {
-        if (initializationTasks.Count == 0)
-        {
-            return;
-        }
-
-        try
-        {
-            var results = await Task.WhenAll(initializationTasks);
-            if (!results.All(static ready => ready))
-            {
-                Log.Warning("[SETUP] Rule resources are not ready yet; staying in the current proxy mode.");
-                return;
-            }
-
-            Log.Information("[SETUP] Rule resources are ready. GFW/GEO routing can be activated after the next mode restart.");
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "[SETUP] Failed while waiting for rule resources.");
-        }
+        _ruleResources.StartSetupModeInitialization(_cts!.Token, _config.Proxy);
     }
 
     private static int FindHeaderEnd(byte[] data, int length)

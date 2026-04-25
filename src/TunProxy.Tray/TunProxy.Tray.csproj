@@ -17,4 +17,8 @@
     <ProjectReference Include="..\TunProxy.Core\TunProxy.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="TunProxy.Tests" />
+  </ItemGroup>
+
 </Project>

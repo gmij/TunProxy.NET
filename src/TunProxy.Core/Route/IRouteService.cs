@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace TunProxy.Core.Route;
 
 /// <summary>
@@ -22,6 +24,8 @@ public interface IRouteService
 
     /// <summary>获取原始默认网关（非 TUN 网关）</summary>
     string? GetOriginalDefaultGateway();
+
+    IPAddress? GetLocalAddressForDestination(IPAddress destination) => null;
 
     /// <summary>删除所有通过 AddBypassRoute 添加的绕过路由，恢复干净的路由表</summary>
     void ClearAllBypassRoutes();

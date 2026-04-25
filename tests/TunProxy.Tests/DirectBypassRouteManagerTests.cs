@@ -37,6 +37,24 @@ public class DirectBypassRouteManagerTests
         Assert.Equal(["203.0.113.10"], manager.GetSnapshot());
     }
 
+    [Fact]
+    public async Task EnsureRouteAsync_EvictsLeastRecentlyUsedRouteWhenLimitIsExceeded()
+    {
+        var routes = new FakeRouteService();
+        var manager = new DirectBypassRouteManager(routes, TimeSpan.FromMinutes(10), maxRouteCount: 2);
+        var first = RouteDecision.Direct("Geo:CN", null, IPAddress.Parse("203.0.113.10"));
+        var second = RouteDecision.Direct("Geo:CN", null, IPAddress.Parse("203.0.113.11"));
+        var third = RouteDecision.Direct("Geo:CN", null, IPAddress.Parse("203.0.113.12"));
+
+        await manager.EnsureRouteAsync("203.0.113.10", first, CancellationToken.None);
+        await manager.EnsureRouteAsync("203.0.113.11", second, CancellationToken.None);
+        manager.Touch("203.0.113.10");
+        await manager.EnsureRouteAsync("203.0.113.12", third, CancellationToken.None);
+
+        Assert.Equal(["203.0.113.10", "203.0.113.12"], manager.GetSnapshot());
+        Assert.Contains("203.0.113.11", routes.RemovedTracked);
+    }
+
     private sealed class FakeRouteService : IRouteService
     {
         public List<string> Added { get; } = new();

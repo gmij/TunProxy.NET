@@ -43,6 +43,7 @@ public class TunProxyService : IProxyService
     private readonly DirectBypassRouteScheduler _directBypassRouteScheduler;
     private readonly ProxyBypassRouteConfigurator _proxyBypassRouteConfigurator = new();
     private readonly PendingRelayStateCleaner _pendingRelayStateCleaner = new();
+    private readonly TunRuntimeStateStore _runtimeStateStore = new();
     private string? _lastTcpConnectFailure;
     private DateTime? _lastTcpConnectFailureUtc;
     private DateTime? _lastPacketReadUtc;
@@ -199,15 +200,11 @@ public class TunProxyService : IProxyService
             Log.Information("[TUN ] Configuring TUN address {IP}/{Mask}...", _config.Tun.IpAddress, _config.Tun.SubnetMask);
             _tunDevice.Configure(_config.Tun.IpAddress, _config.Tun.SubnetMask);
 
-            _outboundBindAddress = new TunOutboundBindAddressSelector().Select(_config.Proxy, _routeService);
-            Log.Information(
-                "[TUN ] Outbound bind address: {BindAddress}",
-                _outboundBindAddress?.ToString() ?? "(not bound)");
-
             if (_config.Route.AutoAddDefaultRoute)
             {
                 Log.Information("[ROUTE] Applying proxy bypass routes and TUN default route...");
                 AddProxyBypassRoutes();
+                SelectOutboundBindAddress();
                 _ipCache!.RetireDirectIpCache();
                 _ipCache.LoadBlockedIpCache();
                 var defaultRouteReady = _routeService!.AddDefaultRoute();
@@ -216,6 +213,10 @@ public class TunProxyService : IProxyService
                 {
                     Log.Warning("[ROUTE] TUN default route is still missing; system traffic may not enter TUN.");
                 }
+            }
+            else
+            {
+                SelectOutboundBindAddress();
             }
 
             Log.Information("[TUN ] Creating connection managers...");
@@ -996,6 +997,19 @@ public class TunProxyService : IProxyService
         {
             _proxyBypassRoutes.Add(ipAddress);
         }
+    }
+
+    private void SelectOutboundBindAddress()
+    {
+        var preferredBindAddress = _runtimeStateStore.LoadLastOutboundBindAddress();
+        _outboundBindAddress = new TunOutboundBindAddressSelector().Select(
+            _config.Proxy,
+            _routeService,
+            preferredBindAddress);
+        _runtimeStateStore.SaveLastOutboundBindAddress(_outboundBindAddress);
+        Log.Information(
+            "[TUN ] Outbound bind address: {BindAddress}",
+            _outboundBindAddress?.ToString() ?? "(not bound)");
     }
 
     private static async Task EnsureWintunDllAsync(CancellationToken ct)

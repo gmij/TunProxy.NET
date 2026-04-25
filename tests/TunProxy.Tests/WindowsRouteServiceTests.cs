@@ -1,3 +1,4 @@
+using System.Net;
 using TunProxy.CLI;
 
 namespace TunProxy.Tests;
@@ -98,6 +99,68 @@ public class WindowsRouteServiceTests
         Assert.Equal(16, WindowsRouteService.GetPrefixLength("255.255.0.0"));
         Assert.Equal(24, WindowsRouteService.GetPrefixLength("255.255.255.0"));
         Assert.Equal(32, WindowsRouteService.GetPrefixLength("255.255.255.255"));
+    }
+
+    [Fact]
+    public void FindLocalAddressForDestination_PrefersSpecificCorporateRoute()
+    {
+        var routes = new[]
+        {
+            new RouteEntry
+            {
+                Network = "0.0.0.0",
+                Netmask = "0.0.0.0",
+                Gateway = "192.168.66.1",
+                Interface = "192.168.66.76",
+                Metric = "25"
+            },
+            new RouteEntry
+            {
+                Network = "10.144.0.0",
+                Netmask = "255.255.0.0",
+                Gateway = "On-link",
+                Interface = "10.144.20.231",
+                Metric = "25"
+            }
+        };
+
+        var address = WindowsRouteService.FindLocalAddressForDestination(
+            routes,
+            IPAddress.Parse("10.144.20.222"),
+            "10.0.0.1");
+
+        Assert.Equal(IPAddress.Parse("10.144.20.231"), address);
+    }
+
+    [Fact]
+    public void FindLocalAddressForDestination_IgnoresTunDefaultRoute()
+    {
+        var routes = new[]
+        {
+            new RouteEntry
+            {
+                Network = "0.0.0.0",
+                Netmask = "0.0.0.0",
+                Gateway = "On-link",
+                Interface = "10.0.0.1",
+                Metric = "1"
+            },
+            new RouteEntry
+            {
+                Network = "0.0.0.0",
+                Netmask = "0.0.0.0",
+                Gateway = "192.168.66.1",
+                Interface = "192.168.66.76",
+                Metric = "25"
+            }
+        };
+
+        var address = WindowsRouteService.FindLocalAddressForDestination(
+            routes,
+            IPAddress.Parse("203.0.113.10"),
+            "10.0.0.1");
+
+        Assert.Equal(IPAddress.Parse("192.168.66.76"), address);
     }
 
     [Fact]

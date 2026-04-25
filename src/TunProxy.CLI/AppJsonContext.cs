@@ -19,6 +19,7 @@ namespace TunProxy.CLI;
 [JsonSerializable(typeof(List<DnsRouteRecord>))]
 [JsonSerializable(typeof(LogEntry))]
 [JsonSerializable(typeof(LogEntry[]))]
+[JsonSerializable(typeof(TunRuntimeState))]
 [JsonSerializable(typeof(TunDiagnosticsSnapshot))]
 [JsonSerializable(typeof(DnsDiagnosticsSnapshot))]
 [JsonSerializable(typeof(RouteDiagnosticsSnapshot))]

@@ -131,6 +131,25 @@ public class WindowsRouteService : IRouteService
         return null;
     }
 
+    public IPAddress? GetLocalAddressForDestination(IPAddress destination)
+    {
+        if (destination.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return null;
+        }
+
+        var address = FindLocalAddressForDestination(GetRouteTable(), destination, _tunIpAddress);
+        if (address != null)
+        {
+            Log.Information(
+                "[ROUTE] Local address for destination {Destination} selected from route table: {LocalAddress}",
+                destination,
+                address);
+        }
+
+        return address;
+    }
+
     public bool AddBypassRoute(string ipAddress, int prefixLength = 32)
     {
         if (prefixLength == 32 && TryFindExistingSpecificRoute(ipAddress, out var existingRoute))
@@ -516,6 +535,24 @@ public class WindowsRouteService : IRouteService
         return (destinationValue & maskValue) == (networkValue & maskValue);
     }
 
+    internal static IPAddress? FindLocalAddressForDestination(
+        IReadOnlyCollection<RouteEntry> routes,
+        IPAddress destination,
+        string tunIpAddress)
+    {
+        if (destination.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return null;
+        }
+
+        return routes
+            .Where(route => IsRouteForDestination(route, destination, tunIpAddress))
+            .OrderByDescending(route => GetPrefixLength(route.Netmask))
+            .ThenBy(route => int.TryParse(route.Metric, out var metric) ? metric : int.MaxValue)
+            .Select(route => TryParseBindableRouteInterface(route.Interface, tunIpAddress))
+            .FirstOrDefault(address => address != null);
+    }
+
     internal static int GetPrefixLength(string netmask)
     {
         if (!IPAddress.TryParse(netmask, out var address) ||
@@ -606,6 +643,38 @@ public class WindowsRouteService : IRouteService
     {
         return IPAddress.TryParse(value, out var address) &&
                address.AddressFamily == AddressFamily.InterNetwork;
+    }
+
+    private static bool IsRouteForDestination(RouteEntry route, IPAddress destination, string tunIpAddress)
+    {
+        if (IsTunDefaultRoute(route, tunIpAddress) ||
+            !IPAddress.TryParse(route.Network, out var network) ||
+            !IPAddress.TryParse(route.Netmask, out var netmask) ||
+            network.AddressFamily != AddressFamily.InterNetwork ||
+            netmask.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return false;
+        }
+
+        var destinationValue = ToUInt32(destination);
+        var networkValue = ToUInt32(network);
+        var maskValue = ToUInt32(netmask);
+        return (destinationValue & maskValue) == (networkValue & maskValue);
+    }
+
+    private static IPAddress? TryParseBindableRouteInterface(string value, string tunIpAddress)
+    {
+        if (!IPAddress.TryParse(value, out var address) ||
+            address.AddressFamily != AddressFamily.InterNetwork ||
+            address.ToString().Equals(tunIpAddress, StringComparison.OrdinalIgnoreCase) ||
+            IPAddress.IsLoopback(address) ||
+            IPAddress.Any.Equals(address) ||
+            IPAddress.None.Equals(address))
+        {
+            return null;
+        }
+
+        return address;
     }
 
     private static uint ToUInt32(IPAddress address)

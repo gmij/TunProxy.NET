@@ -11,21 +11,48 @@ internal sealed class TunOutboundBindAddressSelector
 {
     private readonly Func<string, int, IPAddress?> _probeLocalIpForHost;
     private readonly Func<string, IPAddress?> _findLocalAddressForGateway;
+    private readonly Func<string, IPAddress[]> _resolveHost;
+    private readonly Func<IPAddress, bool> _isUsableLocalAddress;
 
     public TunOutboundBindAddressSelector(
         Func<string, int, IPAddress?>? probeLocalIpForHost = null,
-        Func<string, IPAddress?>? findLocalAddressForGateway = null)
+        Func<string, IPAddress?>? findLocalAddressForGateway = null,
+        Func<string, IPAddress[]>? resolveHost = null,
+        Func<IPAddress, bool>? isUsableLocalAddress = null)
     {
         _probeLocalIpForHost = probeLocalIpForHost ?? ProbeLocalIpForHost;
         _findLocalAddressForGateway = findLocalAddressForGateway ?? FindLocalAddressForGateway;
+        _resolveHost = resolveHost ?? Dns.GetHostAddresses;
+        _isUsableLocalAddress = isUsableLocalAddress ?? IsUsableLocalAddress;
     }
 
-    public IPAddress? Select(ProxyConfig proxyConfig, IRouteService? routeService)
+    public IPAddress? Select(
+        ProxyConfig proxyConfig,
+        IRouteService? routeService,
+        IPAddress? preferredBindAddress = null)
     {
         if (IPAddress.TryParse(proxyConfig.Host, out var proxyAddress) &&
             IPAddress.IsLoopback(proxyAddress))
         {
             return null;
+        }
+
+        var proxyAddresses = ResolveProxyAddresses(proxyConfig.Host);
+        var routed = SelectFromProxyRoute(proxyAddresses, routeService);
+        if (TryUsePreferredAddress(preferredBindAddress, proxyAddresses, routeService, routed))
+        {
+            Log.Information(
+                "[TUN ] Outbound bind address selected from runtime state: {BindAddress}",
+                preferredBindAddress);
+            return preferredBindAddress;
+        }
+
+        if (routed != null)
+        {
+            Log.Information(
+                "[TUN ] Outbound bind address selected from proxy route: {BindAddress}",
+                routed);
+            return routed;
         }
 
         var probed = _probeLocalIpForHost(proxyConfig.Host, proxyConfig.Port);
@@ -55,6 +82,106 @@ internal sealed class TunOutboundBindAddressSelector
 
         Log.Warning("[TUN ] Could not select a stable outbound bind address; proxy connections will use the OS route table.");
         return null;
+    }
+
+    private bool TryUsePreferredAddress(
+        IPAddress? preferredBindAddress,
+        IReadOnlyList<IPAddress> proxyAddresses,
+        IRouteService? routeService,
+        IPAddress? routedAddress)
+    {
+        if (preferredBindAddress == null ||
+            preferredBindAddress.AddressFamily != AddressFamily.InterNetwork ||
+            IPAddress.IsLoopback(preferredBindAddress) ||
+            !_isUsableLocalAddress(preferredBindAddress))
+        {
+            return false;
+        }
+
+        if (routedAddress != null)
+        {
+            return preferredBindAddress.Equals(routedAddress);
+        }
+
+        foreach (var proxyAddress in proxyAddresses)
+        {
+            var routeAddress = routeService?.GetLocalAddressForDestination(proxyAddress);
+            if (routeAddress != null)
+            {
+                return preferredBindAddress.Equals(routeAddress);
+            }
+        }
+
+        return true;
+    }
+
+    private IPAddress? SelectFromProxyRoute(IReadOnlyList<IPAddress> proxyAddresses, IRouteService? routeService)
+    {
+        if (routeService == null)
+        {
+            return null;
+        }
+
+        foreach (var address in proxyAddresses)
+        {
+            var localAddress = routeService.GetLocalAddressForDestination(address);
+            if (localAddress != null && !IPAddress.IsLoopback(localAddress))
+            {
+                return localAddress;
+            }
+        }
+
+        return null;
+    }
+
+    private IReadOnlyList<IPAddress> ResolveProxyAddresses(string host)
+    {
+        if (IPAddress.TryParse(host, out var proxyIp))
+        {
+            return IsBindableProxyAddress(proxyIp) ? [proxyIp] : [];
+        }
+
+        try
+        {
+            return _resolveHost(host)
+                .Where(IsBindableProxyAddress)
+                .Distinct()
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static bool IsBindableProxyAddress(IPAddress address) =>
+        address.AddressFamily == AddressFamily.InterNetwork &&
+        !IPAddress.IsLoopback(address);
+
+    internal static bool IsUsableLocalAddress(IPAddress address)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetwork ||
+            IPAddress.IsLoopback(address))
+        {
+            return false;
+        }
+
+        try
+        {
+            return NetworkInterface.GetAllNetworkInterfaces()
+                .Where(networkInterface =>
+                    networkInterface.OperationalStatus == OperationalStatus.Up &&
+                    networkInterface.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                    !networkInterface.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) &&
+                    !networkInterface.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase))
+                .SelectMany(networkInterface => networkInterface.GetIPProperties().UnicastAddresses)
+                .Any(unicast => unicast.Address.Equals(address));
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("[TUN ] Failed to validate cached outbound bind address: {Message}", ex.Message);
+            return false;
+        }
     }
 
     internal static IPAddress? FindLocalAddressForGateway(string gateway)

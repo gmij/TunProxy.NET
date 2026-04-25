@@ -7,15 +7,26 @@ namespace TunProxy.CLI;
 
 internal sealed class DirectBypassRouteManager
 {
+    private const int DefaultMaxRouteCount = 512;
     private readonly IRouteService? _routeService;
     private readonly TimeSpan _idleTimeout;
+    private readonly int _maxRouteCount;
     private readonly ConcurrentDictionary<string, DirectBypassRouteEntry> _routes =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public DirectBypassRouteManager(IRouteService? routeService, TimeSpan? idleTimeout = null)
+    public DirectBypassRouteManager(
+        IRouteService? routeService,
+        TimeSpan? idleTimeout = null,
+        int maxRouteCount = DefaultMaxRouteCount)
     {
+        if (maxRouteCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxRouteCount), "Maximum route count must be greater than zero.");
+        }
+
         _routeService = routeService;
         _idleTimeout = idleTimeout ?? TimeSpan.FromMinutes(10);
+        _maxRouteCount = maxRouteCount;
     }
 
     public int Count => _routes.Count;
@@ -81,8 +92,7 @@ internal sealed class DirectBypassRouteManager
                 entry.AddTask.Value.Status == TaskStatus.RanToCompletion &&
                 entry.AddTask.Value.Result)
             {
-                var removed = _routeService.RemoveTrackedBypassRoute(ip);
-                Log.Information("[ROUTE] Direct bypass route expired: {IP} (removed={Removed})", ip, removed);
+                RemoveTrackedRoute(ip, "expired");
             }
         }
     }
@@ -96,7 +106,10 @@ internal sealed class DirectBypassRouteManager
             if (!ok)
             {
                 TryRemoveEntry(destIP, entry);
+                return;
             }
+
+            TrimToLimit(destIP);
         }
         catch
         {
@@ -110,6 +123,46 @@ internal sealed class DirectBypassRouteManager
         return _routes.TryGetValue(ip, out var current) &&
                ReferenceEquals(current, entry) &&
                _routes.TryRemove(ip, out _);
+    }
+
+    private void TrimToLimit(string protectedIp)
+    {
+        if (_routeService == null || _routes.Count <= _maxRouteCount)
+        {
+            return;
+        }
+
+        var removable = _routes
+            .Where(item =>
+                !item.Key.Equals(protectedIp, StringComparison.OrdinalIgnoreCase) &&
+                item.Value.AddTask.IsValueCreated &&
+                item.Value.AddTask.Value.Status == TaskStatus.RanToCompletion)
+            .OrderBy(item => item.Value.LastUsedUtc)
+            .ToList();
+
+        foreach (var (ip, entry) in removable)
+        {
+            if (_routes.Count <= _maxRouteCount)
+            {
+                return;
+            }
+
+            if (!TryRemoveEntry(ip, entry))
+            {
+                continue;
+            }
+
+            if (entry.AddTask.Value.Result)
+            {
+                RemoveTrackedRoute(ip, "evicted");
+            }
+        }
+    }
+
+    private void RemoveTrackedRoute(string ip, string reason)
+    {
+        var removed = _routeService?.RemoveTrackedBypassRoute(ip) == true;
+        Log.Information("[ROUTE] Direct bypass route {Reason}: {IP} (removed={Removed})", reason, ip, removed);
     }
 
     private Task<bool> AddRouteAsync(string destIP, RouteDecision decision) =>

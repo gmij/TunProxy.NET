@@ -94,7 +94,7 @@
     <value>&lt;strong&gt;本地代理模式&lt;/strong&gt;监听本机端口，并可自动设置系统代理，无需管理员权限。&lt;br&gt;可在状态页重启或停止当前服务。</value>
   </data>
   <data name="Page.Config.ModeHintTunHtml" xml:space="preserve">
-    <value>&lt;strong&gt;TUN 模式&lt;/strong&gt;通过虚拟网卡透明接管 TCP 流量。&lt;br&gt;可在状态页重启或停止当前服务。</value>
+    <value>&lt;strong&gt;TUN 模式&lt;/strong&gt;通过虚拟网卡透明接管 TCP 流量。默认启用 FakeIP DNS —— DNS 代理返回虚拟地址，以便在获知真实 IP 之前即可进行基于域名的路由决策。&lt;br&gt;可在状态页重启或停止当前服务。</value>
   </data>
   <data name="Page.Config.ModeUnknown" xml:space="preserve">
     <value>未知（服务未运行）</value>

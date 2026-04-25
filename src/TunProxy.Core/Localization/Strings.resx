@@ -94,7 +94,7 @@
     <value>&lt;strong&gt;Local Proxy mode&lt;/strong&gt; listens on a local port and can automatically update the system proxy. No administrator rights are required.&lt;br&gt;Use the status page to restart or stop the current service.</value>
   </data>
   <data name="Page.Config.ModeHintTunHtml" xml:space="preserve">
-    <value>&lt;strong&gt;TUN mode&lt;/strong&gt; transparently captures TCP traffic through the virtual adapter.&lt;br&gt;Use the status page to restart or stop the current service.</value>
+    <value>&lt;strong&gt;TUN mode&lt;/strong&gt; transparently captures TCP traffic through the virtual adapter. FakeIP DNS is enabled by default — the DNS proxy returns virtual addresses so domain-based routing decisions can be made before the real IP is known.&lt;br&gt;Use the status page to restart or stop the current service.</value>
   </data>
   <data name="Page.Config.ModeUnknown" xml:space="preserve">
     <value>Unknown (service unavailable)</value>

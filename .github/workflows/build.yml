@@ -62,6 +62,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-windows:
     name: Publish · Windows x64
+    needs: [validate]
     runs-on: windows-latest
 
     steps:
@@ -170,6 +171,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-linux:
     name: Publish · Linux x64
+    needs: [validate]
     runs-on: ubuntu-latest
 
     steps:
@@ -235,6 +237,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-macos:
     name: Publish · macOS arm64
+    needs: [validate]
     runs-on: macos-latest    # macos-14 (Apple Silicon)
 
     steps:

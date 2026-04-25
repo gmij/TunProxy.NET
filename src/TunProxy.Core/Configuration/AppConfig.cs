@@ -234,6 +234,7 @@ public class ServiceStatus
     public string Mode { get; set; } = "proxy";
     public bool IsRunning { get; set; }
     public bool IsDownloading { get; set; }
+    public bool FakeIpMode { get; set; }
     public string ProxyHost { get; set; } = "";
     public int ProxyPort { get; set; }
     public string ProxyType { get; set; } = "";

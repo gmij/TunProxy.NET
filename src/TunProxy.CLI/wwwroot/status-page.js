@@ -29,6 +29,10 @@ function renderStatusBadges(status) {
     ? ' <span class="badge bg-primary">' + t('Mode.Tun') + '</span>'
     : ' <span class="badge bg-info text-dark">' + t('Mode.Proxy') + '</span>';
 
+  if (status.mode === 'tun' && status.fakeIpMode) {
+    badges += ' <span class="badge bg-secondary">FakeIP</span>';
+  }
+
   if (status.isDownloading) {
     badges += ' <span class="badge bg-warning text-dark">' + t('Page.Status.Badge.Downloading') + '</span>';
   }

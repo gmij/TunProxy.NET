@@ -224,7 +224,7 @@ public class DnsProxyService
             }
             catch (Exception ex)
             {
-                Log.Debug(ex, "[DNS ] FakeIP background real-DNS resolution failed for {Domain}", domain);
+                Log.Warning(ex, "[DNS ] FakeIP background real-DNS resolution failed for {Domain}", domain);
             }
         }, ct);
     }

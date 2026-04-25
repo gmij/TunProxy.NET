@@ -23,6 +23,13 @@ internal sealed class UdpDirectRelay : IDisposable
     private bool _disposed;
 
     /// <summary>
+    /// Sessions idle for longer than this duration are disposed by <see cref="CleanupExpired"/>.
+    /// The same value is used as the per-receive timeout so that a session whose remote peer has
+    /// gone silent for this long exits its receive loop and is reaped on the next cleanup pass.
+    /// </summary>
+    internal static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromMinutes(1);
+
+    /// <summary>
     /// Forwards <paramref name="packet"/>'s UDP payload to its destination and starts (or
     /// reuses) a relay session that pipes responses back into <paramref name="device"/>.
     /// </summary>
@@ -130,7 +137,7 @@ internal sealed class UdpDirectRelay : IDisposable
                 try
                 {
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    timeoutCts.CancelAfter(TimeSpan.FromMinutes(1));
+                    timeoutCts.CancelAfter(DefaultIdleTimeout);
                     result = await session.Socket.ReceiveAsync(timeoutCts.Token);
                 }
                 catch (OperationCanceledException)

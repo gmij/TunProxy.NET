@@ -315,7 +315,7 @@ public class TunProxyService : IProxyService
             _pendingRelayStateCleaner.Cleanup(_relayStates, PendingRelayStateIdleTimeout);
             _directBypassRoutes.CleanupExpired();
             _dnsStore?.CleanupExpired();
-            _udpDirectRelay.CleanupExpired(TimeSpan.FromMinutes(1));
+            _udpDirectRelay.CleanupExpired(UdpDirectRelay.DefaultIdleTimeout);
             _fakeIpPool?.CleanupExpired(TimeSpan.FromMinutes(30));
             return Task.CompletedTask;
         }, ct);

@@ -62,6 +62,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-windows:
     name: Publish · Windows x64
+    needs: [validate]
     runs-on: windows-latest
 
     steps:
@@ -155,21 +156,18 @@ jobs:
         Write-Host "=== dist/win-x64 ==="
         Get-ChildItem $d | Format-Table Name, @{L="KB";E={[int]($_.Length/1KB)}}
 
-    - name: Pack ZIP
-      shell: pwsh
-      run: Compress-Archive -Path dist/win-x64/* -DestinationPath TunProxy.NET-win-x64.zip -Force
-
     - name: Upload artifact
       uses: actions/upload-artifact@v7
       with:
         name: TunProxy.NET-win-x64
-        path: TunProxy.NET-win-x64.zip
+        path: dist/win-x64
 
   # ─────────────────────────────────────────────────────────────
   # Linux  linux-x64   CLI (AOT)
   # ─────────────────────────────────────────────────────────────
   publish-linux:
     name: Publish · Linux x64
+    needs: [validate]
     runs-on: ubuntu-latest
 
     steps:
@@ -221,20 +219,18 @@ jobs:
         echo "=== dist/linux-x64 ==="
         ls -lh "$d"
 
-    - name: Pack tar.gz
-      run: tar -czf TunProxy.NET-linux-x64.tar.gz -C dist/linux-x64 .
-
     - name: Upload artifact
       uses: actions/upload-artifact@v7
       with:
         name: TunProxy.NET-linux-x64
-        path: TunProxy.NET-linux-x64.tar.gz
+        path: dist/linux-x64
 
   # ─────────────────────────────────────────────────────────────
   # macOS  osx-arm64   CLI (AOT) + Tray (AOT)
   # ─────────────────────────────────────────────────────────────
   publish-macos:
     name: Publish · macOS arm64
+    needs: [validate]
     runs-on: macos-latest    # macos-14 (Apple Silicon)
 
     steps:
@@ -289,14 +285,11 @@ jobs:
         echo "=== dist/osx-arm64 ==="
         ls -lh "$d"
 
-    - name: Pack tar.gz
-      run: tar -czf TunProxy.NET-osx-arm64.tar.gz -C dist/osx-arm64 .
-
     - name: Upload artifact
       uses: actions/upload-artifact@v7
       with:
         name: TunProxy.NET-osx-arm64
-        path: TunProxy.NET-osx-arm64.tar.gz
+        path: dist/osx-arm64
 
   # ─────────────────────────────────────────────────────────────
   # GitHub Release（仅 tag push 时执行，等三个平台都成功）
@@ -313,11 +306,22 @@ jobs:
       with:
         path: artifacts
 
+    - name: Pack release archives
+      run: |
+        cd artifacts
+        cd TunProxy.NET-win-x64
+        zip -r ../../TunProxy.NET-win-x64.zip .
+        cd ../TunProxy.NET-linux-x64
+        tar -czf ../../TunProxy.NET-linux-x64.tar.gz .
+        cd ../TunProxy.NET-osx-arm64
+        tar -czf ../../TunProxy.NET-osx-arm64.tar.gz .
+        cd ../..
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          artifacts/TunProxy.NET-win-x64/TunProxy.NET-win-x64.zip
-          artifacts/TunProxy.NET-linux-x64/TunProxy.NET-linux-x64.tar.gz
-          artifacts/TunProxy.NET-osx-arm64/TunProxy.NET-osx-arm64.tar.gz
+          TunProxy.NET-win-x64.zip
+          TunProxy.NET-linux-x64.tar.gz
+          TunProxy.NET-osx-arm64.tar.gz
         generate_release_notes: true

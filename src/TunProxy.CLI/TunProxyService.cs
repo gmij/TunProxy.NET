@@ -44,6 +44,8 @@ public class TunProxyService : IProxyService
     private readonly ProxyBypassRouteConfigurator _proxyBypassRouteConfigurator = new();
     private readonly PendingRelayStateCleaner _pendingRelayStateCleaner = new();
     private readonly TunRuntimeStateStore _runtimeStateStore = new();
+    private readonly FakeIpPool? _fakeIpPool;
+    private readonly UdpDirectRelay _udpDirectRelay = new();
     private string? _lastTcpConnectFailure;
     private DateTime? _lastTcpConnectFailureUtc;
     private DateTime? _lastPacketReadUtc;
@@ -77,6 +79,12 @@ public class TunProxyService : IProxyService
             () => _proxyBypassRoutes);
         _ipCache = new IpCacheManager(_routeService);
         _dnsStore = new DnsResolutionStore();
+
+        if (config.Tun.FakeIpMode)
+        {
+            _fakeIpPool = new FakeIpPool();
+        }
+
         _dnsProxy = new DnsProxyService(
             config.Proxy.Host,
             config.Proxy.Port,
@@ -86,7 +94,10 @@ public class TunProxyService : IProxyService
             config.Proxy.Username,
             config.Proxy.Password,
             _routeDecision,
-            _directBypassRouteScheduler.ScheduleAsync);
+            // In FakeIP mode bypass-route candidates are not added because traffic always
+            // arrives at the fake IP (never at the real IP directly).
+            onDirectRouteCandidate: _fakeIpPool != null ? null : _directBypassRouteScheduler.ScheduleAsync,
+            fakeIpPool: _fakeIpPool);
     }
 
     public ServiceStatus GetStatus() => TunRuntimeDiagnosticsProvider.CreateStatus(
@@ -217,6 +228,13 @@ public class TunProxyService : IProxyService
             else
             {
                 SelectOutboundBindAddress();
+                if (_fakeIpPool != null)
+                {
+                    Log.Warning(
+                        "[TUN ] FakeIP mode is active but AutoAddDefaultRoute is disabled. " +
+                        "Add a manual route for 198.18.0.0/16 pointing to the TUN interface " +
+                        "so that fake-IP destinations are captured by TunProxy.");
+                }
             }
 
             Log.Information("[TUN ] Creating connection managers...");
@@ -265,6 +283,7 @@ public class TunProxyService : IProxyService
 
             _connectionManager?.Dispose();
             _directConnectionManager?.Dispose();
+            _udpDirectRelay.Dispose();
 
             _routeService?.RemoveDefaultRoute();
             _routeService?.ClearAllBypassRoutes();
@@ -296,6 +315,8 @@ public class TunProxyService : IProxyService
             _pendingRelayStateCleaner.Cleanup(_relayStates, PendingRelayStateIdleTimeout);
             _directBypassRoutes.CleanupExpired();
             _dnsStore?.CleanupExpired();
+            _udpDirectRelay.CleanupExpired(UdpDirectRelay.DefaultIdleTimeout);
+            _fakeIpPool?.CleanupExpired(TimeSpan.FromMinutes(30));
             return Task.CompletedTask;
         }, ct);
     }
@@ -338,20 +359,29 @@ public class TunProxyService : IProxyService
             if (packet.IsUDP)
             {
                 _metrics.IncrementNonTcpUdpPackets();
-                var cachedHost = _dnsStore!.GetCachedHostname(packet.Header.DestinationAddress.ToString());
-                var udpDecision = await _routeDecision.DecideForTunAsync(
-                    cachedHost,
-                    packet.Header.DestinationAddress,
-                    ct);
+                var udpDestIp = packet.Header.DestinationAddress;
+
+                // Fake IPs are virtual 198.18.0.0/16 addresses managed by the FakeIP pool.
+                // UDP to them cannot be forwarded to a real peer; reject so apps fall back to TCP.
+                if (_fakeIpPool != null && FakeIpPool.IsFakeIp(udpDestIp))
+                {
+                    TunWriter.WriteIcmpPortUnreachable(device, packet);
+                    return;
+                }
+
+                var cachedHost = GetCachedHostnameForIp(udpDestIp);
+                var udpDecision = await _routeDecision.DecideForTunAsync(cachedHost, udpDestIp, ct);
+
                 if (!TunPacketDecisions.ShouldRejectUdpPacket(udpDecision))
                 {
+                    // Direct-routed UDP: relay through the physical interface instead of
+                    // writing a kernel route entry (which would drop the first datagram).
                     _metrics.IncrementDirectRoutedPackets();
-                    var routeIp = udpDecision.EvaluatedIp ?? packet.Header.DestinationAddress;
-                    _ = _directBypassRouteScheduler.ScheduleAsync(routeIp, udpDecision, ct);
-                    Log.Debug("[UDP ] {DestIP}:{Port}  DIRECT  ({Reason}); first packet dropped for route refresh",
-                        packet.Header.DestinationAddress,
+                    Log.Debug("[UDP ] {DestIP}:{Port}  DIRECT  ({Reason}); relaying via application layer",
+                        udpDestIp,
                         packet.DestinationPort,
                         udpDecision.Reason);
+                    await _udpDirectRelay.ForwardAsync(device, packet, _outboundBindAddress, ct);
                     return;
                 }
 
@@ -470,11 +500,19 @@ public class TunProxyService : IProxyService
                         destPort,
                         destIP,
                         initialPayload,
-                        _dnsStore!.GetCachedHostname(destIP));
+                        GetCachedHostnameForIp(packet.Header.DestinationAddress));
+
+                    // For fake-IP destinations the destination address is a virtual placeholder
+                    // from the 198.18.0.0/16 pool.  Pass null so that geo / private-IP checks
+                    // are based on the domain name (or the real IP resolved from it) rather
+                    // than the fake address, which has no geographic meaning.
+                    var effectiveDestIp = (_fakeIpPool != null && FakeIpPool.IsFakeIp(packet.Header.DestinationAddress))
+                        ? null
+                        : (IPAddress?)packet.Header.DestinationAddress;
 
                     var finalDecision = await _routeDecision.DecideForTunAsync(
                         target.DomainHint,
-                        packet.Header.DestinationAddress,
+                        effectiveDestIp,
                         ct);
                     if (target.HasDomainHint)
                     {
@@ -503,8 +541,14 @@ public class TunProxyService : IProxyService
                     {
                         _metrics.IncrementDirectRoutedPackets();
                         var routeIp = finalDecision.EvaluatedIp ?? packet.Header.DestinationAddress;
-                        await _directBypassRouteScheduler.EnsureAsync(routeIp, finalDecision, ct);
-                        state.DirectBypassIp = routeIp.ToString();
+                        // In FakeIP mode the destination is always a virtual address from the
+                        // 198.18.0.0/16 pool. Adding a bypass route for it would be incorrect
+                        // (the real peer IP is different). Skip route management for fake IPs.
+                        if (_fakeIpPool == null || !FakeIpPool.IsFakeIp(packet.Header.DestinationAddress))
+                        {
+                            await _directBypassRouteScheduler.EnsureAsync(routeIp, finalDecision, ct);
+                            state.DirectBypassIp = routeIp.ToString();
+                        }
                     }
 
                     var upstreamHost = TunConnectionDecisions.SelectUpstreamHost(
@@ -624,7 +668,7 @@ public class TunProxyService : IProxyService
             destPort,
             packet.Payload.Length,
             state.InitialPayloadLength,
-            _dnsStore?.GetCachedHostname(destIP) != null,
+            GetCachedHostnameForIp(packet.Header.DestinationAddress) != null,
             packet.Payload);
 
     private bool TryAppendInitialPayloadAndAck(
@@ -997,6 +1041,22 @@ public class TunProxyService : IProxyService
         {
             _proxyBypassRoutes.Add(ipAddress);
         }
+    }
+
+    /// <summary>
+    /// Returns the hostname associated with <paramref name="ip"/>, checking both the DNS
+    /// resolution store and (in FakeIP mode) the fake-IP pool.  The fake-IP pool is the
+    /// authoritative source for 198.18.0.0/16 addresses.
+    /// </summary>
+    private string? GetCachedHostnameForIp(IPAddress ip)
+    {
+        // In FakeIP mode the fake-IP pool holds the canonical domain for pool addresses.
+        if (_fakeIpPool != null && FakeIpPool.IsFakeIp(ip))
+        {
+            return _fakeIpPool.GetDomain(ip);
+        }
+
+        return _dnsStore?.GetCachedHostname(ip.ToString());
     }
 
     private void SelectOutboundBindAddress()

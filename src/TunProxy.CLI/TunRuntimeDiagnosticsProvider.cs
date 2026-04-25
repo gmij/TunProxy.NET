@@ -22,6 +22,7 @@ internal static class TunRuntimeDiagnosticsProvider
             Mode = "tun",
             IsRunning = cancellation != null && !cancellation.IsCancellationRequested,
             IsDownloading = downloadingCount > 0,
+            FakeIpMode = config.Tun.FakeIpMode,
             ProxyHost = config.Proxy.Host,
             ProxyPort = config.Proxy.Port,
             ProxyType = config.Proxy.Type,

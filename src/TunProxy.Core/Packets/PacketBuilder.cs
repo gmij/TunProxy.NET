@@ -255,7 +255,7 @@ public static class PacketBuilder
     }
 
     /// <summary>
-    /// 构建 UDP 响应包
+    /// 构建 UDP 响应包（从原始请求包反转地址）
     /// </summary>
     public static byte[] BuildUdpResponse(IPPacket requestPacket, ReadOnlySpan<byte> responseData)
     {
@@ -263,22 +263,35 @@ public static class PacketBuilder
         var destIP = requestPacket.Header.SourceAddress.GetAddressBytes();
         var sourcePort = requestPacket.DestinationPort!.Value;
         var destPort = requestPacket.SourcePort!.Value;
+        return BuildUdpPacket(sourceIP, destIP, sourcePort, destPort, responseData);
+    }
 
+    /// <summary>
+    /// 构建 UDP 数据包（使用明确的源/目标地址和端口）。
+    /// 用于应用层 UDP 中继，将从远端收到的数据包装后写回 TUN。
+    /// </summary>
+    public static byte[] BuildUdpPacket(
+        byte[] sourceIP,
+        byte[] destIP,
+        ushort sourcePort,
+        ushort destPort,
+        ReadOnlySpan<byte> data)
+    {
         // --- UDP Header (8 bytes) ---
         var udpHeader = new byte[8];
         NetworkHelper.WriteUInt16BigEndian(udpHeader.AsSpan(0, 2), sourcePort);
         NetworkHelper.WriteUInt16BigEndian(udpHeader.AsSpan(2, 2), destPort);
-        NetworkHelper.WriteUInt16BigEndian(udpHeader.AsSpan(4, 2), (ushort)(8 + responseData.Length));
+        NetworkHelper.WriteUInt16BigEndian(udpHeader.AsSpan(4, 2), (ushort)(8 + data.Length));
         // Checksum (offset 6-7) starts at 0
 
         // --- IP Header ---
-        var totalLength = (ushort)(20 + 8 + responseData.Length);
+        var totalLength = (ushort)(20 + 8 + data.Length);
         var ipHeader = BuildIPv4Header(sourceIP, destIP, 0x11 /* UDP */, totalLength);
 
         // --- UDP Checksum ---
-        var udpSegment = new byte[8 + responseData.Length];
+        var udpSegment = new byte[8 + data.Length];
         Array.Copy(udpHeader, 0, udpSegment, 0, 8);
-        responseData.CopyTo(udpSegment.AsSpan(8));
+        data.CopyTo(udpSegment.AsSpan(8));
 
         var udpChecksum = NetworkHelper.CalculateTcpUdpChecksum(sourceIP, destIP, 17, udpSegment);
         NetworkHelper.WriteUInt16BigEndian(udpHeader.AsSpan(6, 2), udpChecksum);

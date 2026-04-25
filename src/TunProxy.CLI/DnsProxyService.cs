@@ -12,6 +12,10 @@ namespace TunProxy.CLI;
 
 public class DnsProxyService
 {
+    private const string FakeIpDnsSource = "DNS-FakeIP";
+    private const string FakeIpInitialRoute = "UNKNOWN";
+    private const string FakeIpLastMethod = "fakeip";
+
     private readonly string _proxyHost;
     private readonly int _proxyPort;
     private readonly ProxyType _proxyType;
@@ -22,6 +26,7 @@ public class DnsProxyService
     private readonly ProxyConfig _proxyConfig;
     private readonly RouteDecisionService? _routeDecision;
     private readonly Func<IPAddress, RouteDecision, CancellationToken, Task>? _onDirectRouteCandidate;
+    private readonly FakeIpPool? _fakeIpPool;
     private long _tcpQueries;
     private long _tcpSuccesses;
     private long _tcpFailures;
@@ -44,7 +49,8 @@ public class DnsProxyService
         string? proxyUsername = null,
         string? proxyPassword = null,
         RouteDecisionService? routeDecision = null,
-        Func<IPAddress, RouteDecision, CancellationToken, Task>? onDirectRouteCandidate = null)
+        Func<IPAddress, RouteDecision, CancellationToken, Task>? onDirectRouteCandidate = null,
+        FakeIpPool? fakeIpPool = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
@@ -55,6 +61,7 @@ public class DnsProxyService
         _proxyPassword = proxyPassword;
         _routeDecision = routeDecision;
         _onDirectRouteCandidate = onDirectRouteCandidate;
+        _fakeIpPool = fakeIpPool;
         _proxyConfig = new ProxyConfig
         {
             Host = proxyHost,
@@ -80,6 +87,13 @@ public class DnsProxyService
             _lastDomain = domain;
             _lastQueryUtc = DateTime.UtcNow;
             Log.Debug("[DNS ] Query: {Domain}", domain);
+
+            // FakeIP mode: intercept A-record queries and return a synthetic fake address.
+            if (_fakeIpPool != null && dnsPacket.Questions[0].Type == 1 /* A record */)
+            {
+                await HandleFakeIpQueryAsync(device, requestPacket, dnsPacket, domain, ct);
+                return;
+            }
 
             if (_resolutionStore.TryBuildCachedDnsResponse(dnsPacket, out var cachedResponse))
             {
@@ -148,6 +162,104 @@ public class DnsProxyService
         LastSuccessUtc = _lastSuccessUtc,
         LastFailureUtc = _lastFailureUtc
     };
+
+    // ── FakeIP helpers ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Handles an A-record DNS query in FakeIP mode:
+    /// <list type="number">
+    ///   <item>Allocates (or reuses) a fake IP for the queried domain.</item>
+    ///   <item>Records the fake-IP → domain mapping in the resolution store so that
+    ///         subsequent TCP connections to the fake IP can resolve the hostname.</item>
+    ///   <item>Returns a synthetic DNS response with the fake IP to the client immediately.</item>
+    ///   <item>Fires a background real-DNS resolution via the upstream proxy so that routing
+    ///         decisions (GeoIP, GFW) can be updated with the actual remote IP.</item>
+    /// </list>
+    /// </summary>
+    private async Task HandleFakeIpQueryAsync(
+        ITunDevice device,
+        IPPacket requestPacket,
+        DnsPacket query,
+        string domain,
+        CancellationToken ct)
+    {
+        var fakeIp = _fakeIpPool!.AllocateOrGet(domain);
+        var fakeIpStr = fakeIp.ToString();
+
+        Log.Debug("[DNS ] FakeIP {FakeIP} allocated for {Domain}", fakeIpStr, domain);
+        _lastMethod = FakeIpLastMethod;
+        _lastSuccessUtc = DateTime.UtcNow;
+        _lastError = null;
+
+        // Register fake IP → domain so TCP/UDP path can find the hostname.
+        _resolutionStore.RecordObservedHostname(fakeIpStr, domain, FakeIpDnsSource, FakeIpInitialRoute, FakeIpLastMethod);
+
+        // Return the synthetic response immediately – no upstream round-trip needed.
+        var fakeResponse = BuildFakeIpDnsResponse(query, domain, fakeIp);
+        TunWriter.WriteUdpResponse(device, requestPacket, fakeResponse);
+
+        // Background: resolve the real IP via the upstream proxy for routing-decision quality.
+        // We deliberately do NOT await so the client gets an instant response.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var realDnsResponse = await QueryDnsViaProxyAsync(
+                    requestPacket.Payload, domain, _upstreamDns, ct);
+
+                if (realDnsResponse == null || realDnsResponse.Length == 0)
+                {
+                    realDnsResponse = await QueryDnsOverHttpsAsync(requestPacket.Payload, domain, ct);
+                }
+
+                if (realDnsResponse != null && realDnsResponse.Length > 0)
+                {
+                    var realPacket = DnsPacket.Parse(realDnsResponse);
+                    if (realPacket != null)
+                    {
+                        // Record real IPs with proper routing decisions but do NOT cache
+                        // them as DNS responses (clients must keep using the fake IPs).
+                        await RecordResolvedAddressesAsync(realPacket, domain, ct);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[DNS ] FakeIP background real-DNS resolution failed for {Domain}", domain);
+            }
+        }, ct);
+    }
+
+    /// <summary>
+    /// Builds a synthetic DNS A-record response that returns <paramref name="fakeIp"/>
+    /// for <paramref name="domain"/> with a short TTL (300 s).
+    /// </summary>
+    private static byte[] BuildFakeIpDnsResponse(DnsPacket query, string domain, IPAddress fakeIp)
+    {
+        // Response flags: QR=1, RA=1, preserve RD from query.
+        var flags = (ushort)(0x8000 | 0x0080 | (query.Flags.Value & 0x0100));
+        var response = new DnsPacket
+        {
+            TransactionId = query.TransactionId,
+            Flags = new DnsFlags(flags),
+            Questions = [new DnsQuestion { Name = domain, Type = 1, Class = 1 }],
+            Answers =
+            [
+                new DnsAnswer
+                {
+                    Name = domain,
+                    Type = 1,
+                    Class = 1,
+                    TTL = 300,
+                    Data = fakeIp.GetAddressBytes()
+                }
+            ]
+        };
+        return response.Build();
+    }
 
     private async Task RecordResolvedAddressesAsync(byte[] dnsResponse, string domain, CancellationToken ct)
     {

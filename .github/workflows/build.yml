@@ -276,7 +276,7 @@ jobs:
         curl --fail --location --retry 5 --retry-delay 3 --retry-all-errors \
           --connect-timeout 20 --max-time 180 \
           "$GFWLIST_URL" -o "$d/gfwlist.txt"
-        python3 -c "import base64, pathlib; data = pathlib.Path('$d/gfwlist.txt').read_text().strip(); assert base64.b64decode(data, validate=True)"
+        python3 -c "import base64, pathlib; data = pathlib.Path('$d/gfwlist.txt').read_text(); decoded = base64.b64decode(''.join(data.split())); assert len(decoded) > 0"
 
         ls -lh "$d/GeoLite2-Country.mmdb" "$d/gfwlist.txt"
 

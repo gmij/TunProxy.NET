@@ -174,7 +174,7 @@ public sealed class FakeIpPool
         new([FirstOctet, SecondOctet, (byte)(index >> 8), (byte)(index & 0xFF)]);
 
     private static string NormalizeDomain(string domain) =>
-        domain.Trim().TrimEnd('.').ToLowerInvariant();
+        domain.Trim().TrimEnd('.');
 
     private sealed class FakeIpEntry(uint index, DateTime lastUsedUtc)
     {

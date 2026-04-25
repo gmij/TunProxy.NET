@@ -260,21 +260,25 @@ jobs:
           -o dist/osx-arm64 --nologo
 
     - name: Download release resources
-      shell: pwsh
+      shell: bash
       run: |
-        $ErrorActionPreference = "Stop"
-        $d = "dist/osx-arm64"
-        Invoke-WebRequest $env:GEOIP_URL -OutFile "$d/GeoLite2-Country.mmdb" -UseBasicParsing
-        if ((Get-Item "$d/GeoLite2-Country.mmdb").Length -lt 1024) {
-          throw "GeoLite2-Country.mmdb is unexpectedly small."
-        }
+        set -euo pipefail
+        d="dist/osx-arm64"
 
-        Invoke-WebRequest $env:GFWLIST_URL -OutFile "$d/gfwlist.txt" -UseBasicParsing
-        $decoded = [Convert]::FromBase64String((Get-Content "$d/gfwlist.txt" -Raw).Trim())
-        if ($decoded.Length -eq 0) { throw "gfwlist.txt decoded to an empty payload." }
+        curl --fail --location --retry 5 --retry-delay 3 --retry-all-errors \
+          --connect-timeout 20 --max-time 180 \
+          "$GEOIP_URL" -o "$d/GeoLite2-Country.mmdb"
+        if [ "$(wc -c < "$d/GeoLite2-Country.mmdb")" -lt 1024 ]; then
+          echo "GeoLite2-Country.mmdb is unexpectedly small." >&2
+          exit 1
+        fi
 
-        Get-ChildItem "$d/GeoLite2-Country.mmdb", "$d/gfwlist.txt" |
-          Format-Table Name, @{L="KB";E={[int]($_.Length/1KB)}}
+        curl --fail --location --retry 5 --retry-delay 3 --retry-all-errors \
+          --connect-timeout 20 --max-time 180 \
+          "$GFWLIST_URL" -o "$d/gfwlist.txt"
+        python3 -c "import base64, pathlib; data = pathlib.Path('$d/gfwlist.txt').read_text().strip(); assert base64.b64decode(data, validate=True)"
+
+        ls -lh "$d/GeoLite2-Country.mmdb" "$d/gfwlist.txt"
 
     - name: Assemble dist
       run: |

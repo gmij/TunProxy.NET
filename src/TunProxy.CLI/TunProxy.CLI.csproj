@@ -29,8 +29,12 @@
 
   <ItemGroup>
     <Content Remove="wwwroot\**\*" />
+    <None Remove="serilog.defaults.json" />
     <EmbeddedResource Include="wwwroot\**\*">
       <LogicalName>wwwroot/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="serilog.defaults.json">
+      <LogicalName>serilog.defaults.json</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 

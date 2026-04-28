@@ -1,12 +1,7 @@
+using Serilog;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Principal;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Serilog;
 using TunProxy.Core;
 using TunProxy.Core.Configuration;
 using TunProxy.Core.WindowsServices;
@@ -15,14 +10,10 @@ namespace TunProxy.CLI;
 
 public class Program
 {
-    private const int RetainedLogFileCountLimit = 3;
-    private const string ConsoleOutputTemplate = "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}";
-
     public static async Task Main(string[] args)
     {
-        Log.Logger = CreateLogger(
-            Serilog.Events.LogEventLevel.Information,
-            AppPaths.DefaultLogFilePath);
+        var serilogConfiguration = EmbeddedSerilogConfiguration.Build();
+        Log.Logger = CreateLogger(serilogConfiguration);
 
         try
         {
@@ -77,18 +68,12 @@ public class Program
             Log.Information("Version: {Version}", typeof(Program).Assembly.GetName().Version);
             Log.Information("========================================");
 
-            var logLevel = config.Logging.MinimumLevel?.ToLowerInvariant() switch
-            {
-                "debug" => Serilog.Events.LogEventLevel.Debug,
-                "warning" => Serilog.Events.LogEventLevel.Warning,
-                "error" => Serilog.Events.LogEventLevel.Error,
-                _ => Serilog.Events.LogEventLevel.Information
-            };
-
             await Log.CloseAndFlushAsync();
-            var logFilePath = ResolveLogFilePath(config.Logging.FilePath);
-            Log.Logger = CreateLogger(logLevel, logFilePath);
-            Log.Information("File logging path: {Path}", logFilePath);
+            serilogConfiguration = EmbeddedSerilogConfiguration.Build(
+                config.Logging.FilePath,
+                config.Logging.MinimumLevel);
+            Log.Logger = CreateLogger(serilogConfiguration);
+            Log.Information("File logging path: {Path}", serilogConfiguration[EmbeddedSerilogConfiguration.FileSinkPathKey]);
 
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
@@ -203,27 +188,11 @@ public class Program
         return config;
     }
 
-    private static string ResolveLogFilePath(string? configuredPath)
-    {
-        var path = string.IsNullOrWhiteSpace(configuredPath)
-            ? "logs/tunproxy-.log"
-            : configuredPath;
-
-        return AppPathResolver.ResolveAppFilePath(path);
-    }
-
-    private static Serilog.ILogger CreateLogger(
-        Serilog.Events.LogEventLevel minimumLevel,
-        string logFilePath) =>
+    private static Serilog.ILogger CreateLogger(IConfiguration serilogConfiguration) =>
         new LoggerConfiguration()
-            .MinimumLevel.Is(minimumLevel)
-            .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
-            .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
-            .WriteTo.Console(outputTemplate: ConsoleOutputTemplate)
-            .WriteTo.File(
-                logFilePath,
-                rollingInterval: RollingInterval.Day,
-                retainedFileCountLimit: RetainedLogFileCountLimit)
+            .ReadFrom.Configuration(serilogConfiguration, new Serilog.Settings.Configuration.ConfigurationReaderOptions(
+                typeof(Serilog.ConsoleLoggerConfigurationExtensions).Assembly,
+                typeof(Serilog.FileLoggerConfigurationExtensions).Assembly))
             .WriteTo.Sink(MemoryLogSink.Instance)
             .CreateLogger();
 

@@ -499,11 +499,13 @@ public class TunProxyService : IProxyService
                     _metrics.IncrementTotalConnections();
                     _metrics.IncrementActiveConnections();
 
+                    var cachedHostname = GetCachedHostnameForIp(packet.Header.DestinationAddress);
+                    var dnsCacheInfo = cachedHostname == null ? "miss" : $"hit:{cachedHostname}";
                     var target = TunConnectionDecisions.SelectTarget(
                         destPort,
                         destIP,
                         initialPayload,
-                        GetCachedHostnameForIp(packet.Header.DestinationAddress));
+                        cachedHostname);
 
                     // For fake-IP destinations the destination address is a virtual placeholder
                     // from the 198.18.0.0/16 pool.  Pass null so that geo / private-IP checks
@@ -562,7 +564,15 @@ public class TunProxyService : IProxyService
                     var usingProxy = connManager == _connectionManager;
                     var routeLabel = usingProxy ? "PROXY" : "DIRECT";
                     var srcLabel = $"{target.DomainSource}/{finalDecision.Reason}";
-                    Log.Information("[CONN] {Host}:{Port}  {Route}  ({Source})", target.ConnectHost, destPort, routeLabel, srcLabel);
+                    Log.Information(
+                        "[CONN] {Host}:{Port}  {Route}  ({Source}; Cache={DnsCache}; DestIP={DestIP}; Conn={Connection})",
+                        target.ConnectHost,
+                        destPort,
+                        routeLabel,
+                        srcLabel,
+                        dnsCacheInfo,
+                        destIP,
+                        connKey);
 
                     conn = connManager.GetOrCreateConnection(packet);
                     if (conn == null)

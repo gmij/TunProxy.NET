@@ -15,16 +15,14 @@ namespace TunProxy.CLI;
 
 public class Program
 {
+    private const int RetainedLogFileCountLimit = 3;
+    private const string ConsoleOutputTemplate = "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}";
+
     public static async Task Main(string[] args)
     {
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
-            .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
-            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-            .WriteTo.File(AppPaths.DefaultLogFilePath, rollingInterval: RollingInterval.Day)
-            .WriteTo.Sink(MemoryLogSink.Instance)
-            .CreateLogger();
+        Log.Logger = CreateLogger(
+            Serilog.Events.LogEventLevel.Information,
+            AppPaths.DefaultLogFilePath);
 
         try
         {
@@ -88,17 +86,9 @@ public class Program
             };
 
             await Log.CloseAndFlushAsync();
-            Log.Logger = new LoggerConfiguration()
-                .MinimumLevel.Is(logLevel)
-                .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
-                .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
-                .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-                .WriteTo.File(
-                    ResolveLogFilePath(config.Logging.FilePath),
-                    rollingInterval: RollingInterval.Day)
-                .WriteTo.Sink(MemoryLogSink.Instance)
-                .CreateLogger();
-            Log.Information("File logging path: {Path}", ResolveLogFilePath(config.Logging.FilePath));
+            var logFilePath = ResolveLogFilePath(config.Logging.FilePath);
+            Log.Logger = CreateLogger(logLevel, logFilePath);
+            Log.Information("File logging path: {Path}", logFilePath);
 
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
@@ -221,6 +211,21 @@ public class Program
 
         return AppPathResolver.ResolveAppFilePath(path);
     }
+
+    private static Serilog.ILogger CreateLogger(
+        Serilog.Events.LogEventLevel minimumLevel,
+        string logFilePath) =>
+        new LoggerConfiguration()
+            .MinimumLevel.Is(minimumLevel)
+            .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+            .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
+            .WriteTo.Console(outputTemplate: ConsoleOutputTemplate)
+            .WriteTo.File(
+                logFilePath,
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: RetainedLogFileCountLimit)
+            .WriteTo.Sink(MemoryLogSink.Instance)
+            .CreateLogger();
 
     private static void ApplyWindowsSystemProxyDefaults(AppConfig config)
     {

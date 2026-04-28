@@ -344,6 +344,11 @@ public class Program
         if (WindowsServiceManager.IsInstalled())
         {
             Log.Information("Windows service is already installed. Starting {Name}...", TunProxyProduct.ServiceName);
+            if (IsAdministrator())
+            {
+                WindowsServiceManager.EnsureAutomaticStart();
+            }
+
             return WindowsServiceManager.StartInstalledService();
         }
 

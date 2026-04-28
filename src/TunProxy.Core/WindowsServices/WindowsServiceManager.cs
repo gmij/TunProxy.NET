@@ -115,11 +115,25 @@ public static class WindowsServiceManager
         string displayName = TunProxyProduct.DisplayName,
         string description = TunProxyProduct.ServiceDescription)
     {
-        RunSc($"create {serviceName} binPath= \"{exePath}\" start= auto DisplayName= \"{displayName}\"");
+        ConfigureAutomaticStart(exePath, serviceName, displayName);
         RunSc($"description {serviceName} \"{description}\"");
         RunSc($"sdset {serviceName} D:(A;;CCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;LCRPWPCR;;;IU)");
         RunSc($"failure {serviceName} reset= 60 actions= restart/1000");
         RunSc($"failureflag {serviceName} 1");
+    }
+
+    public static (int ExitCode, string Output) ConfigureAutomaticStart(
+        string exePath,
+        string serviceName = TunProxyProduct.ServiceName,
+        string displayName = TunProxyProduct.DisplayName)
+    {
+        return RunSc($"create {serviceName} binPath= \"{exePath}\" start= auto DisplayName= \"{displayName}\"");
+    }
+
+    public static (int ExitCode, string Output) EnsureAutomaticStart(
+        string serviceName = TunProxyProduct.ServiceName)
+    {
+        return RunSc($"config {serviceName} start= auto");
     }
 
     public static void Uninstall(string serviceName = TunProxyProduct.ServiceName)

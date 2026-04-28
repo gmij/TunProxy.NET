@@ -11,17 +11,20 @@ internal sealed class TunOutboundBindAddressSelector
 {
     private readonly Func<string, int, IPAddress?> _probeLocalIpForHost;
     private readonly Func<string, IPAddress?> _findLocalAddressForGateway;
+    private readonly Func<IPAddress, IPAddress?> _findLocalAddressForDestinationSubnet;
     private readonly Func<string, IPAddress[]> _resolveHost;
     private readonly Func<IPAddress, bool> _isUsableLocalAddress;
 
     public TunOutboundBindAddressSelector(
         Func<string, int, IPAddress?>? probeLocalIpForHost = null,
         Func<string, IPAddress?>? findLocalAddressForGateway = null,
+        Func<IPAddress, IPAddress?>? findLocalAddressForDestinationSubnet = null,
         Func<string, IPAddress[]>? resolveHost = null,
         Func<IPAddress, bool>? isUsableLocalAddress = null)
     {
         _probeLocalIpForHost = probeLocalIpForHost ?? ProbeLocalIpForHost;
         _findLocalAddressForGateway = findLocalAddressForGateway ?? FindLocalAddressForGateway;
+        _findLocalAddressForDestinationSubnet = findLocalAddressForDestinationSubnet ?? FindLocalAddressForDestinationSubnet;
         _resolveHost = resolveHost ?? Dns.GetHostAddresses;
         _isUsableLocalAddress = isUsableLocalAddress ?? IsUsableLocalAddress;
     }
@@ -29,22 +32,37 @@ internal sealed class TunOutboundBindAddressSelector
     public IPAddress? Select(
         ProxyConfig proxyConfig,
         IRouteService? routeService,
+        IPAddress? preferredBindAddress = null) =>
+        SelectWithSource(proxyConfig, routeService, preferredBindAddress).Address;
+
+    internal OutboundBindSelection SelectWithSource(
+        ProxyConfig proxyConfig,
+        IRouteService? routeService,
         IPAddress? preferredBindAddress = null)
     {
         if (IPAddress.TryParse(proxyConfig.Host, out var proxyAddress) &&
             IPAddress.IsLoopback(proxyAddress))
         {
-            return null;
+            return new OutboundBindSelection(null, OutboundBindAddressSource.None);
         }
 
         var proxyAddresses = ResolveProxyAddresses(proxyConfig.Host);
+        var subnetMatched = SelectFromLocalSubnet(proxyAddresses);
         var routed = SelectFromProxyRoute(proxyAddresses, routeService);
-        if (TryUsePreferredAddress(preferredBindAddress, proxyAddresses, routeService, routed))
+        if (TryUsePreferredAddress(preferredBindAddress, subnetMatched, routed))
         {
             Log.Information(
                 "[TUN ] Outbound bind address selected from runtime state: {BindAddress}",
                 preferredBindAddress);
-            return preferredBindAddress;
+            return new OutboundBindSelection(preferredBindAddress, OutboundBindAddressSource.RuntimeState);
+        }
+
+        if (subnetMatched != null)
+        {
+            Log.Information(
+                "[TUN ] Outbound bind address selected from local subnet match: {BindAddress}",
+                subnetMatched);
+            return new OutboundBindSelection(subnetMatched, OutboundBindAddressSource.LocalSubnet);
         }
 
         if (routed != null)
@@ -52,13 +70,13 @@ internal sealed class TunOutboundBindAddressSelector
             Log.Information(
                 "[TUN ] Outbound bind address selected from proxy route: {BindAddress}",
                 routed);
-            return routed;
+            return new OutboundBindSelection(routed, OutboundBindAddressSource.ProxyRoute);
         }
 
         var probed = _probeLocalIpForHost(proxyConfig.Host, proxyConfig.Port);
         if (probed != null && !IPAddress.IsLoopback(probed))
         {
-            return probed;
+            return new OutboundBindSelection(probed, OutboundBindAddressSource.Probe);
         }
 
         var originalGateway = routeService?.GetOriginalDefaultGateway();
@@ -71,23 +89,22 @@ internal sealed class TunOutboundBindAddressSelector
                     "[TUN ] Outbound bind address selected from gateway {Gateway}: {BindAddress}",
                     originalGateway,
                     gatewayAddress);
-                return gatewayAddress;
+                return new OutboundBindSelection(gatewayAddress, OutboundBindAddressSource.Gateway);
             }
         }
 
         if (probed != null)
         {
-            return null;
+            return new OutboundBindSelection(null, OutboundBindAddressSource.None);
         }
 
         Log.Warning("[TUN ] Could not select a stable outbound bind address; proxy connections will use the OS route table.");
-        return null;
+        return new OutboundBindSelection(null, OutboundBindAddressSource.None);
     }
 
     private bool TryUsePreferredAddress(
         IPAddress? preferredBindAddress,
-        IReadOnlyList<IPAddress> proxyAddresses,
-        IRouteService? routeService,
+        IPAddress? subnetMatchedAddress,
         IPAddress? routedAddress)
     {
         if (preferredBindAddress == null ||
@@ -98,21 +115,31 @@ internal sealed class TunOutboundBindAddressSelector
             return false;
         }
 
+        if (subnetMatchedAddress != null)
+        {
+            return preferredBindAddress.Equals(subnetMatchedAddress);
+        }
+
         if (routedAddress != null)
         {
             return preferredBindAddress.Equals(routedAddress);
         }
 
-        foreach (var proxyAddress in proxyAddresses)
+        return true;
+    }
+
+    private IPAddress? SelectFromLocalSubnet(IReadOnlyList<IPAddress> proxyAddresses)
+    {
+        foreach (var address in proxyAddresses)
         {
-            var routeAddress = routeService?.GetLocalAddressForDestination(proxyAddress);
-            if (routeAddress != null)
+            var localAddress = _findLocalAddressForDestinationSubnet(address);
+            if (localAddress != null && !IPAddress.IsLoopback(localAddress))
             {
-                return preferredBindAddress.Equals(routeAddress);
+                return localAddress;
             }
         }
 
-        return true;
+        return null;
     }
 
     private IPAddress? SelectFromProxyRoute(IReadOnlyList<IPAddress> proxyAddresses, IRouteService? routeService)
@@ -226,6 +253,66 @@ internal sealed class TunOutboundBindAddressSelector
         return null;
     }
 
+    internal static IPAddress? FindLocalAddressForDestinationSubnet(IPAddress destination)
+    {
+        if (destination.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return null;
+        }
+
+        try
+        {
+            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (networkInterface.OperationalStatus != OperationalStatus.Up ||
+                    networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                    networkInterface.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) ||
+                    networkInterface.Name.Contains("TunProxy", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                foreach (var unicast in networkInterface.GetIPProperties().UnicastAddresses)
+                {
+                    if (unicast.Address.AddressFamily != AddressFamily.InterNetwork ||
+                        unicast.IPv4Mask == null ||
+                        IPAddress.IsLoopback(unicast.Address))
+                    {
+                        continue;
+                    }
+
+                    if (IsAddressInSubnet(destination, unicast.Address, unicast.IPv4Mask))
+                    {
+                        return unicast.Address;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("[TUN ] Failed to match local subnet for {Destination}: {Message}", destination, ex.Message);
+        }
+
+        return null;
+    }
+
+    private static bool IsAddressInSubnet(IPAddress address, IPAddress localAddress, IPAddress netmask)
+    {
+        var addressBytes = address.GetAddressBytes();
+        var localBytes = localAddress.GetAddressBytes();
+        var maskBytes = netmask.GetAddressBytes();
+
+        for (var i = 0; i < addressBytes.Length; i++)
+        {
+            if ((addressBytes[i] & maskBytes[i]) != (localBytes[i] & maskBytes[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     internal static IPAddress? ProbeLocalIpForHost(string host, int port)
     {
         try
@@ -239,4 +326,26 @@ internal sealed class TunOutboundBindAddressSelector
             return null;
         }
     }
+}
+
+internal enum OutboundBindAddressSource
+{
+    None,
+    RuntimeState,
+    LocalSubnet,
+    ProxyRoute,
+    Probe,
+    Gateway
+}
+
+internal readonly record struct OutboundBindSelection(
+    IPAddress? Address,
+    OutboundBindAddressSource Source)
+{
+    public bool IsReady =>
+        Address != null &&
+        Source is OutboundBindAddressSource.RuntimeState
+            or OutboundBindAddressSource.LocalSubnet
+            or OutboundBindAddressSource.ProxyRoute
+            or OutboundBindAddressSource.Probe;
 }

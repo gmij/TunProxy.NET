@@ -164,6 +164,59 @@ public class WindowsRouteServiceTests
     }
 
     [Fact]
+    public void SelectBestOnLinkRouteCandidate_MatchesProxyAddressToLocalSubnet()
+    {
+        var candidates = new[]
+        {
+            new OnLinkRouteCandidate(
+                "Wi-Fi",
+                12,
+                IPAddress.Parse("192.168.66.76"),
+                IPAddress.Parse("255.255.255.0")),
+            new OnLinkRouteCandidate(
+                "Corp",
+                24,
+                IPAddress.Parse("10.144.20.231"),
+                IPAddress.Parse("255.255.0.0"))
+        };
+
+        var candidate = WindowsRouteService.SelectBestOnLinkRouteCandidate(
+            candidates,
+            IPAddress.Parse("10.144.20.222"),
+            "10.0.0.1");
+
+        Assert.NotNull(candidate);
+        Assert.Equal("Corp", candidate.InterfaceName);
+        Assert.Equal(IPAddress.Parse("10.144.20.231"), candidate.LocalAddress);
+    }
+
+    [Fact]
+    public void SelectBestOnLinkRouteCandidate_PrefersLongestMatchingPrefix()
+    {
+        var candidates = new[]
+        {
+            new OnLinkRouteCandidate(
+                "CorpWide",
+                24,
+                IPAddress.Parse("10.144.1.10"),
+                IPAddress.Parse("255.255.0.0")),
+            new OnLinkRouteCandidate(
+                "CorpLan",
+                25,
+                IPAddress.Parse("10.144.20.231"),
+                IPAddress.Parse("255.255.255.0"))
+        };
+
+        var candidate = WindowsRouteService.SelectBestOnLinkRouteCandidate(
+            candidates,
+            IPAddress.Parse("10.144.20.222"),
+            "10.0.0.1");
+
+        Assert.NotNull(candidate);
+        Assert.Equal("CorpLan", candidate.InterfaceName);
+    }
+
+    [Fact]
     public void ResolveTunInterfaceName_PrefersInterfaceWithTunIpOverEarlierWintunAdapter()
     {
         var candidates = new[]

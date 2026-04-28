@@ -54,6 +54,8 @@ public class TunProxyService : IProxyService
     private const int PacketQueueCapacity = 4096;
     private const int MaxInitialPayloadBufferBytes = 64 * 1024;
     private static readonly TimeSpan PendingRelayStateIdleTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan OutboundReadyWaitTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan OutboundReadyPollInterval = TimeSpan.FromSeconds(1);
 
     public TunProxyService(AppConfig config)
     {
@@ -213,6 +215,7 @@ public class TunProxyService : IProxyService
 
             if (_config.Route.AutoAddDefaultRoute)
             {
+                await WaitForOutboundReadyAsync(ct);
                 Log.Information("[ROUTE] Applying proxy bypass routes and TUN default route...");
                 AddProxyBypassRoutes();
                 SelectOutboundBindAddress();
@@ -1040,6 +1043,56 @@ public class TunProxyService : IProxyService
         foreach (var ipAddress in _proxyBypassRouteConfigurator.AddProxyBypassRoutes(_config.Proxy, _routeService))
         {
             _proxyBypassRoutes.Add(ipAddress);
+        }
+    }
+
+    private async Task WaitForOutboundReadyAsync(CancellationToken ct)
+    {
+        var selector = new TunOutboundBindAddressSelector();
+        var deadline = DateTime.UtcNow + OutboundReadyWaitTimeout;
+        var attempt = 0;
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            attempt++;
+
+            var preferredBindAddress = _runtimeStateStore.LoadLastOutboundBindAddress();
+            var selection = selector.SelectWithSource(
+                _config.Proxy,
+                _routeService,
+                preferredBindAddress);
+
+            if (selection.IsReady)
+            {
+                Log.Information(
+                    "[ROUTE] Outbound path ready after {Attempt} attempt(s): Source={Source}, BindAddress={BindAddress}",
+                    attempt,
+                    selection.Source,
+                    selection.Address);
+                return;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                Log.Warning(
+                    "[ROUTE] Outbound path was not ready after waiting {TimeoutSeconds}s. LastSource={Source}, LastBindAddress={BindAddress}. Continuing with best-effort startup.",
+                    OutboundReadyWaitTimeout.TotalSeconds,
+                    selection.Source,
+                    selection.Address?.ToString() ?? "(not bound)");
+                return;
+            }
+
+            if (attempt == 1 || attempt % 5 == 0)
+            {
+                Log.Information(
+                    "[ROUTE] Waiting for outbound path to become ready before applying TUN routes. Attempt={Attempt}, LastSource={Source}, LastBindAddress={BindAddress}",
+                    attempt,
+                    selection.Source,
+                    selection.Address?.ToString() ?? "(not bound)");
+            }
+
+            await Task.Delay(OutboundReadyPollInterval, ct);
         }
     }
 

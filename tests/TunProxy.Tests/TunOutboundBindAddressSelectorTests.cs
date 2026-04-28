@@ -28,6 +28,7 @@ public class TunOutboundBindAddressSelectorTests
         var selector = new TunOutboundBindAddressSelector(
             (_, _) => probed,
             _ => throw new InvalidOperationException("gateway lookup should not run when probe succeeds"),
+            _ => null,
             _ => []);
 
         var result = selector.Select(
@@ -59,6 +60,7 @@ public class TunOutboundBindAddressSelectorTests
         var selector = new TunOutboundBindAddressSelector(
             (_, _) => throw new InvalidOperationException("probe should not run when route lookup succeeds"),
             _ => throw new InvalidOperationException("gateway lookup should not run when route lookup succeeds"),
+            _ => null,
             host => host == "proxy.example" ? [IPAddress.Parse("10.144.20.222")] : []);
 
         var result = selector.Select(
@@ -75,6 +77,7 @@ public class TunOutboundBindAddressSelectorTests
         var selector = new TunOutboundBindAddressSelector(
             (_, _) => throw new InvalidOperationException("probe should not run when preferred address is usable"),
             _ => throw new InvalidOperationException("gateway lookup should not run when preferred address is usable"),
+            _ => null,
             _ => [],
             address => address.Equals(routeAddress));
 
@@ -94,6 +97,7 @@ public class TunOutboundBindAddressSelectorTests
         var selector = new TunOutboundBindAddressSelector(
             (_, _) => throw new InvalidOperationException("probe should not run when route lookup succeeds"),
             _ => throw new InvalidOperationException("gateway lookup should not run when route lookup succeeds"),
+            _ => null,
             _ => [],
             address => address.Equals(staleAddress));
 
@@ -112,6 +116,7 @@ public class TunOutboundBindAddressSelectorTests
         var selector = new TunOutboundBindAddressSelector(
             (_, _) => IPAddress.Loopback,
             gateway => gateway == "192.168.1.1" ? gatewayAddress : null,
+            _ => null,
             _ => []);
 
         var result = selector.Select(
@@ -127,6 +132,7 @@ public class TunOutboundBindAddressSelectorTests
         var selector = new TunOutboundBindAddressSelector(
             (_, _) => null,
             _ => null,
+            _ => null,
             _ => []);
 
         var result = selector.Select(
@@ -134,6 +140,42 @@ public class TunOutboundBindAddressSelectorTests
             new FakeRouteService(null));
 
         Assert.Null(result);
+    }
+
+    [Fact]
+    public void Select_PrefersLocalSubnetMatchOverConflictingRoute()
+    {
+        var subnetAddress = IPAddress.Parse("10.144.20.231");
+        var routeAddress = IPAddress.Parse("192.168.66.76");
+        var selector = new TunOutboundBindAddressSelector(
+            (_, _) => throw new InvalidOperationException("probe should not run when subnet match succeeds"),
+            _ => throw new InvalidOperationException("gateway lookup should not run when subnet match succeeds"),
+            destination => destination.Equals(IPAddress.Parse("10.144.20.222")) ? subnetAddress : null);
+
+        var result = selector.Select(
+            new ProxyConfig { Host = "10.144.20.222", Port = 7890 },
+            new FakeRouteService("192.168.1.1", routeAddress));
+
+        Assert.Equal(subnetAddress, result);
+    }
+
+    [Fact]
+    public void Select_UsesPreferredAddressWhenNoCurrentRouteEvidenceExists()
+    {
+        var preferred = IPAddress.Parse("10.144.20.231");
+        var selector = new TunOutboundBindAddressSelector(
+            (_, _) => throw new InvalidOperationException("probe should not run when preferred address is usable"),
+            _ => throw new InvalidOperationException("gateway lookup should not run when preferred address is usable"),
+            _ => null,
+            _ => [],
+            address => address.Equals(preferred));
+
+        var result = selector.Select(
+            new ProxyConfig { Host = "10.144.20.222", Port = 7890 },
+            new FakeRouteService(null),
+            preferred);
+
+        Assert.Equal(preferred, result);
     }
 
     private sealed class FakeRouteService(string? gateway, IPAddress? localAddress = null) : IRouteService

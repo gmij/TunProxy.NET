@@ -59,7 +59,10 @@ internal sealed class TrayApp : IDisposable
     private bool _autoStarted;
     private bool _serviceModeMismatch;
     private bool _setupConsoleOpened;
+    private readonly object _localCliStartLock = new();
+    private DateTime? _lastLocalCliStartUtc;
     private readonly SystemProxy _sysProxy = new(AppDir);
+    private static readonly TimeSpan LocalCliStartThrottleWindow = TimeSpan.FromSeconds(8);
 
     private static string AppDir =>
         Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
@@ -505,6 +508,11 @@ internal sealed class TrayApp : IDisposable
                 return;
             }
 
+            if (!TryBeginLocalCliStart())
+            {
+                return;
+            }
+
             Process.Start(new ProcessStartInfo
             {
                 FileName = cliPath,
@@ -556,6 +564,8 @@ internal sealed class TrayApp : IDisposable
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
+            ResetLocalCliStartGuard();
+
             if (ex is Win32Exception win32 && win32.NativeErrorCode == 1223)
             {
                 return;
@@ -566,6 +576,34 @@ internal sealed class TrayApp : IDisposable
                 Format("Tray.Stop.Failed", ex.Message),
                 Text("Tray.Caption.Error"),
                 MB_OK | MB_ICONERROR);
+        }
+    }
+
+    private bool TryBeginLocalCliStart()
+    {
+        lock (_localCliStartLock)
+        {
+            if (_lastLocalCliStartUtc.HasValue &&
+                DateTime.UtcNow - _lastLocalCliStartUtc.Value < LocalCliStartThrottleWindow)
+            {
+                return false;
+            }
+
+            if (Process.GetProcessesByName("TunProxy.CLI").Length > 0)
+            {
+                return false;
+            }
+
+            _lastLocalCliStartUtc = DateTime.UtcNow;
+            return true;
+        }
+    }
+
+    private void ResetLocalCliStartGuard()
+    {
+        lock (_localCliStartLock)
+        {
+            _lastLocalCliStartUtc = null;
         }
     }
 

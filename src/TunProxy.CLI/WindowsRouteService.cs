@@ -152,7 +152,41 @@ public class WindowsRouteService : IRouteService
 
     public bool AddBypassRoute(string ipAddress, int prefixLength = 32)
     {
-        if (prefixLength == 32 && TryFindExistingSpecificRoute(ipAddress, out var existingRoute))
+        if (prefixLength == 32 &&
+            IPAddress.TryParse(ipAddress, out var bypassAddress) &&
+            bypassAddress.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var onLinkCandidate = FindOnLinkRouteCandidate(bypassAddress);
+
+            if (TryFindExistingSpecificRoute(ipAddress, out var existingRoute))
+            {
+                if (onLinkCandidate == null || RouteUsesLocalAddress(existingRoute, onLinkCandidate.LocalAddress))
+                {
+                    Log.Information(
+                        "[ROUTE] Bypass route already covered by existing route: {IP}/{Prefix} via {Gateway} on {Interface}",
+                        ipAddress,
+                        prefixLength,
+                        existingRoute.Gateway,
+                        existingRoute.Interface);
+                    return true;
+                }
+
+                Log.Information(
+                    "[ROUTE] Existing bypass route for {IP}/{Prefix} uses {ExistingInterface}, but {IP} is on-link via {LocalAddress} on {Interface}; replacing it.",
+                    ipAddress,
+                    prefixLength,
+                    existingRoute.Interface,
+                    onLinkCandidate.LocalAddress,
+                    onLinkCandidate.InterfaceName);
+                RemoveBypassRoute(ipAddress);
+            }
+
+            if (onLinkCandidate != null)
+            {
+                return AddOnLinkBypassRoute(ipAddress, prefixLength, onLinkCandidate);
+            }
+        }
+        else if (prefixLength == 32 && TryFindExistingSpecificRoute(ipAddress, out var existingRoute))
         {
             Log.Information(
                 "[ROUTE] Bypass route already covered by existing route: {IP}/{Prefix} via {Gateway} on {Interface}",
@@ -203,6 +237,55 @@ public class WindowsRouteService : IRouteService
             output.Trim());
         return false;
     }
+
+    private bool AddOnLinkBypassRoute(string ipAddress, int prefixLength, OnLinkRouteCandidate candidate)
+    {
+        var mask = GetMaskForPrefixLength(prefixLength);
+        var netshCommand = $"interface ipv4 add route {ipAddress}/{prefixLength} \"{candidate.InterfaceName}\" 0.0.0.0";
+        var (exitCode, output) = ExecuteCommandWithOutput("netsh", netshCommand);
+        if (exitCode == 0 || OnLinkRouteExists(ipAddress, mask, candidate.LocalAddress))
+        {
+            Log.Information(
+                "[ROUTE] Bypass route ready: {IP}/{Prefix} on-link via {Interface} ({LocalAddress})",
+                ipAddress,
+                prefixLength,
+                candidate.InterfaceName,
+                candidate.LocalAddress);
+            _addedBypassRoutes.Add(ipAddress);
+            return true;
+        }
+
+        var routeCommand = $"add {ipAddress} mask {mask} 0.0.0.0 IF {candidate.InterfaceIndex}";
+        var (routeExitCode, routeOutput) = ExecuteCommandWithOutput("route", routeCommand);
+        if (routeExitCode == 0 || OnLinkRouteExists(ipAddress, mask, candidate.LocalAddress))
+        {
+            Log.Information(
+                "[ROUTE] Bypass route ready: {IP}/{Prefix} on-link via interface index {InterfaceIndex} ({LocalAddress})",
+                ipAddress,
+                prefixLength,
+                candidate.InterfaceIndex,
+                candidate.LocalAddress);
+            _addedBypassRoutes.Add(ipAddress);
+            return true;
+        }
+
+        Log.Warning(
+            "[ROUTE] Failed to add on-link bypass route {IP}/{Prefix} via {Interface} ({LocalAddress}). netsh={NetshOutput}; route={RouteOutput}",
+            ipAddress,
+            prefixLength,
+            candidate.InterfaceName,
+            candidate.LocalAddress,
+            output.Trim(),
+            routeOutput.Trim());
+        return false;
+    }
+
+    private static string GetMaskForPrefixLength(int prefixLength) => prefixLength switch
+    {
+        24 => "255.255.255.0",
+        16 => "255.255.0.0",
+        _ => "255.255.255.255"
+    };
 
     internal bool TryFindExistingSpecificRoute(string ipAddress, out RouteEntry route)
     {
@@ -462,9 +545,113 @@ public class WindowsRouteService : IRouteService
         return null;
     }
 
+    private OnLinkRouteCandidate? FindOnLinkRouteCandidate(IPAddress destination)
+    {
+        try
+        {
+            return SelectBestOnLinkRouteCandidate(
+                GetOnLinkRouteCandidates(NetworkInterface.GetAllNetworkInterfaces()),
+                destination,
+                _tunIpAddress);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("[ROUTE] Failed to inspect on-link interfaces for {Destination}: {Message}", destination, ex.Message);
+            return null;
+        }
+    }
+
+    private static IEnumerable<OnLinkRouteCandidate> GetOnLinkRouteCandidates(IEnumerable<NetworkInterface> interfaces)
+    {
+        foreach (var networkInterface in interfaces)
+        {
+            if (!IsUsablePhysicalInterface(networkInterface))
+            {
+                continue;
+            }
+
+            IPInterfaceProperties properties;
+            IPv4InterfaceProperties? ipv4Properties;
+            try
+            {
+                properties = networkInterface.GetIPProperties();
+                ipv4Properties = properties.GetIPv4Properties();
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (ipv4Properties == null)
+            {
+                continue;
+            }
+
+            foreach (var unicast in properties.UnicastAddresses)
+            {
+                if (unicast.Address.AddressFamily != AddressFamily.InterNetwork ||
+                    IPAddress.IsLoopback(unicast.Address) ||
+                    IPAddress.Any.Equals(unicast.Address) ||
+                    IPAddress.None.Equals(unicast.Address) ||
+                    unicast.IPv4Mask == null)
+                {
+                    continue;
+                }
+
+                yield return new OnLinkRouteCandidate(
+                    networkInterface.Name,
+                    ipv4Properties.Index,
+                    unicast.Address,
+                    unicast.IPv4Mask);
+            }
+        }
+    }
+
+    internal static OnLinkRouteCandidate? SelectBestOnLinkRouteCandidate(
+        IEnumerable<OnLinkRouteCandidate> candidates,
+        IPAddress destination,
+        string tunIpAddress)
+    {
+        if (destination.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return null;
+        }
+
+        return candidates
+            .Where(candidate =>
+                candidate.LocalAddress.AddressFamily == AddressFamily.InterNetwork &&
+                candidate.Netmask.AddressFamily == AddressFamily.InterNetwork &&
+                !candidate.LocalAddress.ToString().Equals(tunIpAddress, StringComparison.OrdinalIgnoreCase) &&
+                IsAddressInSubnet(destination, candidate.LocalAddress, candidate.Netmask))
+            .OrderByDescending(candidate => GetPrefixLength(candidate.Netmask.ToString()))
+            .ThenBy(candidate => candidate.InterfaceName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+
+    private static bool IsAddressInSubnet(IPAddress address, IPAddress localAddress, IPAddress netmask)
+    {
+        var addressValue = ToUInt32(address);
+        var localValue = ToUInt32(localAddress);
+        var maskValue = ToUInt32(netmask);
+        return (addressValue & maskValue) == (localValue & maskValue);
+    }
+
+    private static bool RouteUsesLocalAddress(RouteEntry route, IPAddress localAddress)
+    {
+        return route.Interface.Equals(localAddress.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
     private bool RouteExists(string ipAddress, string mask = "255.255.255.255")
     {
         return GetRouteTable().Any(route => route.Network == ipAddress && route.Netmask == mask);
+    }
+
+    private bool OnLinkRouteExists(string ipAddress, string mask, IPAddress localAddress)
+    {
+        return GetRouteTable().Any(route =>
+            route.Network == ipAddress &&
+            route.Netmask == mask &&
+            RouteUsesLocalAddress(route, localAddress));
     }
 
     private bool TestInternetConnectivity()
@@ -742,6 +929,12 @@ public class RouteEntry
     public string Interface { get; set; } = "";
     public string Metric { get; set; } = "";
 }
+
+internal sealed record OnLinkRouteCandidate(
+    string InterfaceName,
+    int InterfaceIndex,
+    IPAddress LocalAddress,
+    IPAddress Netmask);
 
 public class RouteDiagnosisResult
 {

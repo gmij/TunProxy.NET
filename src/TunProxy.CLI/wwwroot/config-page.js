@@ -3,7 +3,6 @@ var latestMode = null;
 var ruleResourceStatus = null;
 var ruleResourceFailures = {};
 var upstreamProxyStatus = null;
-var routingUnlocked = false;
 var checkedConfigKey = null;
 var savedConfigKey = null;
 var proxyChecking = false;
@@ -18,14 +17,6 @@ function showError(message) {
 
 function hideError() {
   document.getElementById('alert-error').style.display = 'none';
-}
-
-function splitLines(text) {
-  return text.split('\n').map(function (line) {
-    return line.trim();
-  }).filter(function (line) {
-    return line.length > 0;
-  });
 }
 
 function buildProxyConfigFromFields() {
@@ -75,7 +66,9 @@ function buildSaveComparableConfig() {
       enabled: payload.tun.enabled
     },
     route: {
-      mode: payload.route.mode
+      mode: payload.route.mode,
+      enableGfwList: payload.route.enableGfwList,
+      enableGeo: payload.route.enableGeo
     }
   };
 }
@@ -92,12 +85,8 @@ function hasConfigChanges() {
   return savedConfigKey !== null && getSaveConfigKey() !== savedConfigKey;
 }
 
-function isProxyCheckCurrent() {
-  return !!(upstreamProxyStatus && upstreamProxyStatus.isAvailable && checkedConfigKey === getCurrentConfigKey());
-}
-
 function canSaveConfig() {
-  return isProxyCheckCurrent() && hasConfigChanges();
+  return hasProxyEndpoint() && hasConfigChanges();
 }
 
 function getSystemProxyMode() {
@@ -121,10 +110,6 @@ function updateModeDependentControls() {
 
   var mode = getSystemProxyMode();
   localPortCol.style.display = mode === 'pac' || mode === 'global' ? '' : 'none';
-}
-
-function isTunMode() {
-  return latestMode === 'tun';
 }
 
 function hasProxyEndpoint() {
@@ -159,36 +144,44 @@ function hasMissingRuleResources() {
   return !areRuleResourcesReady();
 }
 
-function setFlowBadge(id, ready, active, label) {
-  var badge = document.getElementById(id);
-  if (!badge) {
-    return;
-  }
-  badge.textContent = label;
-  badge.className = ready
-    ? 'badge bg-success'
-    : active
-      ? 'badge bg-info text-dark'
-      : 'badge bg-secondary';
-}
-
 function updateWorkflowControls() {
   var proxyReady = isProxyReadyForWorkflow();
-  var resourcesReady = areRuleResourcesReady();
   var canPrepareResources = proxyReady && hasMissingRuleResources() && !resourcesPreparing && !savingConfig;
   var checkButton = document.getElementById('check-proxy-button');
+  var saveButton = document.getElementById('save-config-button');
+  var saveStatusText = document.getElementById('save-status-text');
   var geoButton = document.getElementById('geo-resource-button');
   var gfwButton = document.getElementById('gfw-resource-button');
   var prepareButton = document.getElementById('prepare-resources-button');
 
-  routingUnlocked = true;
   checkButton.disabled = proxyChecking || resourcesPreparing || savingConfig || !hasProxyEndpoint();
-  checkButton.textContent = canSaveConfig()
-    ? window.TunProxyI18n.t('Page.Config.Save')
+  checkButton.textContent = proxyChecking
+    ? window.TunProxyI18n.t('Page.Config.ProxyStatus.Checking')
     : window.TunProxyI18n.t('Page.Config.ProxyCheck');
-  checkButton.className = canSaveConfig()
-    ? 'btn btn-sm btn-success'
-    : 'btn btn-sm btn-outline-primary';
+  checkButton.className = 'btn btn-sm btn-outline-primary';
+
+  saveButton.disabled = proxyChecking || resourcesPreparing || savingConfig || !canSaveConfig();
+  saveButton.textContent = savingConfig
+    ? window.TunProxyI18n.t('Page.Config.SaveStatus.Saving')
+    : window.TunProxyI18n.t('Page.Config.SaveRestart');
+
+  if (!hasProxyEndpoint()) {
+    saveStatusText.textContent = window.TunProxyI18n.t('Page.Config.SaveStatus.EndpointRequired');
+    saveStatusText.className = 'small text-muted';
+  }
+  else if (savingConfig) {
+    saveStatusText.textContent = window.TunProxyI18n.t('Page.Config.SaveStatus.Saving');
+    saveStatusText.className = 'small text-muted';
+  }
+  else if (hasConfigChanges()) {
+    saveStatusText.textContent = window.TunProxyI18n.t('Page.Config.SaveStatus.Ready');
+    saveStatusText.className = 'small text-success';
+  }
+  else {
+    saveStatusText.textContent = window.TunProxyI18n.t('Page.Config.SaveStatus.NoChanges');
+    saveStatusText.className = 'small text-muted';
+  }
+
   geoButton.disabled = !proxyReady || resourcesPreparing || savingConfig;
   gfwButton.disabled = !proxyReady || resourcesPreparing || savingConfig;
 
@@ -200,16 +193,10 @@ function updateWorkflowControls() {
 
   var pacSection = document.getElementById('pac-section');
   if (pacSection) {
-    pacSection.style.display = isProxyCheckCurrent() && getSystemProxyMode() === 'pac' ? '' : 'none';
+    pacSection.style.display = hasProxyEndpoint() && getSystemProxyMode() === 'pac' ? '' : 'none';
   }
 
   updateModeDependentControls();
-}
-
-function setRoutingUnlocked(unlocked) {
-  routingUnlocked = true;
-  renderRuleResourceStatus();
-  updateWorkflowControls();
 }
 
 function resetProxyStatus() {
@@ -220,7 +207,8 @@ function resetProxyStatus() {
   badge.className = 'badge bg-secondary';
   document.getElementById('proxy-status-text').textContent = window.TunProxyI18n.t('Page.Config.ProxyStatus.Hint');
   document.getElementById('proxy-check-panel').style.display = 'none';
-  setRoutingUnlocked(false);
+  renderRuleResourceStatus();
+  updateWorkflowControls();
 }
 
 function renderProxyStatus(status) {
@@ -396,7 +384,7 @@ function renderSingleRuleResource(name, status, enabled) {
   button.textContent = ruleResourceFailures[name]
     ? window.TunProxyI18n.t('Page.Config.RuleResource.Retry')
     : window.TunProxyI18n.t('Page.Config.RuleResource.Download');
-  button.disabled = !routingUnlocked || resourcesPreparing || savingConfig;
+  button.disabled = !hasProxyEndpoint() || resourcesPreparing || savingConfig;
   button.style.display = '';
 }
 
@@ -491,8 +479,13 @@ function showRestartCountdown() {
 function saveConfig() {
   hideError();
 
-  if (!canSaveConfig()) {
+  if (!hasProxyEndpoint()) {
     showError(window.TunProxyI18n.t('Page.Config.ProxyStatus.RequiredBeforeSave'));
+    return;
+  }
+
+  if (!hasConfigChanges()) {
+    updateWorkflowControls();
     return;
   }
 
@@ -511,38 +504,6 @@ function saveConfig() {
       updateWorkflowControls();
       showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
     });
-}
-
-function saveRouteSettings() {
-  hideError();
-  savingConfig = true;
-  updateWorkflowControls();
-
-  var payload = buildConfigPayloadFromFields();
-  payload.tun.enabled = cfg.tun.enabled;
-  payload.localProxy.systemProxyMode = cfg.localProxy.systemProxyMode;
-  payload.localProxy.setSystemProxy = cfg.localProxy.setSystemProxy;
-  payload.route.mode = cfg.route.mode;
-
-  window.TunProxyApi.post('/api/config', payload)
-    .then(function () {
-      cfg = payload;
-      return loadRuleResourceStatus();
-    })
-    .catch(function (error) {
-      showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
-    })
-    .finally(function () {
-      savingConfig = false;
-      updateWorkflowControls();
-    });
-}
-
-function selectConfigTab(name) {
-  document.getElementById('proxy-tab').style.display = name === 'proxy' ? '' : 'none';
-  document.getElementById('routing-tab').style.display = name === 'routing' ? '' : 'none';
-  document.getElementById('proxy-tab-button').classList.toggle('active', name === 'proxy');
-  document.getElementById('routing-tab-button').classList.toggle('active', name === 'routing');
 }
 
 function copyPacUrl() {
@@ -603,7 +564,7 @@ document.addEventListener('tunproxy:i18n-updated', function () {
   if (upstreamProxyStatus) {
     renderProxyStatus(upstreamProxyStatus);
   }
-  else if (isTunMode()) {
+  else {
     resetProxyStatus();
   }
   renderRuleResourceStatus();
@@ -611,19 +572,8 @@ document.addEventListener('tunproxy:i18n-updated', function () {
 });
 
 window.TunProxyI18n.initPage().then(function () {
-  document.getElementById('check-proxy-button').addEventListener('click', function () {
-    if (canSaveConfig()) {
-      saveConfig();
-    }
-    else {
-      checkUpstreamProxy();
-    }
-  });
-  document.querySelectorAll('[data-config-tab]').forEach(function (button) {
-    button.addEventListener('click', function () {
-      selectConfigTab(button.dataset.configTab);
-    });
-  });
+  document.getElementById('check-proxy-button').addEventListener('click', checkUpstreamProxy);
+  document.getElementById('save-config-button').addEventListener('click', saveConfig);
   document.getElementById('prepare-resources-button').addEventListener('click', prepareAllRuleResources);
   ['proxyHost', 'proxyPort', 'proxyType', 'proxyUsername', 'proxyPassword'].forEach(function (id) {
     document.getElementById(id).addEventListener('input', resetProxyStatus);
@@ -643,22 +593,18 @@ window.TunProxyI18n.initPage().then(function () {
   });
   document.getElementById('enableGeo').addEventListener('change', function () {
     renderRuleResourceStatus();
-    saveRouteSettings();
+    updateWorkflowControls();
   });
   document.getElementById('enableGfw').addEventListener('change', function () {
     renderRuleResourceStatus();
-    saveRouteSettings();
+    updateWorkflowControls();
   });
   document.getElementById('copy-pac-button').addEventListener('click', copyPacUrl);
   document.getElementById('apply-pac-button').addEventListener('click', applyPac);
   document.getElementById('clear-pac-button').addEventListener('click', clearPac);
 
-  selectConfigTab('proxy');
-  setRoutingUnlocked(true);
   Promise.all([loadMode(), loadConfig(), loadRuleResourceStatus()])
-    .then(function () {
-      return hasProxyEndpoint() ? checkUpstreamProxy() : resetProxyStatus();
-    })
+    .then(updateWorkflowControls)
     .catch(function (error) {
     showError(window.TunProxyI18n.format('Page.Config.SaveFailed', error.message));
   });

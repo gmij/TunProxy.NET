@@ -133,7 +133,7 @@
     <value>Unchecked</value>
   </data>
   <data name="Page.Config.ProxyStatus.Hint" xml:space="preserve">
-    <value>Routing rules unlock after Google, GitHub, and YouTube all return HTTP 200 through this proxy.</value>
+    <value>Optional check through this proxy against Google, GitHub, and YouTube.</value>
   </data>
   <data name="Page.Config.ProxyStatus.Checking" xml:space="preserve">
     <value>Checking...</value>
@@ -142,13 +142,13 @@
     <value>Available</value>
   </data>
   <data name="Page.Config.ProxyStatus.AvailableHint" xml:space="preserve">
-    <value>Upstream proxy is ready. Save the configuration to apply it after restart.</value>
+    <value>Connection check passed. Save and restart to apply configuration changes.</value>
   </data>
   <data name="Page.Config.ProxyStatus.Unavailable" xml:space="preserve">
     <value>Unavailable</value>
   </data>
   <data name="Page.Config.ProxyStatus.UnavailableHint" xml:space="preserve">
-    <value>Fix the upstream proxy before saving this configuration.</value>
+    <value>Connection check failed. You can still save endpoint settings or download resources if the proxy is reachable for those requests.</value>
   </data>
   <data name="Page.Config.ProxyStatus.TargetOk" xml:space="preserve">
     <value>OK in {0} ms</value>
@@ -160,7 +160,7 @@
     <value>Proxy check failed: {0}</value>
   </data>
   <data name="Page.Config.ProxyStatus.RequiredBeforeSave" xml:space="preserve">
-    <value>Please check the upstream proxy first. Configuration can only be saved after all three sites return HTTP 200 through the proxy.</value>
+    <value>Enter the upstream proxy host and port before saving or downloading rule resources.</value>
   </data>
   <data name="Page.Config.ProxyPort" xml:space="preserve">
     <value>Port</value>
@@ -201,6 +201,21 @@
   <data name="Page.Config.Save" xml:space="preserve">
     <value>Save Configuration</value>
   </data>
+  <data name="Page.Config.SaveRestart" xml:space="preserve">
+    <value>Save and restart</value>
+  </data>
+  <data name="Page.Config.SaveStatus.EndpointRequired" xml:space="preserve">
+    <value>Enter the upstream proxy host and port to enable saving.</value>
+  </data>
+  <data name="Page.Config.SaveStatus.NoChanges" xml:space="preserve">
+    <value>No configuration changes to save.</value>
+  </data>
+  <data name="Page.Config.SaveStatus.Ready" xml:space="preserve">
+    <value>Configuration changes are ready to save.</value>
+  </data>
+  <data name="Page.Config.SaveStatus.Saving" xml:space="preserve">
+    <value>Saving...</value>
+  </data>
   <data name="Page.Config.SaveFailed" xml:space="preserve">
     <value>Failed to save configuration: {0}</value>
   </data>
@@ -224,6 +239,24 @@
   </data>
   <data name="Page.Config.SystemProxyMode.None" xml:space="preserve">
     <value>Do not change system proxy</value>
+  </data>
+  <data name="Page.Config.StepUpstream" xml:space="preserve">
+    <value>Upstream proxy</value>
+  </data>
+  <data name="Page.Config.StepUpstreamHint" xml:space="preserve">
+    <value>Fill in the proxy endpoint first. The connection test is optional and does not block saving or resource downloads.</value>
+  </data>
+  <data name="Page.Config.StepRoutingResources" xml:space="preserve">
+    <value>Routing resources</value>
+  </data>
+  <data name="Page.Config.StepRoutingResourcesHint" xml:space="preserve">
+    <value>Download GFWList and GeoIP resources before enabling smart routing modes that depend on them.</value>
+  </data>
+  <data name="Page.Config.StepProxyMode" xml:space="preserve">
+    <value>Proxy mode</value>
+  </data>
+  <data name="Page.Config.StepProxyModeHint" xml:space="preserve">
+    <value>Choose how TunProxy should take over traffic, then save and restart to apply the final configuration.</value>
   </data>
   <data name="Page.Config.ApplyPac" xml:space="preserve">
     <value>Use as system PAC</value>

@@ -16,40 +16,23 @@
   <div id="alert-error" class="alert alert-danger" style="display:none"></div>
 
   <h4 class="mb-3" data-i18n="Page.Config.Title"></h4>
-  <div class="mb-4">
+  <div class="mb-4 pb-3 border-bottom">
     <div class="d-flex align-items-center gap-2 mb-2">
       <span class="text-muted small" data-i18n="Page.Config.CurrentMode"></span>
       <span id="mode-badge" class="badge bg-secondary" data-i18n="Shared.Loading"></span>
     </div>
     <div id="mode-hint-proxy" class="alert alert-info py-2 small mb-2" style="display:none" data-i18n-html="Page.Config.ModeHintProxyHtml"></div>
     <div id="mode-hint-tun" class="alert alert-warning py-2 small mb-2" style="display:none" data-i18n-html="Page.Config.ModeHintTunHtml"></div>
-    <div id="local-port-row" class="row g-2 mb-2" style="display:none">
-      <div id="local-port-col" class="col-4 col-md-2">
-        <label class="form-label small text-muted" for="localPort" data-i18n="Page.Config.LocalProxyPort"></label>
-        <input type="number" class="form-control form-control-sm" id="localPort" value="8080" />
-      </div>
-      <div class="col-8 col-md-3">
-        <label class="form-label small text-muted" for="systemProxyMode" data-i18n="Page.Config.SystemProxyMode"></label>
-        <select class="form-select form-select-sm" id="systemProxyMode">
-          <option value="pac" data-i18n="Page.Config.SystemProxyMode.Pac"></option>
-          <option value="global" data-i18n="Page.Config.SystemProxyMode.Global"></option>
-          <option value="tun" data-i18n="Page.Config.SystemProxyMode.Tun"></option>
-          <option value="none" data-i18n="Page.Config.SystemProxyMode.None"></option>
-        </select>
-      </div>
     </div>
-  </div>
 
-  <ul class="nav nav-tabs mb-3" role="tablist">
-    <li class="nav-item" role="presentation">
-      <button type="button" class="nav-link active" id="proxy-tab-button" data-config-tab="proxy" data-i18n="Page.Config.ProxyServer"></button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button type="button" class="nav-link" id="routing-tab-button" data-config-tab="routing" data-i18n="Page.Config.RoutingRules"></button>
-    </li>
-  </ul>
-
-  <section id="proxy-tab" class="config-tab-panel">
+  <section id="upstream-section" class="mb-4 pb-3 border-bottom">
+    <div class="mb-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <span class="badge rounded-pill text-bg-secondary">1</span>
+        <h5 class="mb-0" data-i18n="Page.Config.StepUpstream"></h5>
+      </div>
+      <div class="small text-muted" data-i18n="Page.Config.StepUpstreamHint"></div>
+    </div>
     <div class="row g-2 mb-2">
       <div class="col-8 col-md-5">
         <label class="form-label small text-muted" for="proxyHost" data-i18n="Page.Config.ProxyHost"></label>
@@ -87,7 +70,14 @@
     </div>
   </section>
 
-  <section id="routing-tab" class="config-tab-panel" style="display:none">
+  <section id="routing-section" class="mb-4 pb-3 border-bottom">
+    <div class="mb-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <span class="badge rounded-pill text-bg-secondary">2</span>
+        <h5 class="mb-0" data-i18n="Page.Config.StepRoutingResources"></h5>
+      </div>
+      <div class="small text-muted" data-i18n="Page.Config.StepRoutingResourcesHint"></div>
+    </div>
     <div id="routing-panel">
       <div class="alert alert-info py-2 small mb-3" data-i18n="Page.Config.SmartRoutingDescription"></div>
       <div class="row g-2 mb-3">
@@ -105,13 +95,13 @@
         </div>
       </div>
       <div class="border rounded p-2 small mb-2" id="rule-resource-panel">
-        <div class="d-flex align-items-center gap-2 mb-2" id="gfw-resource-row">
+        <div class="d-flex align-items-center gap-2 flex-wrap mb-2" id="gfw-resource-row">
           <span class="fw-semibold" style="width:72px">GFW</span>
           <span class="badge bg-secondary" id="gfw-resource-status">-</span>
           <code class="text-muted flex-grow-1 text-truncate" id="gfw-resource-path"></code>
           <button type="button" class="btn btn-sm btn-outline-primary" id="gfw-resource-button" style="display:none"></button>
         </div>
-        <div class="d-flex align-items-center gap-2" id="geo-resource-row">
+        <div class="d-flex align-items-center gap-2 flex-wrap" id="geo-resource-row">
           <span class="fw-semibold" style="width:72px">GEO</span>
           <span class="badge bg-secondary" id="geo-resource-status">-</span>
           <code class="text-muted flex-grow-1 text-truncate" id="geo-resource-path"></code>
@@ -121,6 +111,35 @@
       <div class="d-flex align-items-center gap-2 flex-wrap mt-2">
         <button type="button" class="btn btn-sm btn-outline-primary" id="prepare-resources-button" style="display:none"></button>
       </div>
+    </div>
+  </section>
+
+  <section id="mode-section" class="mb-4">
+    <div class="mb-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <span class="badge rounded-pill text-bg-secondary">3</span>
+        <h5 class="mb-0" data-i18n="Page.Config.StepProxyMode"></h5>
+      </div>
+      <div class="small text-muted" data-i18n="Page.Config.StepProxyModeHint"></div>
+    </div>
+    <div id="local-port-row" class="row g-2 mb-3" style="display:none">
+      <div class="col-8 col-md-3">
+        <label class="form-label small text-muted" for="systemProxyMode" data-i18n="Page.Config.SystemProxyMode"></label>
+        <select class="form-select form-select-sm" id="systemProxyMode">
+          <option value="pac" data-i18n="Page.Config.SystemProxyMode.Pac"></option>
+          <option value="global" data-i18n="Page.Config.SystemProxyMode.Global"></option>
+          <option value="tun" data-i18n="Page.Config.SystemProxyMode.Tun"></option>
+          <option value="none" data-i18n="Page.Config.SystemProxyMode.None"></option>
+        </select>
+      </div>
+      <div id="local-port-col" class="col-4 col-md-2">
+        <label class="form-label small text-muted" for="localPort" data-i18n="Page.Config.LocalProxyPort"></label>
+        <input type="number" class="form-control form-control-sm" id="localPort" value="8080" />
+      </div>
+    </div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <button type="button" class="btn btn-sm btn-success" id="save-config-button" data-i18n="Page.Config.SaveRestart"></button>
+      <span id="save-status-text" class="small text-muted" data-i18n="Page.Config.SaveStatus.NoChanges"></span>
     </div>
   </section>
 

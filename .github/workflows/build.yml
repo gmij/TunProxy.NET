@@ -173,16 +173,21 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
-    - name: Publish CLI (AOT, focal baseline)
+    - name: Publish CLI (AOT, ubuntu 20.04 baseline)
       run: |
         docker run --rm \
           -v "$PWD:/work" \
           -w /work \
-          mcr.microsoft.com/dotnet/sdk:8.0-focal \
-          bash -lc '
+          ubuntu:20.04 \
+          /bin/bash -lc '
             set -euo pipefail
             apt-get update -q
-            DEBIAN_FRONTEND=noninteractive apt-get install -y clang zlib1g-dev
+            DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates clang zlib1g-dev
+            curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+            bash /tmp/dotnet-install.sh --channel 8.0 --quality ga --install-dir /tmp/dotnet
+            export DOTNET_ROOT=/tmp/dotnet
+            export PATH="$DOTNET_ROOT:$PATH"
+            dotnet --info
             dotnet restore src/TunProxy.CLI/TunProxy.CLI.csproj
             dotnet publish src/TunProxy.CLI/TunProxy.CLI.csproj \
               -c Release -r linux-x64 --no-restore \

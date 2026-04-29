@@ -188,7 +188,7 @@ jobs:
             export DOTNET_ROOT=/tmp/dotnet
             export PATH="$DOTNET_ROOT:$PATH"
             dotnet --info
-            dotnet restore src/TunProxy.CLI/TunProxy.CLI.csproj
+            dotnet restore src/TunProxy.CLI/TunProxy.CLI.csproj -r linux-x64
             dotnet publish src/TunProxy.CLI/TunProxy.CLI.csproj \
               -c Release -r linux-x64 --no-restore \
               -p:DebugType=none -p:DebugSymbols=false \

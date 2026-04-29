@@ -163,7 +163,7 @@ jobs:
         path: dist/win-x64
 
   # ─────────────────────────────────────────────────────────────
-  # Linux  linux-x64   CLI (AOT)
+  # Linux  linux-x64   CLI (AOT built in Ubuntu 20.04 container for older glibc baseline)
   # ─────────────────────────────────────────────────────────────
   publish-linux:
     name: Publish · Linux x64
@@ -173,25 +173,22 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
-    - name: Setup .NET 8
-      uses: actions/setup-dotnet@v5
-      with:
-        dotnet-version: '8.0.x'
-
-    - name: Install AOT prerequisites
+    - name: Publish CLI (AOT, focal baseline)
       run: |
-        sudo apt-get update -q
-        sudo apt-get install -y clang zlib1g-dev
-
-    - name: Restore (CLI)
-      run: dotnet restore src/TunProxy.CLI/TunProxy.CLI.csproj
-
-    - name: Publish CLI (AOT)
-      run: |
-        dotnet publish src/TunProxy.CLI/TunProxy.CLI.csproj \
-          -c Release -r linux-x64 --no-restore \
-          -p:DebugType=none -p:DebugSymbols=false \
-          -o dist/linux-x64 --nologo
+        docker run --rm \
+          -v "$PWD:/work" \
+          -w /work \
+          mcr.microsoft.com/dotnet/sdk:8.0-focal \
+          bash -lc '
+            set -euo pipefail
+            apt-get update -q
+            DEBIAN_FRONTEND=noninteractive apt-get install -y clang zlib1g-dev
+            dotnet restore src/TunProxy.CLI/TunProxy.CLI.csproj
+            dotnet publish src/TunProxy.CLI/TunProxy.CLI.csproj \
+              -c Release -r linux-x64 --no-restore \
+              -p:DebugType=none -p:DebugSymbols=false \
+              -o dist/linux-x64 --nologo
+          '
 
     - name: Download release resources
       shell: pwsh

@@ -1,4 +1,5 @@
 using TunProxy.CLI;
+using Serilog;
 
 namespace TunProxy.Tests;
 
@@ -83,6 +84,37 @@ public class SerilogDefaultsTests
 
         Assert.Null(configuration["Serilog:MinimumLevel:Default"]);
         Assert.Null(EmbeddedSerilogConfiguration.GetFileSinkPath(configuration));
+    }
+
+    [Fact]
+    public async Task CreateLogger_WiresFileSinkFromConfiguration()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), $"serilog-runtime-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+        var logFilePath = Path.Combine(tempDirectory, "runtime.log");
+
+        try
+        {
+            var configuration = EmbeddedSerilogConfiguration.Build(
+                logFilePathOverride: logFilePath,
+                assembly: typeof(ApiEndpoints).Assembly);
+            var createLogger = typeof(Program).GetMethod("CreateLogger", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            Assert.NotNull(createLogger);
+
+            var logger = Assert.IsAssignableFrom<ILogger>(createLogger!.Invoke(null, [configuration]));
+            logger.Information("serilog-file-sink-check");
+            (logger as IDisposable)?.Dispose();
+
+            Assert.True(File.Exists(logFilePath));
+            Assert.Contains("serilog-file-sink-check", await File.ReadAllTextAsync(logFilePath));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDirectory))
+            {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+        }
     }
 
     private static string? NormalizePath(string? path) =>

@@ -1,4 +1,5 @@
 using Serilog;
+using Serilog.Events;
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Security.Principal;
@@ -10,6 +11,8 @@ namespace TunProxy.CLI;
 
 public class Program
 {
+    private const string DefaultConsoleOutputTemplate = "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}";
+
     public static async Task Main(string[] args)
     {
         var serilogConfiguration = EmbeddedSerilogConfiguration.Build();
@@ -188,13 +191,77 @@ public class Program
         return config;
     }
 
-    private static Serilog.ILogger CreateLogger(IConfiguration serilogConfiguration) =>
-        new LoggerConfiguration()
-            .ReadFrom.Configuration(serilogConfiguration, new Serilog.Settings.Configuration.ConfigurationReaderOptions(
-                typeof(Serilog.ConsoleLoggerConfigurationExtensions).Assembly,
-                typeof(Serilog.FileLoggerConfigurationExtensions).Assembly))
+    private static Serilog.ILogger CreateLogger(IConfiguration serilogConfiguration)
+    {
+        var loggerConfiguration = new LoggerConfiguration();
+        ApplyMinimumLevels(loggerConfiguration, serilogConfiguration);
+        ApplyConfiguredSinks(loggerConfiguration, serilogConfiguration);
+
+        return loggerConfiguration
             .WriteTo.Sink(MemoryLogSink.Instance)
             .CreateLogger();
+    }
+
+    private static void ApplyMinimumLevels(LoggerConfiguration loggerConfiguration, IConfiguration configuration)
+    {
+        var defaultLevel = ParseLogEventLevel(configuration["Serilog:MinimumLevel:Default"]);
+        loggerConfiguration.MinimumLevel.Is(defaultLevel);
+
+        foreach (var overrideSection in configuration.GetSection("Serilog:MinimumLevel:Override").GetChildren())
+        {
+            var level = ParseLogEventLevel(overrideSection.Value);
+            loggerConfiguration.MinimumLevel.Override(overrideSection.Key, level);
+        }
+    }
+
+    private static void ApplyConfiguredSinks(LoggerConfiguration loggerConfiguration, IConfiguration configuration)
+    {
+        var writeToSection = configuration.GetSection("Serilog:WriteTo");
+        var hasConfiguredSink = false;
+
+        foreach (var sinkSection in writeToSection.GetChildren())
+        {
+            var sinkName = sinkSection["Name"];
+            if (string.Equals(sinkName, "Console", StringComparison.OrdinalIgnoreCase))
+            {
+                loggerConfiguration.WriteTo.Console(
+                    outputTemplate: sinkSection["Args:outputTemplate"] ?? DefaultConsoleOutputTemplate);
+                hasConfiguredSink = true;
+                continue;
+            }
+
+            if (string.Equals(sinkName, "File", StringComparison.OrdinalIgnoreCase))
+            {
+                var path = sinkSection["Args:path"];
+                if (!string.IsNullOrWhiteSpace(path))
+                {
+                    loggerConfiguration.WriteTo.File(
+                        path: path,
+                        rollingInterval: ParseRollingInterval(sinkSection["Args:rollingInterval"]),
+                        retainedFileCountLimit: ParseNullableInt(sinkSection["Args:retainedFileCountLimit"]));
+                    hasConfiguredSink = true;
+                }
+            }
+        }
+
+        if (!hasConfiguredSink)
+        {
+            loggerConfiguration.WriteTo.Console();
+        }
+    }
+
+    private static LogEventLevel ParseLogEventLevel(string? value) =>
+        Enum.TryParse<LogEventLevel>(value, ignoreCase: true, out var level)
+            ? level
+            : LogEventLevel.Information;
+
+    private static RollingInterval ParseRollingInterval(string? value) =>
+        Enum.TryParse<RollingInterval>(value, ignoreCase: true, out var interval)
+            ? interval
+            : RollingInterval.Day;
+
+    private static int? ParseNullableInt(string? value) =>
+        int.TryParse(value, out var parsed) ? parsed : null;
 
     private static void ApplyWindowsSystemProxyDefaults(AppConfig config)
     {

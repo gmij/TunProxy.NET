@@ -191,7 +191,7 @@ public class Program
         return config;
     }
 
-    private static Serilog.ILogger CreateLogger(IConfiguration serilogConfiguration)
+    internal static Serilog.ILogger CreateLogger(IConfiguration serilogConfiguration)
     {
         var loggerConfiguration = new LoggerConfiguration();
         ApplyMinimumLevels(loggerConfiguration, serilogConfiguration);

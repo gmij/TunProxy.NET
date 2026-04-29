@@ -98,10 +98,7 @@ public class SerilogDefaultsTests
             var configuration = EmbeddedSerilogConfiguration.Build(
                 logFilePathOverride: logFilePath,
                 assembly: typeof(ApiEndpoints).Assembly);
-            var createLogger = typeof(Program).GetMethod("CreateLogger", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-            Assert.NotNull(createLogger);
-
-            var logger = Assert.IsAssignableFrom<ILogger>(createLogger!.Invoke(null, [configuration]));
+            var logger = Assert.IsAssignableFrom<ILogger>(Program.CreateLogger(configuration));
             logger.Information("serilog-file-sink-check");
             (logger as IDisposable)?.Dispose();
 

@@ -102,8 +102,10 @@ public class SerilogDefaultsTests
             logger.Information("serilog-file-sink-check");
             (logger as IDisposable)?.Dispose();
 
-            Assert.True(File.Exists(logFilePath));
-            Assert.Contains("serilog-file-sink-check", await File.ReadAllTextAsync(logFilePath));
+            var writtenLogFile = Directory.GetFiles(tempDirectory, "runtime*.log").SingleOrDefault();
+
+            Assert.NotNull(writtenLogFile);
+            Assert.Contains("serilog-file-sink-check", await File.ReadAllTextAsync(writtenLogFile));
         }
         finally
         {

@@ -182,7 +182,7 @@ jobs:
           /bin/bash -lc '
             set -euo pipefail
             apt-get update -q
-            DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates clang zlib1g-dev
+            DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates clang libicu66 zlib1g-dev
             curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
             bash /tmp/dotnet-install.sh --channel 8.0 --quality ga --install-dir /tmp/dotnet
             export DOTNET_ROOT=/tmp/dotnet

@@ -20,7 +20,7 @@ public class SerilogDefaultsTests
         Assert.Equal("Information", configuration["Serilog:MinimumLevel:Default"]);
         Assert.Equal("Warning", configuration["Serilog:MinimumLevel:Override:Microsoft"]);
         Assert.Equal("3", configuration["Serilog:WriteTo:1:Args:retainedFileCountLimit"]);
-        Assert.EndsWith(@"logs\tunproxy-.log", configuration[EmbeddedSerilogConfiguration.FileSinkPathKey]);
+        Assert.EndsWith("logs/tunproxy-.log", NormalizePath(EmbeddedSerilogConfiguration.GetFileSinkPath(configuration)));
     }
 
     [Fact]
@@ -32,7 +32,7 @@ public class SerilogDefaultsTests
             assembly: typeof(ApiEndpoints).Assembly);
 
         Assert.Equal("Debug", configuration["Serilog:MinimumLevel:Default"]);
-        Assert.EndsWith("custom.log", configuration[EmbeddedSerilogConfiguration.FileSinkPathKey]);
+        Assert.EndsWith("custom.log", NormalizePath(EmbeddedSerilogConfiguration.GetFileSinkPath(configuration)));
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public class SerilogDefaultsTests
                 assembly: typeof(ApiEndpoints).Assembly);
 
             Assert.Equal("Error", configuration["Serilog:MinimumLevel:Default"]);
-            Assert.EndsWith("local.log", configuration[EmbeddedSerilogConfiguration.FileSinkPathKey]);
+            Assert.EndsWith("local.log", NormalizePath(EmbeddedSerilogConfiguration.GetFileSinkPath(configuration)));
         }
         finally
         {
@@ -82,6 +82,9 @@ public class SerilogDefaultsTests
             assembly: assembly);
 
         Assert.Null(configuration["Serilog:MinimumLevel:Default"]);
-        Assert.Null(configuration[EmbeddedSerilogConfiguration.FileSinkPathKey]);
+        Assert.Null(EmbeddedSerilogConfiguration.GetFileSinkPath(configuration));
     }
+
+    private static string? NormalizePath(string? path) =>
+        path?.Replace('\\', '/');
 }

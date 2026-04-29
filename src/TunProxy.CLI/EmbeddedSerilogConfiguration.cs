@@ -5,6 +5,7 @@ namespace TunProxy.CLI;
 
 internal static class EmbeddedSerilogConfiguration
 {
+    private const string WriteToSectionKey = "Serilog:WriteTo";
     private const string ResourceName = "serilog.defaults.json";
     public const string FileSinkPathKey = "Serilog:WriteTo:1:Args:path";
     private const string MinimumLevelDefaultKey = "Serilog:MinimumLevel:Default";
@@ -16,7 +17,7 @@ internal static class EmbeddedSerilogConfiguration
         Assembly? assembly = null)
     {
         var baseConfiguration = BuildConfiguration(overrides: null, baseDirectory, assembly);
-        var defaultLogPath = baseConfiguration[FileSinkPathKey];
+        var defaultLogPath = GetFileSinkPath(baseConfiguration);
         var logFilePath = string.IsNullOrWhiteSpace(logFilePathOverride)
             ? defaultLogPath
             : logFilePathOverride;
@@ -25,9 +26,10 @@ internal static class EmbeddedSerilogConfiguration
 
         if (!string.IsNullOrWhiteSpace(logFilePath))
         {
+            var fileSinkPathKey = FindFileSinkPathKey(baseConfiguration) ?? FileSinkPathKey;
             overrides = new Dictionary<string, string?>
             {
-                [FileSinkPathKey] = AppPathResolver.ResolveAppFilePath(logFilePath)
+                [fileSinkPathKey] = AppPathResolver.ResolveAppFilePath(logFilePath)
             };
         }
 
@@ -58,6 +60,35 @@ internal static class EmbeddedSerilogConfiguration
         }
 
         return builder.Build();
+    }
+
+    public static string? GetFileSinkPath(IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var fileSinkPathKey = FindFileSinkPathKey(configuration);
+        return fileSinkPathKey is null ? null : configuration[fileSinkPathKey];
+    }
+
+    private static string? FindFileSinkPathKey(IConfiguration configuration)
+    {
+        foreach (var sinkSection in configuration.GetSection(WriteToSectionKey).GetChildren())
+        {
+            if (!string.Equals(sinkSection["Name"], "File", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var pathKey = $"{sinkSection.Path}:Args:path";
+            if (!string.IsNullOrWhiteSpace(configuration[pathKey]))
+            {
+                return pathKey;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(configuration[FileSinkPathKey])
+            ? null
+            : FileSinkPathKey;
     }
 
     private static Stream? OpenConfigurationStream(string? baseDirectory, Assembly assembly)

@@ -73,7 +73,7 @@ public class Program
                 config.Logging.FilePath,
                 config.Logging.MinimumLevel);
             Log.Logger = CreateLogger(serilogConfiguration);
-            Log.Information("File logging path: {Path}", serilogConfiguration[EmbeddedSerilogConfiguration.FileSinkPathKey]);
+            Log.Information("File logging path: {Path}", EmbeddedSerilogConfiguration.GetFileSinkPath(serilogConfiguration));
 
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {

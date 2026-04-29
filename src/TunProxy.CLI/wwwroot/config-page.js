@@ -517,6 +517,15 @@ function copyPacUrl() {
   });
 }
 
+function updatePacUrl() {
+  var pacUrl = document.getElementById('pac-url');
+  if (!pacUrl) {
+    return;
+  }
+
+  pacUrl.textContent = window.location.origin + '/proxy.pac';
+}
+
 function applyPac() {
   window.TunProxyApi.postJson('/api/set-pac')
     .then(function (data) {
@@ -572,6 +581,7 @@ document.addEventListener('tunproxy:i18n-updated', function () {
 });
 
 window.TunProxyI18n.initPage().then(function () {
+  updatePacUrl();
   document.getElementById('check-proxy-button').addEventListener('click', checkUpstreamProxy);
   document.getElementById('save-config-button').addEventListener('click', saveConfig);
   document.getElementById('prepare-resources-button').addEventListener('click', prepareAllRuleResources);

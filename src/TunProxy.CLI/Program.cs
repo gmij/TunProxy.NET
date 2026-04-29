@@ -1,6 +1,7 @@
 using Serilog;
 using Serilog.Events;
 using System.Diagnostics;
+using System.Net;
 using System.Runtime.Versioning;
 using System.Security.Principal;
 using TunProxy.Core;
@@ -66,6 +67,14 @@ public class Program
                 return;
             }
 
+            if (ShouldRunInBackground(args))
+            {
+                if (TryStartInBackground(args, config))
+                {
+                    return;
+                }
+            }
+
             Log.Information("========================================");
             Log.Information("TunProxy .NET 8 - {Mode}", tunMode ? "TUN mode" : "Local Proxy mode");
             Log.Information("Version: {Version}", typeof(Program).Assembly.GetName().Version);
@@ -97,11 +106,12 @@ public class Program
             builder.Host.UseSerilog();
             Log.Information("Serilog host integration configured.");
 
+            var apiListenHost = ResolveApiListenHost(args);
             builder.WebHost.ConfigureKestrel(options =>
             {
-                options.ListenLocalhost(TunProxyProduct.ApiPort);
+                ConfigureApiListener(options, apiListenHost, TunProxyProduct.ApiPort);
             });
-            Log.Information("Kestrel configured on {ApiBaseUrl}.", TunProxyProduct.ApiBaseUrl);
+            LogApiBinding(apiListenHost, TunProxyProduct.ApiPort);
 
             builder.Services.AddSingleton(config);
             builder.Services.AddSingleton<AppConfigStore>();
@@ -191,6 +201,43 @@ public class Program
         return config;
     }
 
+    internal static bool ShouldRunInBackground(string[] args) =>
+        args.Any(arg => string.Equals(arg, "--background", StringComparison.OrdinalIgnoreCase));
+
+    internal static string[] BuildForegroundArguments(string[] args) =>
+        args.Where(arg => !string.Equals(arg, "--background", StringComparison.OrdinalIgnoreCase)).ToArray();
+
+    internal static string ResolveApiListenHost(string[] args) =>
+        ResolveApiListenHost(args, OperatingSystem.IsWindows());
+
+    internal static string ResolveApiListenHost(string[] args, bool isWindows)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (!string.Equals(args[i], "--api-host", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
+            {
+                throw new InvalidOperationException("--api-host requires a value.");
+            }
+
+            return args[i + 1].Trim();
+        }
+
+        return isWindows ? "127.0.0.1" : "0.0.0.0";
+    }
+
+    internal static string BuildBackgroundLaunchCommand(string executablePath, string[] args)
+    {
+        var commandParts = new[] { "nohup", QuoteShellArgument(executablePath) }
+            .Concat(BuildForegroundArguments(args).Select(QuoteShellArgument));
+
+        return string.Join(" ", commandParts) + " >/dev/null 2>&1 < /dev/null & echo $!";
+    }
+
     internal static Serilog.ILogger CreateLogger(IConfiguration serilogConfiguration)
     {
         var loggerConfiguration = new LoggerConfiguration();
@@ -262,6 +309,105 @@ public class Program
 
     private static int? ParseNullableInt(string? value) =>
         int.TryParse(value, out var parsed) ? parsed : null;
+
+    private static bool TryStartInBackground(string[] args, AppConfig config)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Log.Warning("--background is only supported on Linux/macOS. Continuing in the foreground.");
+            return false;
+        }
+
+        var executablePath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            Log.Error("Unable to determine the executable path for background launch.");
+            return false;
+        }
+
+        var command = BuildBackgroundLaunchCommand(executablePath, args);
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "/bin/sh",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = AppContext.BaseDirectory
+        };
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add(command);
+
+        using var process = Process.Start(startInfo);
+        if (process == null)
+        {
+            Log.Error("Failed to start the background launcher process.");
+            return false;
+        }
+
+        process.WaitForExit();
+        var launcherOutput = process.StandardOutput.ReadToEnd().Trim();
+        var launcherError = process.StandardError.ReadToEnd().Trim();
+
+        if (process.ExitCode != 0)
+        {
+            Log.Error(
+                "Background launch failed with exit code {ExitCode}. {Error}",
+                process.ExitCode,
+                string.IsNullOrWhiteSpace(launcherError) ? "No error output was captured." : launcherError);
+            return false;
+        }
+
+        Log.Information(
+            "TunProxy is running in the background{PidHint}. Logs will be written to {LogPath}.",
+            string.IsNullOrWhiteSpace(launcherOutput) ? string.Empty : $" (pid {launcherOutput})",
+            config.Logging.FilePath);
+        return true;
+    }
+
+    private static void ConfigureApiListener(Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions options, string host, int port)
+    {
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            options.ListenLocalhost(port);
+            return;
+        }
+
+        if (IsAnyIpHost(host))
+        {
+            options.ListenAnyIP(port);
+            return;
+        }
+
+        if (IPAddress.TryParse(host, out var address))
+        {
+            options.Listen(address, port);
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Unsupported --api-host value '{host}'. Use localhost, 0.0.0.0, or a specific IP address.");
+    }
+
+    private static void LogApiBinding(string host, int port)
+    {
+        if (IsAnyIpHost(host))
+        {
+            Log.Information(
+                "Kestrel configured on 0.0.0.0:{Port}. Access locally via http://127.0.0.1:{Port} or remotely via http://<server-ip>:{Port}.",
+                port);
+            return;
+        }
+
+        Log.Information("Kestrel configured on http://{Host}:{Port}.", host, port);
+    }
+
+    private static bool IsAnyIpHost(string host) =>
+        string.Equals(host, "0.0.0.0", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(host, "*", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(host, "::", StringComparison.OrdinalIgnoreCase);
+
+    private static string QuoteShellArgument(string value) =>
+        "'" + value.Replace("'", "'\"'\"'") + "'";
 
     private static void ApplyWindowsSystemProxyDefaults(AppConfig config)
     {

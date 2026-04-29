@@ -98,7 +98,7 @@ public class SerilogDefaultsTests
             var configuration = EmbeddedSerilogConfiguration.Build(
                 logFilePathOverride: logFilePath,
                 assembly: typeof(ApiEndpoints).Assembly);
-            var logger = Assert.IsAssignableFrom<ILogger>(Program.CreateLogger(configuration));
+            var logger = Assert.IsAssignableFrom<ILogger>(TunProxy.CLI.Program.CreateLogger(configuration));
             logger.Information("serilog-file-sink-check");
             (logger as IDisposable)?.Dispose();
 

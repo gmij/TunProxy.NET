@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Serilog;
 using TunProxy.Core.Configuration;
+using TunProxy.Core.Metrics;
 using TunProxy.Core.Tun;
 using TunProxy.Core.Wintun;
 
@@ -78,16 +79,26 @@ public sealed class WintunDevice : ITunDevice
     public void WritePacket(byte[] packet)
     {
         if (_session == null || packet.Length == 0) return;
+        var exhaustedByOverflow = false;
         var ptr = AllocateSendPacketWithRetry(
             () => _session.AllocateSendPacket((uint)packet.Length),
             () => Marshal.GetLastWin32Error(),
             static () => Thread.Sleep(SendRingRetryDelayMilliseconds),
-            SendRingRetryCount);
+            SendRingRetryCount,
+            TunDeviceWriteMetrics.IncrementSendAllocationRetryAttempts,
+            () =>
+            {
+                exhaustedByOverflow = true;
+                TunDeviceWriteMetrics.IncrementSendAllocationDrops();
+            });
         if (ptr == IntPtr.Zero)
         {
-            Log.Warning(
-                "[TUN ] Dropped packet because Wintun send ring stayed full after {Retries} retries.",
-                SendRingRetryCount);
+            if (exhaustedByOverflow)
+            {
+                Log.Warning(
+                    "[TUN ] Dropped packet because Wintun send ring stayed full after {Retries} retries.",
+                    SendRingRetryCount);
+            }
             return;
         }
 
@@ -99,7 +110,9 @@ public sealed class WintunDevice : ITunDevice
         Func<IntPtr> allocatePacket,
         Func<int> getLastError,
         Action waitBeforeRetry,
-        int maxRetries)
+        int maxRetries,
+        Action? onRetryAttempt = null,
+        Action? onRetryExhausted = null)
     {
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
@@ -109,11 +122,18 @@ public sealed class WintunDevice : ITunDevice
                 return pointer;
             }
 
-            if ((uint)getLastError() != WintunNative.ERROR_BUFFER_OVERFLOW || attempt == maxRetries)
+            if ((uint)getLastError() != WintunNative.ERROR_BUFFER_OVERFLOW)
             {
                 return IntPtr.Zero;
             }
 
+            if (attempt == maxRetries)
+            {
+                onRetryExhausted?.Invoke();
+                return IntPtr.Zero;
+            }
+
+            onRetryAttempt?.Invoke();
             waitBeforeRetry();
         }
 

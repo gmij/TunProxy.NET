@@ -52,6 +52,8 @@ public static class LocalizedText
         "Page.Status.DirectRouted",
         "Page.Status.DnsQueries",
         "Page.Status.DnsFailures",
+        "Page.Status.TunSendAllocationRetryAttempts",
+        "Page.Status.TunSendAllocationDrops",
         "Page.Config.Title",
         "Page.Config.AlertSavedHtml",
         "Page.Config.AlertRestarting",

@@ -100,6 +100,8 @@ public class ProxyMetrics
             NonTcpUdpPackets = NonTcpUdpPackets,
             PortFilteredPackets = PortFilteredPackets,
             DirectRoutedPackets = DirectRoutedPackets,
+            TunSendAllocationRetryAttempts = TunDeviceWriteMetrics.SendAllocationRetryAttempts,
+            TunSendAllocationDrops = TunDeviceWriteMetrics.SendAllocationDrops,
             UptimeSeconds = (long)Uptime.TotalSeconds,
             BytesPerSecond = BytesPerSecond,
             PacketsPerSecond = PacketsPerSecond
@@ -126,6 +128,8 @@ public class MetricsSnapshot
     public long NonTcpUdpPackets { get; set; }
     public long PortFilteredPackets { get; set; }
     public long DirectRoutedPackets { get; set; }
+    public long TunSendAllocationRetryAttempts { get; set; }
+    public long TunSendAllocationDrops { get; set; }
     public long UptimeSeconds { get; set; }
     public double BytesPerSecond { get; set; }
     public double PacketsPerSecond { get; set; }

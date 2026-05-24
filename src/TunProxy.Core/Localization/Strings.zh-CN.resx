@@ -423,6 +423,12 @@
   <data name="Page.Status.DnsFailures" xml:space="preserve">
     <value>DNS 失败</value>
   </data>
+  <data name="Page.Status.TunSendAllocationRetryAttempts" xml:space="preserve">
+    <value>Wintun 发送重试</value>
+  </data>
+  <data name="Page.Status.TunSendAllocationDrops" xml:space="preserve">
+    <value>Wintun 发送丢包</value>
+  </data>
   <data name="Page.Status.DnsQueries" xml:space="preserve">
     <value>DNS 查询</value>
   </data>

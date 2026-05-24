@@ -18,7 +18,6 @@ public sealed class WintunDevice : ITunDevice
     private const string AdapterName = "TunProxy";
     private const string TunnelType = "Wintun";
     private static readonly Guid AdapterGuid = new("7D7F5B2D-6E4C-4C53-92E3-1F32C50DFE8B");
-    private const int SendRingRetryCount = 200;
     private const int SendRingRetryDelayMilliseconds = 1;
 
     private WintunAdapter? _adapter;
@@ -79,26 +78,15 @@ public sealed class WintunDevice : ITunDevice
     public void WritePacket(byte[] packet)
     {
         if (_session == null || packet.Length == 0) return;
-        var exhaustedByOverflow = false;
         var ptr = AllocateSendPacketWithRetry(
             () => _session.AllocateSendPacket((uint)packet.Length),
             () => Marshal.GetLastWin32Error(),
             static () => Thread.Sleep(SendRingRetryDelayMilliseconds),
-            SendRingRetryCount,
-            TunDeviceWriteMetrics.IncrementSendAllocationRetryAttempts,
-            () =>
-            {
-                exhaustedByOverflow = true;
-                TunDeviceWriteMetrics.IncrementSendAllocationDrops();
-            });
+            TunDeviceWriteMetrics.IncrementSendAllocationRetryAttempts);
         if (ptr == IntPtr.Zero)
         {
-            if (exhaustedByOverflow)
-            {
-                Log.Warning(
-                    "[TUN ] Dropped packet because Wintun send ring stayed full after {Retries} retries.",
-                    SendRingRetryCount);
-            }
+            TunDeviceWriteMetrics.IncrementSendAllocationDrops();
+            Log.Warning("[TUN ] Dropped packet because Wintun send packet allocation failed.");
             return;
         }
 
@@ -110,11 +98,9 @@ public sealed class WintunDevice : ITunDevice
         Func<IntPtr> allocatePacket,
         Func<int> getLastError,
         Action waitBeforeRetry,
-        int maxRetries,
-        Action? onRetryAttempt = null,
-        Action? onRetryExhausted = null)
+        Action? onRetryAttempt = null)
     {
-        for (var attempt = 0; attempt <= maxRetries; attempt++)
+        while (true)
         {
             var pointer = allocatePacket();
             if (pointer != IntPtr.Zero)
@@ -127,17 +113,9 @@ public sealed class WintunDevice : ITunDevice
                 return IntPtr.Zero;
             }
 
-            if (attempt == maxRetries)
-            {
-                onRetryExhausted?.Invoke();
-                return IntPtr.Zero;
-            }
-
             onRetryAttempt?.Invoke();
             waitBeforeRetry();
         }
-
-        return IntPtr.Zero;
     }
 
     public void Dispose()

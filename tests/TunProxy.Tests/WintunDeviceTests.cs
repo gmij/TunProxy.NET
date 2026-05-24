@@ -11,7 +11,6 @@ public class WintunDeviceTests
         var attempts = 0;
         var waitCalls = 0;
         var retryCalls = 0;
-        var exhaustedCalls = 0;
         var pointer = new IntPtr(123);
         var result = WintunDevice.AllocateSendPacketWithRetry(
             allocatePacket: () =>
@@ -21,34 +20,34 @@ public class WintunDeviceTests
             },
             getLastError: () => (int)WintunNative.ERROR_BUFFER_OVERFLOW,
             waitBeforeRetry: () => waitCalls++,
-            maxRetries: 5,
-            onRetryAttempt: () => retryCalls++,
-            onRetryExhausted: () => exhaustedCalls++);
+            onRetryAttempt: () => retryCalls++);
 
         Assert.Equal(pointer, result);
         Assert.Equal(2, waitCalls);
         Assert.Equal(2, retryCalls);
-        Assert.Equal(0, exhaustedCalls);
     }
 
     [Fact]
-    public void AllocateSendPacketWithRetry_ReturnsZeroWhenRetriesExhausted()
+    public void AllocateSendPacketWithRetry_ReturnsZeroWhenOverflowStopsBeingRetryable()
     {
         var waitCalls = 0;
         var retryCalls = 0;
-        var exhaustedCalls = 0;
+        var errorReads = 0;
         var result = WintunDevice.AllocateSendPacketWithRetry(
             allocatePacket: static () => IntPtr.Zero,
-            getLastError: () => (int)WintunNative.ERROR_BUFFER_OVERFLOW,
+            getLastError: () =>
+            {
+                errorReads++;
+                return errorReads <= 3
+                    ? (int)WintunNative.ERROR_BUFFER_OVERFLOW
+                    : 5;
+            },
             waitBeforeRetry: () => waitCalls++,
-            maxRetries: 3,
-            onRetryAttempt: () => retryCalls++,
-            onRetryExhausted: () => exhaustedCalls++);
+            onRetryAttempt: () => retryCalls++);
 
         Assert.Equal(IntPtr.Zero, result);
         Assert.Equal(3, waitCalls);
         Assert.Equal(3, retryCalls);
-        Assert.Equal(1, exhaustedCalls);
     }
 
     [Fact]
@@ -56,18 +55,14 @@ public class WintunDeviceTests
     {
         var waitCalls = 0;
         var retryCalls = 0;
-        var exhaustedCalls = 0;
         var result = WintunDevice.AllocateSendPacketWithRetry(
             allocatePacket: static () => IntPtr.Zero,
             getLastError: static () => 5,
             waitBeforeRetry: () => waitCalls++,
-            maxRetries: 5,
-            onRetryAttempt: () => retryCalls++,
-            onRetryExhausted: () => exhaustedCalls++);
+            onRetryAttempt: () => retryCalls++);
 
         Assert.Equal(IntPtr.Zero, result);
         Assert.Equal(0, waitCalls);
         Assert.Equal(0, retryCalls);
-        Assert.Equal(0, exhaustedCalls);
     }
 }

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using Serilog;
 using TunProxy.Core.Configuration;
 using TunProxy.Core.Tun;
 using TunProxy.Core.Wintun;
@@ -16,6 +17,8 @@ public sealed class WintunDevice : ITunDevice
     private const string AdapterName = "TunProxy";
     private const string TunnelType = "Wintun";
     private static readonly Guid AdapterGuid = new("7D7F5B2D-6E4C-4C53-92E3-1F32C50DFE8B");
+    private const int SendRingRetryCount = 200;
+    private const int SendRingRetryDelayMilliseconds = 1;
 
     private WintunAdapter? _adapter;
     private WintunSession? _session;
@@ -75,10 +78,46 @@ public sealed class WintunDevice : ITunDevice
     public void WritePacket(byte[] packet)
     {
         if (_session == null || packet.Length == 0) return;
-        var ptr = _session.AllocateSendPacket((uint)packet.Length);
-        if (ptr == IntPtr.Zero) return;
+        var ptr = AllocateSendPacketWithRetry(
+            () => _session.AllocateSendPacket((uint)packet.Length),
+            () => Marshal.GetLastWin32Error(),
+            static () => Thread.Sleep(SendRingRetryDelayMilliseconds),
+            SendRingRetryCount);
+        if (ptr == IntPtr.Zero)
+        {
+            Log.Warning(
+                "[TUN ] Dropped packet because Wintun send ring stayed full after {Retries} retries.",
+                SendRingRetryCount);
+            return;
+        }
+
         Marshal.Copy(packet, 0, ptr, packet.Length);
         _session.SendPacket(ptr);
+    }
+
+    internal static IntPtr AllocateSendPacketWithRetry(
+        Func<IntPtr> allocatePacket,
+        Func<int> getLastError,
+        Action waitBeforeRetry,
+        int maxRetries)
+    {
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            var pointer = allocatePacket();
+            if (pointer != IntPtr.Zero)
+            {
+                return pointer;
+            }
+
+            if ((uint)getLastError() != WintunNative.ERROR_BUFFER_OVERFLOW || attempt == maxRetries)
+            {
+                return IntPtr.Zero;
+            }
+
+            waitBeforeRetry();
+        }
+
+        return IntPtr.Zero;
     }
 
     public void Dispose()

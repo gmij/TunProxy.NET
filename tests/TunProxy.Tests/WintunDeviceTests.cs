@@ -1,0 +1,55 @@
+using TunProxy.CLI;
+using TunProxy.Core.Wintun;
+
+namespace TunProxy.Tests;
+
+public class WintunDeviceTests
+{
+    [Fact]
+    public void AllocateSendPacketWithRetry_ReturnsPointerAfterTransientOverflow()
+    {
+        var attempts = 0;
+        var waitCalls = 0;
+        var pointer = new IntPtr(123);
+        var result = WintunDevice.AllocateSendPacketWithRetry(
+            allocatePacket: () =>
+            {
+                attempts++;
+                return attempts < 3 ? IntPtr.Zero : pointer;
+            },
+            getLastError: () => (int)WintunNative.ERROR_BUFFER_OVERFLOW,
+            waitBeforeRetry: () => waitCalls++,
+            maxRetries: 5);
+
+        Assert.Equal(pointer, result);
+        Assert.Equal(2, waitCalls);
+    }
+
+    [Fact]
+    public void AllocateSendPacketWithRetry_ReturnsZeroWhenRetriesExhausted()
+    {
+        var waitCalls = 0;
+        var result = WintunDevice.AllocateSendPacketWithRetry(
+            allocatePacket: static () => IntPtr.Zero,
+            getLastError: () => (int)WintunNative.ERROR_BUFFER_OVERFLOW,
+            waitBeforeRetry: () => waitCalls++,
+            maxRetries: 3);
+
+        Assert.Equal(IntPtr.Zero, result);
+        Assert.Equal(3, waitCalls);
+    }
+
+    [Fact]
+    public void AllocateSendPacketWithRetry_StopsImmediatelyOnNonOverflowError()
+    {
+        var waitCalls = 0;
+        var result = WintunDevice.AllocateSendPacketWithRetry(
+            allocatePacket: static () => IntPtr.Zero,
+            getLastError: static () => 5,
+            waitBeforeRetry: () => waitCalls++,
+            maxRetries: 5);
+
+        Assert.Equal(IntPtr.Zero, result);
+        Assert.Equal(0, waitCalls);
+    }
+}

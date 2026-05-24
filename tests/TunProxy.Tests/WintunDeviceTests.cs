@@ -6,6 +6,29 @@ namespace TunProxy.Tests;
 public class WintunDeviceTests
 {
     [Fact]
+    public void AllocateSendPacketWithRetry_RetriesPastLegacyCapAndEventuallySucceeds()
+    {
+        const int overflowCount = 300; // intentionally greater than historical bounded retry cap (200)
+        var attempts = 0;
+        var waitCalls = 0;
+        var retryCalls = 0;
+        var pointer = new IntPtr(456);
+        var result = WintunDevice.AllocateSendPacketWithRetry(
+            allocatePacket: () =>
+            {
+                attempts++;
+                return attempts <= overflowCount ? IntPtr.Zero : pointer;
+            },
+            getLastError: () => (int)WintunNative.ERROR_BUFFER_OVERFLOW,
+            waitBeforeRetry: () => waitCalls++,
+            onRetryAttempt: () => retryCalls++);
+
+        Assert.Equal(pointer, result);
+        Assert.Equal(overflowCount, waitCalls);
+        Assert.Equal(overflowCount, retryCalls);
+    }
+
+    [Fact]
     public void AllocateSendPacketWithRetry_ReturnsPointerAfterTransientOverflow()
     {
         var attempts = 0;

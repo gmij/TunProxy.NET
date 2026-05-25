@@ -1045,17 +1045,12 @@ public class TunProxyService : IProxyService
                 return allowance;
             }
 
-            // Block until the client sends an ACK or window update (or 500 ms elapse).
-            // This avoids busy-polling and eliminates Windows timer-resolution jitter
-            // that would otherwise delay wakeup by up to 15 ms per poll cycle.
-            var signaled = await state.WaitForWindowUpdateAsync(TimeSpan.FromMilliseconds(500), ct);
-            if (!signaled)
-            {
-                // No ACK in 500 ms: send a keep-alive style probe (seq = LastClientAck - 1)
-                // to force the client to re-advertise its receive window.
-                TunWriter.WriteWindowProbe(device, state.SynPacket,
-                    unchecked(state.LastClientAck - 1), state.ExpectedClientSeq);
-            }
+            // Wait for the client to send an ACK/window-update, or fall back after 2 ms
+            // (matching the previous Task.Delay(2) poll interval).  The semaphore is
+            // signalled immediately by UpdateClientFlowControl on every incoming ACK, so
+            // in the common case the relay wakes up with zero additional latency rather
+            // than waiting the full 2 ms.
+            await state.WaitForWindowUpdateAsync(TimeSpan.FromMilliseconds(2), ct);
         }
 
         ct.ThrowIfCancellationRequested();

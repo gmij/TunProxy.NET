@@ -1,4 +1,3 @@
-using System.Net;
 using TunProxy.CLI;
 using TunProxy.Core.Packets;
 

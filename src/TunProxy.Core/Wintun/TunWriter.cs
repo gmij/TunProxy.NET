@@ -43,16 +43,6 @@ public static class TunWriter
         WritePacket(device, PacketBuilder.BuildFinAck(requestPacket, seqNum, ackNum));
     }
 
-    /// <summary>
-    /// Sends a keep-alive style probe (seq = probeSeq, no payload) to force the remote end
-    /// to re-advertise its receive window.  Used as a persist-timer substitute when the
-    /// client's advertised window is zero and no ACK has arrived within the probe timeout.
-    /// </summary>
-    public static void WriteWindowProbe(ITunDevice device, IPPacket synPacket, uint probeSeq, uint ackNum)
-    {
-        WritePacket(device, PacketBuilder.BuildWindowProbe(synPacket, probeSeq, ackNum));
-    }
-
     public static void WriteDataResponse(
         ITunDevice device,
         IPPacket synPacket,

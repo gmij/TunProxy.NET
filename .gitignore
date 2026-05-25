@@ -32,4 +32,7 @@ gfwlist.txt
 
 dist/**
 
-.codexbuild/**
+.codexbuild/
+.claude/
+.codextest/
+.codextmp/

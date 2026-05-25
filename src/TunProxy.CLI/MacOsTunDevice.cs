@@ -12,6 +12,7 @@ namespace TunProxy.CLI;
 [SupportedOSPlatform("macos")]
 public sealed unsafe class MacOsTunDevice : ITunDevice
 {
+    private const int MaxPacketSize    = 65535;
     private const int PF_SYSTEM         = 32;
     private const int SOCK_DGRAM        = 2;
     private const int SYSPROTO_CONTROL  = 2;
@@ -96,7 +97,7 @@ public sealed unsafe class MacOsTunDevice : ITunDevice
     public byte[]? ReadPacket()
     {
         if (_fd < 0) return null;
-        var buf = new byte[4 + 1500]; // 4 字节协议族头 + 包体
+        var buf = new byte[4 + MaxPacketSize]; // 4 字节协议族头 + 包体
         fixed (byte* p = buf)
         {
             int n = LibcRead(_fd, p, buf.Length);

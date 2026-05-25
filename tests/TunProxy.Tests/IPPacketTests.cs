@@ -31,6 +31,7 @@ public class IPPacketTests
         Assert.True(packet.IsTCP);
         Assert.Equal((ushort)12345, packet.SourcePort);
         Assert.Equal((ushort)80, packet.DestinationPort);
+        Assert.Equal((ushort)65535, packet.TCPHeader!.Value.WindowSize);
         Assert.Equal("10.0.0.1", packet.Header.SourceAddress.ToString());
         Assert.Equal("10.0.0.2", packet.Header.DestinationAddress.ToString());
         Assert.Equal(5, packet.Payload.Length);
@@ -118,6 +119,20 @@ public class IPPacketTests
         var packetData = CreateTcpPacket(totalLength: 40, tcpDataOffset: 0x40, payload: []);
 
         Assert.Null(IPPacket.Parse(packetData));
+    }
+
+    [Fact]
+    public void Parse_TcpPacket_ParsesAdvertisedWindowSize()
+    {
+        var packetData = CreateTcpPacket(totalLength: 40, tcpDataOffset: 0x50, payload: []);
+        packetData[34] = 0x04;
+        packetData[35] = 0x00;
+
+        var packet = IPPacket.Parse(packetData);
+
+        Assert.NotNull(packet);
+        Assert.True(packet!.TCPHeader.HasValue);
+        Assert.Equal((ushort)1024, packet.TCPHeader.Value.WindowSize);
     }
 
     [Fact]

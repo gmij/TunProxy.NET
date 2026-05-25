@@ -423,6 +423,12 @@
   <data name="Page.Status.DnsFailures" xml:space="preserve">
     <value>DNS failures</value>
   </data>
+  <data name="Page.Status.TunSendAllocationRetryAttempts" xml:space="preserve">
+    <value>Wintun send retries</value>
+  </data>
+  <data name="Page.Status.TunSendAllocationDrops" xml:space="preserve">
+    <value>Wintun send drops</value>
+  </data>
   <data name="Page.Status.DnsQueries" xml:space="preserve">
     <value>DNS queries</value>
   </data>

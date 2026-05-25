@@ -77,6 +77,14 @@ function renderStatus(status) {
     var dnsFailures = document.getElementById('dns-fail');
     dnsFailures.textContent = metrics.failedDnsQueries;
     dnsFailures.className = metrics.failedDnsQueries > 0 ? 'text-warning' : '';
+
+    var tunWriteRetry = document.getElementById('tun-write-retry');
+    tunWriteRetry.textContent = metrics.tunSendAllocationRetryAttempts || 0;
+    tunWriteRetry.className = (metrics.tunSendAllocationRetryAttempts || 0) > 0 ? 'text-warning' : '';
+
+    var tunWriteDrop = document.getElementById('tun-write-drop');
+    tunWriteDrop.textContent = metrics.tunSendAllocationDrops || 0;
+    tunWriteDrop.className = (metrics.tunSendAllocationDrops || 0) > 0 ? 'text-danger fw-bold' : '';
   } else {
     tunDiagnostics.style.display = 'none';
   }

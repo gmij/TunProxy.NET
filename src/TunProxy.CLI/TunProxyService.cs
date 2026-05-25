@@ -991,19 +991,16 @@ public class TunProxyService : IProxyService
                 _directBypassRoutes.Touch(state.DirectBypassIp);
                 _metrics.AddBytesReceived(bytesRead);
 
-                var offset = 0;
-                while (offset < bytesRead)
+                foreach (var segment in TunServerResponseSegments.Create(bytesRead))
                 {
-                    var allowance = await WaitForClientWindowSpaceAsync(state, ct);
-                    var segmentLength = Math.Min(bytesRead - offset, Math.Min(TunServerResponseSegments.DefaultMss, allowance));
+                    await WaitForClientReceiveWindowAsync(state, segment.Length, ct);
                     TunWriter.WriteDataResponse(
                         device,
                         state.SynPacket,
-                        buffer.AsSpan(offset, segmentLength),
+                        buffer.AsSpan(segment.Offset, segment.Length),
                         state.NextServerSeq,
                         state.ExpectedClientSeq);
-                    state.NextServerSeq += (uint)segmentLength;
-                    offset += segmentLength;
+                    state.NextServerSeq += (uint)segment.Length;
                 }
             }
         }
@@ -1029,26 +1026,24 @@ public class TunProxyService : IProxyService
         _ruleResources.StartBackgroundRetry(_cts!.Token, _config.Proxy);
     }
 
-    private static async Task<int> WaitForClientWindowSpaceAsync(
+    private static async Task WaitForClientReceiveWindowAsync(
         TcpRelayState state,
+        int segmentLength,
         CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-            var allowance = TcpDownstreamFlowControl.GetSendAllowance(
+            if (TcpDownstreamFlowControl.CanSendSegment(
                     state.NextServerSeq,
                     state.LastClientAck,
-                    state.ClientAdvertisedWindow);
-            if (allowance > 0)
+                    state.ClientAdvertisedWindow,
+                    segmentLength))
             {
-                return allowance;
+                return;
             }
 
             await Task.Delay(2, ct);
         }
-
-        ct.ThrowIfCancellationRequested();
-        return 0;
     }
 
     private void StartMetricsLogger(CancellationToken ct)
@@ -1277,26 +1272,15 @@ internal class TcpRelayState : IDisposable
 
 internal static class TcpDownstreamFlowControl
 {
-    public static int GetSendAllowance(
-        uint nextServerSeq,
-        uint lastClientAck,
-        int clientAdvertisedWindow)
-    {
-        var window = Math.Max(1, clientAdvertisedWindow);
-        var inFlight = unchecked(nextServerSeq - lastClientAck);
-        if (inFlight >= (uint)window)
-        {
-            return 0;
-        }
-
-        var available = (uint)window - inFlight;
-        return available > int.MaxValue ? int.MaxValue : (int)available;
-    }
-
     public static bool CanSendSegment(
         uint nextServerSeq,
         uint lastClientAck,
         int clientAdvertisedWindow,
         int segmentLength)
-        => Math.Max(0, segmentLength) <= GetSendAllowance(nextServerSeq, lastClientAck, clientAdvertisedWindow);
+    {
+        var window = Math.Max(1, clientAdvertisedWindow);
+        var inFlight = unchecked(nextServerSeq - lastClientAck);
+        var required = inFlight + (uint)Math.Max(0, segmentLength);
+        return required <= (uint)window;
+    }
 }

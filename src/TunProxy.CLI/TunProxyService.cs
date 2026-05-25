@@ -994,7 +994,7 @@ public class TunProxyService : IProxyService
                 var offset = 0;
                 while (offset < bytesRead)
                 {
-                    var allowance = await WaitForClientWindowSpaceAsync(state, ct);
+                    var allowance = await WaitForClientWindowSpaceAsync(device, state, ct);
                     var segmentLength = Math.Min(bytesRead - offset, Math.Min(TunServerResponseSegments.DefaultMss, allowance));
                     TunWriter.WriteDataResponse(
                         device,
@@ -1030,6 +1030,7 @@ public class TunProxyService : IProxyService
     }
 
     private static async Task<int> WaitForClientWindowSpaceAsync(
+        ITunDevice device,
         TcpRelayState state,
         CancellationToken ct)
     {
@@ -1044,7 +1045,17 @@ public class TunProxyService : IProxyService
                 return allowance;
             }
 
-            await Task.Delay(2, ct);
+            // Block until the client sends an ACK or window update (or 500 ms elapse).
+            // This avoids busy-polling and eliminates Windows timer-resolution jitter
+            // that would otherwise delay wakeup by up to 15 ms per poll cycle.
+            var signaled = await state.WaitForWindowUpdateAsync(TimeSpan.FromMilliseconds(500), ct);
+            if (!signaled)
+            {
+                // No ACK in 500 ms: send a keep-alive style probe (seq = LastClientAck - 1)
+                // to force the client to re-advertise its receive window.
+                TunWriter.WriteWindowProbe(device, state.SynPacket,
+                    unchecked(state.LastClientAck - 1), state.ExpectedClientSeq);
+            }
         }
 
         ct.ThrowIfCancellationRequested();
@@ -1210,6 +1221,10 @@ internal class TcpRelayState : IDisposable
     private int _lastClientAck;
     private int _clientAdvertisedWindow;
 
+    // Signal released whenever LastClientAck or ClientAdvertisedWindow changes, so the
+    // downstream relay can wake up immediately instead of polling on a timer.
+    private readonly SemaphoreSlim _windowUpdated = new(0, 1);
+
     public uint NextServerSeq;
     public uint ExpectedClientSeq;
     public readonly IPPacket SynPacket;
@@ -1245,6 +1260,30 @@ internal class TcpRelayState : IDisposable
         }
 
         Volatile.Write(ref _clientAdvertisedWindow, Math.Max(1, (int)tcpHeader.WindowSize));
+
+        // Wake up any downstream relay that is waiting for window space.
+        if (_windowUpdated.CurrentCount == 0)
+        {
+            try { _windowUpdated.Release(); }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
+    /// <summary>
+    /// Waits until a window-control update (ACK or window advertisement) arrives from the
+    /// client, or until <paramref name="timeout"/> elapses.  Returns <c>true</c> when
+    /// signalled, <c>false</c> on timeout.
+    /// </summary>
+    public Task<bool> WaitForWindowUpdateAsync(TimeSpan timeout, CancellationToken ct)
+    {
+        try
+        {
+            return _windowUpdated.WaitAsync(timeout, ct);
+        }
+        catch (ObjectDisposedException)
+        {
+            return Task.FromResult(false);
+        }
     }
 
     public byte[] AppendInitialPayload(byte[] payload)

@@ -54,6 +54,7 @@ public class TunProxyService : IProxyService
 
     private const int PacketQueueCapacity = 4096;
     private const int MaxInitialPayloadBufferBytes = 64 * 1024;
+    private static readonly TimeSpan ClientWindowPollInterval = TimeSpan.FromMilliseconds(1);
     private static readonly TimeSpan PendingRelayStateIdleTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OutboundReadyWaitTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OutboundReadyPollInterval = TimeSpan.FromSeconds(1);
@@ -1042,7 +1043,7 @@ public class TunProxyService : IProxyService
                 return;
             }
 
-            await Task.Delay(2, ct);
+            await Task.Delay(ClientWindowPollInterval, ct);
         }
     }
 

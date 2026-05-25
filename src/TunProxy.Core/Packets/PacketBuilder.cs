@@ -220,6 +220,16 @@ public static class PacketBuilder
     }
 
     /// <summary>
+    /// 构建窗口探测包（keep-alive 风格）。
+    /// seq 设置为 probeSeq（通常是 LastClientAck - 1），ack = ackNum，无负载。
+    /// 接收方会以 ACK 响应并携带最新窗口大小，用于解除零窗口僵局。
+    /// </summary>
+    public static byte[] BuildWindowProbe(IPPacket requestPacket, uint probeSeq, uint ackNum)
+    {
+        return BuildTcpPacket(requestPacket, TcpFlags.ACK, probeSeq, ackNum);
+    }
+
+    /// <summary>
     /// 构建 FIN+ACK 包
     /// </summary>
     public static byte[] BuildFinAck(IPPacket requestPacket, uint seqNum, uint ackNum)

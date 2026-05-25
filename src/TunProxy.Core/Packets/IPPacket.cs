@@ -97,6 +97,7 @@ public class IPPacket
                 DestinationPort = NetworkHelper.ReadUInt16BigEndian(packetData.Slice(headerLength + 2, 2)),
                 SequenceNumber = NetworkHelper.ReadUInt32BigEndian(packetData.Slice(headerLength + 4, 4)),
                 AckNumber = NetworkHelper.ReadUInt32BigEndian(packetData.Slice(headerLength + 8, 4)),
+                WindowSize = NetworkHelper.ReadUInt16BigEndian(packetData.Slice(headerLength + 14, 2)),
                 Flags = packetData[headerLength + 13]
             };
 
@@ -157,6 +158,7 @@ public struct TCPHeaderInfo
     public ushort DestinationPort { get; set; }
     public uint SequenceNumber { get; set; }
     public uint AckNumber { get; set; }
+    public ushort WindowSize { get; set; }
     public byte Flags { get; set; }
 
     public bool FIN => (Flags & 0x01) != 0;

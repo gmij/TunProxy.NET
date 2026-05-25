@@ -404,16 +404,21 @@ public class TunProxyService : IProxyService
             var tcpFlags = packet.TCPHeader!.Value;
             var destPort = packet.DestinationPort.Value;
             var destIP = packet.Header.DestinationAddress.ToString();
+            var connKey = ProtocolInspector.MakeConnectionKey(packet);
 
             if (packet.Payload.Length == 0 && !tcpFlags.SYN && !tcpFlags.FIN && !tcpFlags.RST)
             {
+                if (_relayStates.TryGetValue(connKey, out var ackState))
+                {
+                    ackState.MarkActivity();
+                    ackState.UpdateClientFlowControl(tcpFlags);
+                }
                 return;
             }
 
             var initialDecision = await _routeDecision.DecideForTunAsync(null, packet.Header.DestinationAddress, ct);
             var shouldProxy = initialDecision.ShouldProxy;
             var connManager = shouldProxy ? _connectionManager! : _directConnectionManager!;
-            var connKey = ProtocolInspector.MakeConnectionKey(packet);
 
             if (tcpFlags.SYN && !tcpFlags.ACK)
             {
@@ -440,7 +445,7 @@ public class TunProxyService : IProxyService
                 }
 
                 TunWriter.WriteSynAck(device, packet, out var serverIsn);
-                var newState = new TcpRelayState(packet, serverIsn, tcpFlags.SequenceNumber);
+                var newState = new TcpRelayState(packet, serverIsn, tcpFlags.SequenceNumber, tcpFlags.WindowSize);
                 if (!_relayStates.TryAdd(connKey, newState) &&
                     _relayStates.TryGetValue(connKey, out existingState))
                 {
@@ -464,6 +469,7 @@ public class TunProxyService : IProxyService
             }
 
             state.MarkActivity();
+            state.UpdateClientFlowControl(tcpFlags);
 
             if (tcpFlags.FIN || tcpFlags.RST)
             {
@@ -987,6 +993,7 @@ public class TunProxyService : IProxyService
 
                 foreach (var segment in TunServerResponseSegments.Create(bytesRead))
                 {
+                    await WaitForClientReceiveWindowAsync(state, segment.Length, ct);
                     TunWriter.WriteDataResponse(
                         device,
                         state.SynPacket,
@@ -1017,6 +1024,26 @@ public class TunProxyService : IProxyService
     private void InitializeBackgroundServices()
     {
         _ruleResources.StartBackgroundRetry(_cts!.Token, _config.Proxy);
+    }
+
+    private static async Task WaitForClientReceiveWindowAsync(
+        TcpRelayState state,
+        int segmentLength,
+        CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            if (TcpDownstreamFlowControl.CanSendSegment(
+                    state.NextServerSeq,
+                    state.LastClientAck,
+                    state.ClientAdvertisedWindow,
+                    segmentLength))
+            {
+                return;
+            }
+
+            await Task.Delay(2, ct);
+        }
     }
 
     private void StartMetricsLogger(CancellationToken ct)
@@ -1175,6 +1202,8 @@ internal class TcpRelayState : IDisposable
 {
     private MemoryStream? _initialPayload;
     private long _lastActivityTicks;
+    private int _lastClientAck;
+    private int _clientAdvertisedWindow;
 
     public uint NextServerSeq;
     public uint ExpectedClientSeq;
@@ -1187,17 +1216,31 @@ internal class TcpRelayState : IDisposable
     public string? DirectBypassIp;
     public int InitialPayloadLength => (int)(_initialPayload?.Length ?? 0);
     public DateTime LastActivityUtc => new(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
+    public uint LastClientAck => unchecked((uint)Volatile.Read(ref _lastClientAck));
+    public int ClientAdvertisedWindow => Volatile.Read(ref _clientAdvertisedWindow);
 
-    public TcpRelayState(IPPacket synPacket, uint serverIsn, uint clientIsn)
+    public TcpRelayState(IPPacket synPacket, uint serverIsn, uint clientIsn, ushort clientAdvertisedWindow = 65535)
     {
         SynPacket = synPacket;
         ServerIsn = serverIsn;
         NextServerSeq = serverIsn + 1;
         ExpectedClientSeq = clientIsn + 1;
+        _lastClientAck = unchecked((int)(serverIsn + 1));
+        _clientAdvertisedWindow = Math.Max(1, clientAdvertisedWindow);
         _lastActivityTicks = DateTime.UtcNow.Ticks;
     }
 
     public void MarkActivity() => Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+
+    public void UpdateClientFlowControl(TCPHeaderInfo tcpHeader)
+    {
+        if (tcpHeader.ACK && ProtocolInspector.IsSeqBeforeOrEqual(LastClientAck, tcpHeader.AckNumber))
+        {
+            Volatile.Write(ref _lastClientAck, unchecked((int)tcpHeader.AckNumber));
+        }
+
+        Volatile.Write(ref _clientAdvertisedWindow, Math.Max(1, tcpHeader.WindowSize));
+    }
 
     public byte[] AppendInitialPayload(byte[] payload)
     {
@@ -1224,5 +1267,20 @@ internal class TcpRelayState : IDisposable
     public void Dispose()
     {
         ClearInitialPayload();
+    }
+}
+
+internal static class TcpDownstreamFlowControl
+{
+    public static bool CanSendSegment(
+        uint nextServerSeq,
+        uint lastClientAck,
+        int clientAdvertisedWindow,
+        int segmentLength)
+    {
+        var window = Math.Max(1, clientAdvertisedWindow);
+        var inFlight = unchecked(nextServerSeq - lastClientAck);
+        var required = inFlight + (uint)Math.Max(0, segmentLength);
+        return required <= (uint)window;
     }
 }

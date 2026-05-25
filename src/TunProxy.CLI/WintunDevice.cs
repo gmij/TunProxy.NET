@@ -28,13 +28,21 @@ public sealed class WintunDevice : ITunDevice
 
     public void Configure(string ip, string subnetMask, int mtu = 1500)
     {
-        var p = Process.Start(new ProcessStartInfo
+        var setAddress = Process.Start(new ProcessStartInfo
         {
             FileName = "netsh",
             Arguments = $"interface ip set address \"{AdapterName}\" static {ip} {subnetMask}",
             CreateNoWindow = true, UseShellExecute = false
         });
-        p?.WaitForExit(3000);
+        setAddress?.WaitForExit(3000);
+
+        var setMtu = Process.Start(new ProcessStartInfo
+        {
+            FileName = "netsh",
+            Arguments = $"interface ipv4 set subinterface \"{AdapterName}\" mtu={mtu} store=active",
+            CreateNoWindow = true, UseShellExecute = false
+        });
+        setMtu?.WaitForExit(3000);
     }
 
     public void Start()

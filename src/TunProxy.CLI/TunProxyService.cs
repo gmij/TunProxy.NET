@@ -46,6 +46,7 @@ public class TunProxyService : IProxyService
     private readonly TunRuntimeStateStore _runtimeStateStore = new();
     private readonly FakeIpPool? _fakeIpPool;
     private readonly UdpDirectRelay _udpDirectRelay = new();
+    private readonly TunMtuResolver _tunMtuResolver = new();
     private string? _lastTcpConnectFailure;
     private DateTime? _lastTcpConnectFailureUtc;
     private DateTime? _lastPacketReadUtc;
@@ -210,8 +211,10 @@ public class TunProxyService : IProxyService
             _tunDevice = TunDeviceFactory.Create(_config.Tun);
             Log.Information("[TUN ] Starting TUN device...");
             _tunDevice.Start();
-            Log.Information("[TUN ] Configuring TUN address {IP}/{Mask}...", _config.Tun.IpAddress, _config.Tun.SubnetMask);
-            _tunDevice.Configure(_config.Tun.IpAddress, _config.Tun.SubnetMask);
+            var preferredBindAddress = _runtimeStateStore.LoadLastOutboundBindAddress();
+            var tunMtu = _tunMtuResolver.Resolve(_config.Proxy, _routeService, preferredBindAddress);
+            Log.Information("[TUN ] Configuring TUN address {IP}/{Mask} with MTU {Mtu}...", _config.Tun.IpAddress, _config.Tun.SubnetMask, tunMtu);
+            _tunDevice.Configure(_config.Tun.IpAddress, _config.Tun.SubnetMask, tunMtu);
 
             if (_config.Route.AutoAddDefaultRoute)
             {

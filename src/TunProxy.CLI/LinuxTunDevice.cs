@@ -12,6 +12,7 @@ namespace TunProxy.CLI;
 [SupportedOSPlatform("linux")]
 public sealed class LinuxTunDevice : ITunDevice
 {
+    private const int MaxPacketSize = 65535;
     private const int TUNSETIFF   = unchecked((int)0x400454CA);
     private const short IFF_TUN   = 0x0001;
     private const short IFF_NO_PI = 0x1000;
@@ -59,7 +60,7 @@ public sealed class LinuxTunDevice : ITunDevice
     public unsafe byte[]? ReadPacket()
     {
         if (_fd < 0) return null;
-        var buf = new byte[1500];
+        var buf = new byte[MaxPacketSize];
         fixed (byte* p = buf)
         {
             int n = LibcRead(_fd, p, buf.Length);

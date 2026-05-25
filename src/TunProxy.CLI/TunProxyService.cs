@@ -1226,7 +1226,7 @@ internal class TcpRelayState : IDisposable
         NextServerSeq = serverIsn + 1;
         ExpectedClientSeq = clientIsn + 1;
         _lastClientAck = unchecked((int)(serverIsn + 1));
-        _clientAdvertisedWindow = Math.Max(1, clientAdvertisedWindow);
+        _clientAdvertisedWindow = Math.Max(1, (int)clientAdvertisedWindow);
         _lastActivityTicks = DateTime.UtcNow.Ticks;
     }
 
@@ -1239,7 +1239,7 @@ internal class TcpRelayState : IDisposable
             Volatile.Write(ref _lastClientAck, unchecked((int)tcpHeader.AckNumber));
         }
 
-        Volatile.Write(ref _clientAdvertisedWindow, Math.Max(1, tcpHeader.WindowSize));
+        Volatile.Write(ref _clientAdvertisedWindow, Math.Max(1, (int)tcpHeader.WindowSize));
     }
 
     public byte[] AppendInitialPayload(byte[] payload)

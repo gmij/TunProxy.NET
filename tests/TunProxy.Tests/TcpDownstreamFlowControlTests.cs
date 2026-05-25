@@ -27,4 +27,27 @@ public class TcpDownstreamFlowControlTests
 
         Assert.False(canSend);
     }
+
+    [Fact]
+    public void GetSendAllowance_ReturnsRemainingBytes_WhenWindowPartiallyUsed()
+    {
+        var allowance = TcpDownstreamFlowControl.GetSendAllowance(
+            nextServerSeq: 2400,
+            lastClientAck: 2000,
+            clientAdvertisedWindow: 1024);
+
+        Assert.Equal(624, allowance);
+    }
+
+    [Fact]
+    public void CanSendSegment_ReturnsTrue_ForSubMssChunkWhenWindowSmall()
+    {
+        var canSend = TcpDownstreamFlowControl.CanSendSegment(
+            nextServerSeq: 3500,
+            lastClientAck: 3000,
+            clientAdvertisedWindow: 700,
+            segmentLength: 200);
+
+        Assert.True(canSend);
+    }
 }

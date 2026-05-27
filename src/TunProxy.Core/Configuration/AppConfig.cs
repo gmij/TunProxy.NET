@@ -239,5 +239,7 @@ public class ServiceStatus
     public int ProxyPort { get; set; }
     public string ProxyType { get; set; } = "";
     public int ActiveConnections { get; set; }
+    public string? LastTcpConnectFailure { get; set; }
+    public DateTime? LastTcpConnectFailureUtc { get; set; }
     public Metrics.MetricsSnapshot Metrics { get; set; } = new();
 }

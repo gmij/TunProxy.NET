@@ -10,11 +10,12 @@ namespace TunProxy.CLI;
 public class IpCacheManager
 {
     private readonly ConcurrentDictionary<string, int> _directBypassedIps = new();
-    private readonly ConcurrentDictionary<string, bool> _proxyBlockedIps = new();
+    private readonly ConcurrentDictionary<string, DateTime> _proxyBlockedIps = new();
     private readonly ConcurrentDictionary<string, DateTime> _connectFailedIps = new();
 
     private const string DirectIpCacheFile = "direct_ip_cache.txt";
     private const string BlockedIpCacheFile = "blocked_ip_cache.txt";
+    private static readonly TimeSpan ProxyBlockedCooldown = TimeSpan.FromSeconds(90);
     private static string DirectIpCachePath => AppPathResolver.ResolveAppFilePath(DirectIpCacheFile);
     private static string BlockedIpCachePath => AppPathResolver.ResolveAppFilePath(BlockedIpCacheFile);
 
@@ -111,25 +112,12 @@ public class IpCacheManager
 
         try
         {
-            var ips = File.ReadAllLines(BlockedIpCachePath)
-                .Select(static line => line.Trim())
-                .Where(static line => line.Length > 0 && !line.StartsWith('#'))
-                .Distinct()
-                .ToList();
-
-            foreach (var ip in ips)
-            {
-                _proxyBlockedIps.TryAdd(ip, true);
-            }
-
-            if (ips.Count > 0)
-            {
-                Log.Information("[ROUTE] Loaded proxy-blocked IP cache: {Count} entries", ips.Count);
-            }
+            File.Delete(BlockedIpCachePath);
+            Log.Information("[ROUTE] Removed legacy proxy-blocked cache file. Proxy-denied backoff is now runtime-only.");
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "[ROUTE] Failed to load proxy-blocked IP cache");
+            Log.Warning(ex, "[ROUTE] Failed to retire legacy proxy-blocked IP cache");
         }
     }
 
@@ -155,17 +143,37 @@ public class IpCacheManager
         return true;
     }
 
-    public bool IsProxyBlocked(string ip) => _proxyBlockedIps.ContainsKey(ip);
-
-    public bool TryAddProxyBlocked(string ip)
+    public bool IsProxyBlocked(string ip)
     {
-        if (!_proxyBlockedIps.TryAdd(ip, true))
+        if (!_proxyBlockedIps.TryGetValue(ip, out var blockedAtUtc))
         {
             return false;
         }
 
-        _ = Task.Run(() => AppendBlockedIpCache(ip));
+        if (DateTime.UtcNow - blockedAtUtc < ProxyBlockedCooldown)
+        {
+            return true;
+        }
+
+        _proxyBlockedIps.TryRemove(ip, out _);
+        return false;
+    }
+
+    public bool TryAddProxyBlocked(string ip)
+    {
+        var now = DateTime.UtcNow;
+        if (!_proxyBlockedIps.TryAdd(ip, now))
+        {
+            _proxyBlockedIps[ip] = now;
+            return false;
+        }
+
         return true;
+    }
+
+    public void ClearProxyBlocked(string ip)
+    {
+        _proxyBlockedIps.TryRemove(ip, out _);
     }
 
     public bool IsConnectFailed(string ip) =>
@@ -204,14 +212,4 @@ public class IpCacheManager
         }
     }
 
-    private static void AppendBlockedIpCache(string ip)
-    {
-        try
-        {
-            File.AppendAllText(BlockedIpCachePath, ip + Environment.NewLine);
-        }
-        catch
-        {
-        }
-    }
 }

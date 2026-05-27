@@ -468,6 +468,36 @@
   <data name="Page.Status.Uptime" xml:space="preserve">
     <value>运行时间</value>
   </data>
+  <data name="Page.Status.ConnectIssue.Title" xml:space="preserve">
+    <value>最近连接异常</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.OccurredAt" xml:space="preserve">
+    <value>发生时间：{0}</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Reason.ProxyDenied" xml:space="preserve">
+    <value>上游代理临时拒绝了 CONNECT 请求（例如 HTTP 503）。</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Reason.ConnectFailed" xml:space="preserve">
+    <value>连接上游代理失败。</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Reason.DnsFailed" xml:space="preserve">
+    <value>DNS 链路存在阶段性失败。</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Reason.Generic" xml:space="preserve">
+    <value>发生了连接错误。</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Hint.ProxyDenied" xml:space="preserve">
+    <value>TunProxy 现已改为短时冷却后自动重试。若问题持续，请到配置页执行代理可用性检查，并核对端点与凭据。</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Hint.ConnectFailed" xml:space="preserve">
+    <value>请检查代理端点是否可达，以及本机防火墙/网络策略是否阻断了外连。</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Hint.DnsFailed" xml:space="preserve">
+    <value>请检查上游 DNS 连通性。若 DoH 回退成功，该提示会在后续连接成功后自动消失。</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Hint.Generic" xml:space="preserve">
+    <value>请结合上方错误详情，在配置页核对代理参数。</value>
+  </data>
   <data name="Shared.Loading" xml:space="preserve">
     <value>加载中...</value>
   </data>

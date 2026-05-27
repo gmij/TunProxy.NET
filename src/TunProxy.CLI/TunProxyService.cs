@@ -2,7 +2,9 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using Serilog;
+using TunProxy.Core;
 using TunProxy.Core.Configuration;
 using TunProxy.Core.Connections;
 using TunProxy.Core.Metrics;
@@ -110,7 +112,9 @@ public class TunProxyService : IProxyService
         _downloadingCount,
         _connectionManager,
         _directConnectionManager,
-        _metrics);
+        _metrics,
+        _lastTcpConnectFailure,
+        _lastTcpConnectFailureUtc);
 
     public async Task<IReadOnlyList<DnsRouteRecord>> GetDnsRouteRecordsAsync(CancellationToken ct)
     {
@@ -431,11 +435,20 @@ public class TunProxyService : IProxyService
                         initialDecision.Reason);
                 }
 
-                if (initialDecision.ShouldProxy &&
-                    (_ipCache!.IsProxyBlocked(destIP) || _ipCache.IsConnectFailed(destIP)))
+                var rejectedByCache = initialDecision.ShouldProxy &&
+                    (_ipCache!.IsProxyBlocked(destIP) || _ipCache.IsConnectFailed(destIP));
+                if (rejectedByCache)
                 {
-                    TunWriter.WriteRst(device, packet);
-                    return;
+                    if (destPort == 80)
+                    {
+                        Log.Debug("[CONN] {DestIP}:{Port} blocked by cache; waiting for HTTP request payload to return block page", destIP, destPort);
+                    }
+                    else
+                    {
+                        Log.Debug("[CONN] {DestIP}:{Port} temporarily rejected by cooldown cache", destIP, destPort);
+                        TunWriter.WriteRst(device, packet);
+                        return;
+                    }
                 }
 
                 if (_relayStates.TryGetValue(connKey, out var existingState))
@@ -552,6 +565,15 @@ public class TunProxyService : IProxyService
 
                     shouldProxy = finalDecision.ShouldProxy;
                     connManager = shouldProxy ? _connectionManager! : _directConnectionManager!;
+                    var rejectedByCacheOnConnect = shouldProxy &&
+                        (_ipCache!.IsProxyBlocked(destIP) || _ipCache.IsConnectFailed(destIP));
+
+                    if (rejectedByCacheOnConnect &&
+                        TryServeHttpBlockedPage(device, connKey, connManager, state, packet, target.ConnectHost, destIP, destPort))
+                    {
+                        return;
+                    }
+
                     if (!shouldProxy)
                     {
                         _metrics.IncrementDirectRoutedPackets();
@@ -760,6 +782,9 @@ public class TunProxyService : IProxyService
             {
                 _dnsStore?.MarkCachedAddressActive(dnsCacheHost, destIP);
                 await conn.ConnectAsync(connectHost, destPort, ct);
+                _ipCache?.ClearProxyBlocked(destIP);
+                _lastTcpConnectFailure = null;
+                _lastTcpConnectFailureUtc = null;
 
                 if (!_relayStates.ContainsKey(connKey))
                 {
@@ -950,6 +975,111 @@ public class TunProxyService : IProxyService
         }
 
         TunWriter.WriteRst(device, packet);
+    }
+
+    private bool TryServeHttpBlockedPage(
+        ITunDevice device,
+        string connKey,
+        TcpConnectionManager connManager,
+        TcpRelayState state,
+        IPPacket packet,
+        string targetHost,
+        string destIP,
+        int destPort)
+    {
+        if (destPort != 80)
+        {
+            return false;
+        }
+
+        var host = ProtocolInspector.ExtractHttpHost(packet.Payload) ?? targetHost;
+        var detailUrl = TunProxyProduct.ApiBaseUrl + "/?from=tun-denied";
+        var fixUrl = TunProxyProduct.ApiBaseUrl + "/config.html?from=tun-denied";
+        var failureDetail = _lastTcpConnectFailure ?? $"{host}:{destPort} PROXY/cache proxy denied";
+        var payload = BuildBlockedHttpResponsePayload(host, destIP, failureDetail, detailUrl, fixUrl);
+
+        foreach (var segment in TunServerResponseSegments.Create(payload.Length))
+        {
+            TunWriter.WriteDataResponse(
+                device,
+                state.SynPacket,
+                payload.AsSpan(segment.Offset, segment.Length),
+                state.NextServerSeq,
+                state.ExpectedClientSeq);
+            state.NextServerSeq += (uint)segment.Length;
+        }
+
+        TunWriter.WriteFinAck(device, state.SynPacket, state.NextServerSeq, state.ExpectedClientSeq);
+        _metrics.IncrementFailedConnections();
+        _metrics.DecrementActiveConnections();
+
+        if (_relayStates.TryRemove(connKey, out var removed))
+        {
+            (removed.ConnectionManager ?? connManager).RemoveConnectionByKey(connKey);
+            removed.Dispose();
+        }
+
+        Log.Information(
+            "[CONN] {Host}:{Port} returned local block page (DestIP={DestIP})",
+            host,
+            destPort,
+            destIP);
+        return true;
+    }
+
+    private static byte[] BuildBlockedHttpResponsePayload(
+        string host,
+        string destIP,
+        string failureDetail,
+        string detailUrl,
+        string fixUrl)
+    {
+        var safeHost = WebUtility.HtmlEncode(host);
+        var safeDestIP = WebUtility.HtmlEncode(destIP);
+        var safeFailureDetail = WebUtility.HtmlEncode(failureDetail);
+                var html = string.Join("\n",
+                        "<!doctype html>",
+                        "<html lang=\"en\">",
+                        "<head>",
+                        "  <meta charset=\"utf-8\" />",
+                        "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />",
+                        "  <title>TunProxy blocked request</title>",
+                        "  <style>",
+                        "    body { font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; background:#f8fafc; color:#111827; margin:0; }",
+                        "    .wrap { max-width:760px; margin:36px auto; background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:22px; }",
+                        "    h1 { margin:0 0 10px; font-size:22px; }",
+                        "    p { margin:8px 0; line-height:1.6; }",
+                        "    .meta { font-size:13px; color:#4b5563; background:#f3f4f6; border-radius:8px; padding:10px; }",
+                        "    .actions { display:flex; gap:10px; margin-top:18px; flex-wrap:wrap; }",
+                        "    a.btn { text-decoration:none; padding:9px 14px; border-radius:8px; border:1px solid #d1d5db; color:#111827; }",
+                        "    a.primary { background:#111827; border-color:#111827; color:#fff; }",
+                        "  </style>",
+                        "</head>",
+                        "<body>",
+                        "  <main class=\"wrap\">",
+                        "    <h1>TunProxy temporarily blocked this request</h1>",
+                        $"    <p>The request to <strong>{safeHost}</strong> (IP {safeDestIP}) was denied by TunProxy cache guard.</p>",
+                        "    <p>This usually happens after upstream proxy errors (for example HTTP 503). TunProxy will retry automatically after cooldown.</p>",
+                        $"    <div class=\"meta\">Detail: {safeFailureDetail}</div>",
+                        "    <div class=\"actions\">",
+                        $"      <a class=\"btn primary\" href=\"{detailUrl}\" target=\"_blank\" rel=\"noopener\">View diagnostics</a>",
+                        $"      <a class=\"btn\" href=\"{fixUrl}\" target=\"_blank\" rel=\"noopener\">Open fix page</a>",
+                        "    </div>",
+                        "  </main>",
+                        "</body>",
+                        "</html>");
+
+        var body = Encoding.UTF8.GetBytes(html);
+        var header = Encoding.ASCII.GetBytes(
+            "HTTP/1.1 503 Service Unavailable\r\n" +
+            "Content-Type: text/html; charset=utf-8\r\n" +
+            "Cache-Control: no-store\r\n" +
+            "Connection: close\r\n" +
+            $"Content-Length: {body.Length}\r\n\r\n");
+        var response = new byte[header.Length + body.Length];
+        Buffer.BlockCopy(header, 0, response, 0, header.Length);
+        Buffer.BlockCopy(body, 0, response, header.Length, body.Length);
+        return response;
     }
 
     private async Task RelayProxyToTunAsync(

@@ -468,6 +468,36 @@
   <data name="Page.Status.Uptime" xml:space="preserve">
     <value>Uptime</value>
   </data>
+  <data name="Page.Status.ConnectIssue.Title" xml:space="preserve">
+    <value>Recent connection issue</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.OccurredAt" xml:space="preserve">
+    <value>Occurred at: {0}</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Reason.ProxyDenied" xml:space="preserve">
+    <value>Proxy temporarily denied CONNECT requests (for example HTTP 503).</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Reason.ConnectFailed" xml:space="preserve">
+    <value>Connection to upstream proxy failed.</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Reason.DnsFailed" xml:space="preserve">
+    <value>DNS path had temporary failures.</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Reason.Generic" xml:space="preserve">
+    <value>A connection error occurred.</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Hint.ProxyDenied" xml:space="preserve">
+    <value>TunProxy now uses a short cooldown and retries automatically. If the issue keeps repeating, open Config and run proxy check, then verify endpoint/credentials.</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Hint.ConnectFailed" xml:space="preserve">
+    <value>Check whether the proxy endpoint is reachable and whether local firewall or network policy blocks outbound access.</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Hint.DnsFailed" xml:space="preserve">
+    <value>Check upstream DNS connectivity. If DoH fallback succeeds, this warning should clear after new successful connections.</value>
+  </data>
+  <data name="Page.Status.ConnectIssue.Hint.Generic" xml:space="preserve">
+    <value>Review the error detail above and validate proxy settings in Config page.</value>
+  </data>
   <data name="Shared.Loading" xml:space="preserve">
     <value>Loading...</value>
   </data>

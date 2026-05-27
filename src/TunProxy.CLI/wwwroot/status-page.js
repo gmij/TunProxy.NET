@@ -17,6 +17,15 @@ function fmtUptime(seconds) {
   return remaining + 's';
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderStatusBadges(status) {
   var t = window.TunProxyI18n.t;
   var badges = '';
@@ -40,6 +49,60 @@ function renderStatusBadges(status) {
   document.getElementById('status-badges').innerHTML = badges;
 }
 
+function inferConnectIssueType(message) {
+  var text = (message || '').toUpperCase();
+  if (text.indexOf('PROXY_DENIED') >= 0 || text.indexOf('503') >= 0) {
+    return 'proxy-denied';
+  }
+
+  if (text.indexOf('CONNECT_FAILED') >= 0 || text.indexOf('TIMEOUT') >= 0 || text.indexOf('CONNECTION REFUSED') >= 0) {
+    return 'connect-failed';
+  }
+
+  if (text.indexOf('DNS') >= 0) {
+    return 'dns-failed';
+  }
+
+  return 'generic';
+}
+
+function renderConnectIssue(status) {
+  var alert = document.getElementById('connect-issue-alert');
+  var message = status.lastTcpConnectFailure;
+  if (!message) {
+    alert.style.display = 'none';
+    return;
+  }
+
+  var type = inferConnectIssueType(message);
+  var reasonKey = 'Page.Status.ConnectIssue.Reason.Generic';
+  var hintKey = 'Page.Status.ConnectIssue.Hint.Generic';
+  if (type === 'proxy-denied') {
+    reasonKey = 'Page.Status.ConnectIssue.Reason.ProxyDenied';
+    hintKey = 'Page.Status.ConnectIssue.Hint.ProxyDenied';
+  } else if (type === 'connect-failed') {
+    reasonKey = 'Page.Status.ConnectIssue.Reason.ConnectFailed';
+    hintKey = 'Page.Status.ConnectIssue.Hint.ConnectFailed';
+  } else if (type === 'dns-failed') {
+    reasonKey = 'Page.Status.ConnectIssue.Reason.DnsFailed';
+    hintKey = 'Page.Status.ConnectIssue.Hint.DnsFailed';
+  }
+
+  var occurredAt = '-';
+  if (status.lastTcpConnectFailureUtc) {
+    occurredAt = window.TunProxyI18n.timeString(new Date(status.lastTcpConnectFailureUtc));
+  }
+
+  alert.innerHTML =
+    '<div class="fw-semibold">' + window.TunProxyI18n.t('Page.Status.ConnectIssue.Title') + '</div>' +
+    '<div class="mt-1"><strong>' + window.TunProxyI18n.t(reasonKey) + '</strong></div>' +
+    '<div class="mt-1">' + window.TunProxyI18n.format('Page.Status.ConnectIssue.OccurredAt', occurredAt) + '</div>' +
+    '<div class="mt-1 text-break">' + escapeHtml(message) + '</div>' +
+    '<div class="mt-2">' + window.TunProxyI18n.t(hintKey) + '</div>';
+  alert.className = 'alert alert-warning py-2 small';
+  alert.style.display = '';
+}
+
 function renderStatus(status) {
   latestStatus = status;
   serviceActionBusy = false;
@@ -59,6 +122,7 @@ function renderStatus(status) {
   var failedConnections = document.getElementById('failed-conn');
   failedConnections.textContent = metrics.failedConnections;
   failedConnections.className = metrics.failedConnections > 0 ? 'fw-bold text-danger' : 'fw-bold';
+  renderConnectIssue(status);
 
   var tunDiagnostics = document.getElementById('tun-diagnostics');
   if (status.mode === 'tun') {
@@ -150,6 +214,7 @@ function refreshStatus() {
       serviceActionBusy = false;
       document.getElementById('status-badges').innerHTML =
         '<span class="badge bg-danger">' + window.TunProxyI18n.t('Page.Status.Badge.Unreachable') + '</span>';
+      document.getElementById('connect-issue-alert').style.display = 'none';
       updateServiceButtons(false);
       showServiceAction('Page.Status.ServiceUnavailableHint', 'alert-warning');
     });

@@ -15,7 +15,9 @@ internal static class TunRuntimeDiagnosticsProvider
         int downloadingCount,
         TcpConnectionManager? proxyConnections,
         TcpConnectionManager? directConnections,
-        ProxyMetrics metrics)
+        ProxyMetrics metrics,
+        string? lastTcpConnectFailure,
+        DateTime? lastTcpConnectFailureUtc)
     {
         return new ServiceStatus
         {
@@ -27,6 +29,8 @@ internal static class TunRuntimeDiagnosticsProvider
             ProxyPort = config.Proxy.Port,
             ProxyType = config.Proxy.Type,
             ActiveConnections = GetActiveConnections(proxyConnections, directConnections),
+            LastTcpConnectFailure = lastTcpConnectFailure,
+            LastTcpConnectFailureUtc = lastTcpConnectFailureUtc,
             Metrics = metrics.GetSnapshot()
         };
     }

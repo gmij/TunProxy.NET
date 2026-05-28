@@ -4,7 +4,7 @@
 
 TunProxy.NET 是一个基于 .NET 8 的代理工具，提供本地代理模式和 TUN 透明代理模式。它可以把系统或应用流量转发到上游 SOCKS5/HTTP 代理，并通过 GFWList、GeoIP、DNS 缓存和直连绕行规则做智能路由。
 
-当前版本的重点不是只提供一个命令行程序，而是提供一套可观察、可配置、可重启的运行体验：托盘程序负责服务生命周期，Web 控制台负责配置和诊断，TUN 启动会校验必需资源是否真的可用。
+当前版本除了 Web 控制台，也提供完整的命令行配置入口，适合 Linux 或无桌面环境。托盘程序负责 Windows 服务生命周期，Web 控制台负责可视化配置和诊断，命令行则负责在无法打开页面时完成初始化和修改配置。
 
 ## 界面预览
 
@@ -67,6 +67,37 @@ dotnet run --project src\TunProxy.CLI\TunProxy.CLI.csproj -- --proxy 127.0.0.1:7
 --uninstall      卸载 Windows 服务，并将 tun.enabled 写为 false
 ```
 
+### Linux 命令行配置
+
+Linux 或无桌面环境下，可以直接在终端里初始化、查看和修改 `tunproxy.json`，不需要打开 HTTP 页面：
+
+```bash
+./TunProxy.CLI config wizard
+./TunProxy.CLI --api-host 0.0.0.0 --background
+```
+
+`config wizard` 现在会按默认流程继续完成后续步骤：默认上游代理类型为 `HTTP`、默认启用 `TUN`，保存配置后自动执行上游代理检查，并准备已启用的 `GFWList` / `GeoIP` 资源。
+
+如果你只想查看或微调配置，也可以继续使用：
+
+```bash
+./TunProxy.CLI config show
+./TunProxy.CLI config set --proxy 127.0.0.1:7890 --type http --mode tun
+./TunProxy.CLI resource status
+```
+
+常用命令：
+
+```text
+config path      输出当前配置文件路径
+config show      以 JSON 方式显示当前配置
+config init      初始化配置文件
+config set       通过命令行参数更新配置
+config wizard    通过终端交互方式引导配置，并自动检查代理/准备资源
+resource status  查看 GFW/GeoIP 资源状态
+resource prepare 下载或加载已启用的 GFW/GeoIP 资源
+```
+
 启动后打开：
 
 ```text
@@ -87,7 +118,7 @@ http://localhost:50000/
 
 ## 配置文件
 
-配置文件为程序目录下的 `tunproxy.json`。Web 控制台保存配置时会更新此文件。
+配置文件为程序目录下的 `tunproxy.json`。Web 控制台和 `config` 命令都会更新此文件。
 
 ```json
 {

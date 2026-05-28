@@ -36,6 +36,22 @@ public class Program
                 }
             }
 
+            var cliConfigCommand = new CliConfigCommandHandler(configureNewConfig: ApplyWindowsSystemProxyDefaults);
+            var commandExitCode = await cliConfigCommand.TryHandleAsync(args);
+            if (commandExitCode.HasValue)
+            {
+                Environment.ExitCode = commandExitCode.Value;
+                return;
+            }
+
+            var cliResourceCommand = new CliRuleResourceCommandHandler(configureNewConfig: ApplyWindowsSystemProxyDefaults);
+            commandExitCode = await cliResourceCommand.TryHandleAsync(args);
+            if (commandExitCode.HasValue)
+            {
+                Environment.ExitCode = commandExitCode.Value;
+                return;
+            }
+
             var config = LoadConfig(args);
 
             var tunMode = config.Tun.Enabled;
@@ -158,45 +174,7 @@ public class Program
     private static AppConfig LoadConfig(string[] args)
     {
         var config = new AppConfigStore().LoadOrCreate(ApplyWindowsSystemProxyDefaults);
-
-        for (var i = 0; i < args.Length; i++)
-        {
-            switch (args[i])
-            {
-                case "--proxy" or "-p":
-                    if (i + 1 < args.Length)
-                    {
-                        var parts = args[++i].Split(':');
-                        config.Proxy.Host = parts[0];
-                        if (parts.Length > 1)
-                        {
-                            config.Proxy.Port = int.Parse(parts[1]);
-                        }
-                    }
-                    break;
-
-                case "--type" or "-t":
-                    if (i + 1 < args.Length)
-                    {
-                        config.Proxy.Type = args[++i];
-                    }
-                    break;
-
-                case "--username" or "-u":
-                    if (i + 1 < args.Length)
-                    {
-                        config.Proxy.Username = args[++i];
-                    }
-                    break;
-
-                case "--password" or "-w":
-                    if (i + 1 < args.Length)
-                    {
-                        config.Proxy.Password = args[++i];
-                    }
-                    break;
-            }
-        }
+        CommandLineConfigOverrides.Apply(config, args, strict: false);
 
         return config;
     }

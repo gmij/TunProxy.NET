@@ -4,7 +4,7 @@
 
 TunProxy.NET is a .NET 8 proxy tool with both local proxy mode and TUN transparent proxy mode. It forwards system or application traffic to an upstream SOCKS5/HTTP proxy, then applies smart routing with GFWList, GeoIP, DNS caching, and direct-route bypass rules.
 
-The current system is more than a command-line proxy. It includes a tray-managed service lifecycle, a Web console for configuration and diagnostics, and hard startup checks so TUN mode only starts when required routing resources are actually usable.
+The current system includes both a Web console and a full command-line configuration flow, which is useful on Linux or headless hosts. The tray app handles the Windows service lifecycle, the Web console provides visual configuration and diagnostics, and the CLI can initialize and update config when opening an HTTP page is not practical.
 
 ## Screenshots
 
@@ -67,6 +67,37 @@ Common arguments:
 --uninstall      Uninstall the Windows service and set tun.enabled to false
 ```
 
+### Linux command-line configuration
+
+On Linux or headless hosts, you can manage `tunproxy.json` entirely from the terminal without opening the HTTP page:
+
+```bash
+./TunProxy.CLI config wizard
+./TunProxy.CLI --api-host 0.0.0.0 --background
+```
+
+`config wizard` now continues through the default setup flow: it defaults the upstream proxy type to `HTTP`, enables `TUN`, then automatically runs the upstream proxy check and prepares enabled `GFWList` / `GeoIP` resources after saving the config.
+
+If you only want to inspect or adjust config, you can still use:
+
+```bash
+./TunProxy.CLI config show
+./TunProxy.CLI config set --proxy 127.0.0.1:7890 --type http --mode tun
+./TunProxy.CLI resource status
+```
+
+Common commands:
+
+```text
+config path      Print the current config file path
+config show      Print the current config as JSON
+config init      Create the config file
+config set       Update config values from CLI flags
+config wizard    Run an interactive setup and auto-check proxy/prepare resources
+resource status  Show GFW/GeoIP resource status
+resource prepare Download or load enabled GFW/GeoIP resources
+```
+
 After startup, open:
 
 ```text
@@ -87,7 +118,7 @@ If GeoIP or GFWList is enabled but the resource is missing or invalid, TunProxy 
 
 ## Configuration
 
-The configuration file is `tunproxy.json` in the application directory. The Web console updates this file when saving configuration.
+The configuration file is `tunproxy.json` in the application directory. Both the Web console and the `config` commands update this file.
 
 ```json
 {

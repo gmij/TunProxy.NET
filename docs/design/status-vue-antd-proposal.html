@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TunProxy Status Redesign - Vue + Ant Design</title>
+  <style>
+    :root {
+      --page: #f5f7fb;
+      --surface: #ffffff;
+      --soft: #f9fafc;
+      --line: #dde3ec;
+      --text: #18202f;
+      --muted: #667085;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #dc2626;
+      --cyan: #0891b2;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text);
+      font-family: "Segoe UI", "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+      letter-spacing: 0;
+      overflow-x: hidden;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      background: #111827;
+      color: #f9fafb;
+      padding: 22px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 8px;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: #22c55e;
+      color: #052e16;
+      font-weight: 800;
+      font-size: 18px;
+    }
+
+    .brand-title {
+      font-size: 18px;
+      line-height: 1.1;
+      font-weight: 750;
+    }
+
+    .brand-subtitle {
+      margin-top: 3px;
+      font-size: 12px;
+      color: #aab2c0;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 4px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 40px;
+      padding: 0 12px;
+      border-radius: 8px;
+      color: #cbd5e1;
+      font-size: 14px;
+    }
+
+    .nav-item.active {
+      background: rgba(255, 255, 255, .1);
+      color: #fff;
+      font-weight: 650;
+    }
+
+    .nav-icon {
+      width: 18px;
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      border-top: 1px solid rgba(255, 255, 255, .1);
+      padding: 16px 8px 0;
+      display: grid;
+      gap: 10px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 24px;
+    }
+
+    .mobile-tabs {
+      display: none;
+      grid-template-columns: repeat(4, 1fr);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 3px;
+      margin-bottom: 14px;
+    }
+
+    .mobile-tabs span {
+      text-align: center;
+      padding: 8px 4px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .mobile-tabs span:first-child {
+      color: var(--blue);
+      background: #eef4ff;
+      font-weight: 650;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .eyebrow {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.2;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .ant-select,
+    .ant-btn {
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid #d7deea;
+      background: #fff;
+      color: var(--text);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 13px;
+      font-size: 14px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .ant-select {
+      min-width: 116px;
+      justify-content: space-between;
+    }
+
+    .ant-btn-danger {
+      color: var(--red);
+      border-color: #fecaca;
+    }
+
+    .status-band {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(320px, .85fr);
+      gap: 18px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, .05);
+    }
+
+    .status-primary {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .pulse {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      background: rgba(22, 163, 74, .12);
+      display: grid;
+      place-items: center;
+      position: relative;
+    }
+
+    .pulse::after {
+      content: "";
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 6px rgba(22, 163, 74, .16);
+    }
+
+    .status-title-row,
+    .tag-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .status-title-row { margin-bottom: 8px; }
+    .tag-row { margin-bottom: 14px; }
+
+    .status-title {
+      font-size: 19px;
+      font-weight: 760;
+    }
+
+    .ant-tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid #d7deea;
+      background: #f8fafc;
+      color: #475467;
+      font-size: 12px;
+      font-weight: 620;
+    }
+
+    .tag-success { color: #15803d; background: #f0fdf4; border-color: #bbf7d0; }
+    .tag-blue { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
+    .tag-cyan { color: #0e7490; background: #ecfeff; border-color: #a5f3fc; }
+    .tag-green { color: #15803d; background: #f0fdf4; border-color: #bbf7d0; }
+
+    .endpoint {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .info-tile {
+      background: var(--soft);
+      border: 1px solid #e6ebf2;
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 74px;
+    }
+
+    .info-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 7px;
+    }
+
+    .info-value {
+      font-size: 16px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .refresh-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+      min-width: 0;
+    }
+
+    .refresh-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .badge-processing {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: #155eef;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .badge-processing::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #2563eb;
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, .12);
+    }
+
+    .health-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .health-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    .health-value {
+      color: var(--text);
+      font-weight: 650;
+    }
+
+    .content-grid {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 390px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, .04);
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 730;
+    }
+
+    .segmented {
+      display: inline-grid;
+      grid-auto-flow: column;
+      gap: 2px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 3px;
+      font-size: 13px;
+      color: #64748b;
+    }
+
+    .segmented span {
+      padding: 5px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    .segmented span:first-child {
+      background: #fff;
+      color: var(--blue);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, .08);
+      font-weight: 650;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .metric-card {
+      border: 1px solid #e5eaf1;
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 126px;
+      display: grid;
+      align-content: space-between;
+      gap: 12px;
+      background: #fff;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 13px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .metric-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      background: #eef2ff;
+      color: var(--blue);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .metric-value {
+      font-size: 24px;
+      line-height: 1.1;
+      font-weight: 780;
+    }
+
+    .metric-sub,
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .chart {
+      margin-top: 16px;
+      border: 1px solid #e5eaf1;
+      border-radius: 8px;
+      padding: 14px;
+      background: #fff;
+    }
+
+    .bars {
+      height: 158px;
+      display: grid;
+      grid-template-columns: repeat(14, 1fr);
+      align-items: end;
+      gap: 9px;
+      padding-top: 10px;
+    }
+
+    .bar {
+      border-radius: 4px 4px 0 0;
+      background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+      min-height: 3px;
+    }
+
+    .bar.recv {
+      background: linear-gradient(180deg, #2dd4bf 0%, #0891b2 100%);
+    }
+
+    .diagnostics {
+      display: grid;
+      gap: 10px;
+    }
+
+    .diagnostic-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      min-height: 38px;
+      border-bottom: 1px solid #eef2f7;
+      font-size: 13px;
+    }
+
+    .diagnostic-row:last-child { border-bottom: 0; }
+
+    .diagnostic-name {
+      color: #475467;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .diagnostic-value {
+      font-weight: 720;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .mini-panel {
+      border: 1px solid #e5eaf1;
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .mini-title {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    .mini-value {
+      font-size: 18px;
+      font-weight: 760;
+    }
+
+    @media (max-width: 1120px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .mobile-tabs { display: grid; }
+      .status-band,
+      .content-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .main { padding: 14px; }
+      .topbar,
+      .section-head {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .toolbar {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      .toolbar .ant-select,
+      .toolbar .ant-btn {
+        flex: 1 1 auto;
+        justify-content: center;
+      }
+
+      .refresh-head {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      h1 { font-size: 22px; }
+
+      .endpoint,
+      .metric-grid,
+      .split,
+      .status-primary {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell" data-framework-target="Vue 3 + Ant Design Vue">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">T</div>
+        <div>
+          <div class="brand-title">TunProxy</div>
+          <div class="brand-subtitle">Web Console</div>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="primary">
+        <div class="nav-item active"><span class="nav-icon">●</span><span>状态</span></div>
+        <div class="nav-item"><span class="nav-icon">⚙</span><span>配置</span></div>
+        <div class="nav-item"><span class="nav-icon">D</span><span>DNS</span></div>
+        <div class="nav-item"><span class="nav-icon">≡</span><span>日志</span></div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div>语言 <strong>简体中文</strong></div>
+        <div>自动刷新 <strong>5 秒</strong></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="mobile-tabs"><span>状态</span><span>配置</span><span>DNS</span><span>日志</span></div>
+
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">状态 / 实时运行概览</div>
+          <h1>服务状态</h1>
+        </div>
+        <div class="toolbar">
+          <div class="ant-select">简体中文 <span>⌄</span></div>
+          <button class="ant-btn" type="button"><span>↻</span><span>重启</span></button>
+          <button class="ant-btn ant-btn-danger" type="button"><span>■</span><span>停止</span></button>
+        </div>
+      </header>
+
+      <section class="status-band" aria-label="service summary">
+        <div class="status-primary">
+          <div class="pulse" aria-hidden="true"></div>
+          <div>
+            <div class="status-title-row">
+              <div class="status-title">服务运行中</div>
+              <span class="ant-tag tag-success">运行中</span>
+              <span class="ant-tag tag-blue">TUN</span>
+              <span class="ant-tag">FakeIP</span>
+            </div>
+            <div class="tag-row">
+              <span class="ant-tag tag-blue">HTTP 上游代理</span>
+              <span class="ant-tag tag-cyan">透明接管 TCP</span>
+              <span class="ant-tag tag-green">诊断健康</span>
+            </div>
+
+            <div class="endpoint">
+              <div class="info-tile">
+                <div class="info-label">代理服务器</div>
+                <div class="info-value">10.144.20.222:3128</div>
+              </div>
+              <div class="info-tile">
+                <div class="info-label">活跃连接</div>
+                <div class="info-value">0</div>
+              </div>
+              <div class="info-tile">
+                <div class="info-label">运行时间</div>
+                <div class="info-value">5m 19s</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="refresh-box">
+          <div class="refresh-head">
+            <span>每 5 秒自动刷新</span>
+            <span class="badge-processing">刚刚更新</span>
+          </div>
+          <div class="health-list">
+            <div class="health-item"><span class="muted">最近连接异常</span><span class="health-value">无</span></div>
+            <div class="health-item"><span class="muted">发送速率</span><span class="health-value">0.33 B/s</span></div>
+            <div class="health-item"><span class="muted">包速率</span><span class="health-value">0.29 pkt/s</span></div>
+            <div class="health-item"><span class="muted">失败连接</span><span class="health-value">0</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <div class="content-grid">
+        <div>
+          <section class="section">
+            <div class="section-head">
+              <div>
+                <div class="section-title">流量统计</div>
+                <div class="muted">发送、接收与连接行为的实时快照</div>
+              </div>
+              <div class="segmented"><span>实时</span><span>5 分钟</span><span>1 小时</span></div>
+            </div>
+
+            <div class="metric-grid">
+              <div class="metric-card">
+                <div class="metric-label"><span>发送</span><span class="metric-icon">↑</span></div>
+                <div><div class="metric-value">104 B</div><div class="metric-sub">累计发送字节</div></div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label"><span>接收</span><span class="metric-icon">↓</span></div>
+                <div><div class="metric-value">2.51 KB</div><div class="metric-sub">累计接收字节</div></div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label"><span>总连接</span><span class="metric-icon">↔</span></div>
+                <div><div class="metric-value">1</div><div class="metric-sub">历史连接计数</div></div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label"><span>失败连接</span><span class="metric-icon">!</span></div>
+                <div><div class="metric-value">0</div><div class="metric-sub">当前无异常</div></div>
+              </div>
+            </div>
+
+            <div class="chart">
+              <div class="section-head" style="margin-bottom: 6px">
+                <div class="section-title">近 14 次刷新趋势</div>
+                <div class="muted">蓝色发送，青色接收</div>
+              </div>
+              <div class="bars">
+                <div class="bar" style="height:18%"></div>
+                <div class="bar recv" style="height:24%"></div>
+                <div class="bar" style="height:8%"></div>
+                <div class="bar recv" style="height:36%"></div>
+                <div class="bar" style="height:12%"></div>
+                <div class="bar recv" style="height:72%"></div>
+                <div class="bar" style="height:19%"></div>
+                <div class="bar recv" style="height:58%"></div>
+                <div class="bar" style="height:10%"></div>
+                <div class="bar recv" style="height:34%"></div>
+                <div class="bar" style="height:14%"></div>
+                <div class="bar recv" style="height:26%"></div>
+                <div class="bar" style="height:9%"></div>
+                <div class="bar recv" style="height:18%"></div>
+              </div>
+            </div>
+          </section>
+
+          <div class="split">
+            <div class="mini-panel">
+              <div class="mini-title">路由决策</div>
+              <div class="mini-value">78 直连路由</div>
+              <div class="muted">端口过滤 0，畸形包 0</div>
+            </div>
+            <div class="mini-panel">
+              <div class="mini-title">DNS 状态</div>
+              <div class="mini-value">0 查询 / 0 失败</div>
+              <div class="muted">FakeIP 已启用，等待新流量填充</div>
+            </div>
+          </div>
+        </div>
+
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <div class="section-title">TUN 诊断</div>
+              <div class="muted">数据包处理与 Wintun 发送状态</div>
+            </div>
+            <span class="ant-tag tag-success">正常</span>
+          </div>
+
+          <div class="diagnostics">
+            <div class="diagnostic-row"><span class="diagnostic-name">接收原始包</span><span class="diagnostic-value">228</span></div>
+            <div class="diagnostic-row"><span class="diagnostic-name">忽略的 IPv6 包</span><span class="diagnostic-value">134</span></div>
+            <div class="diagnostic-row"><span class="diagnostic-name">畸形包</span><span class="diagnostic-value" style="color:#16a34a">0</span></div>
+            <div class="diagnostic-row"><span class="diagnostic-name">端口过滤（非 80/443）</span><span class="diagnostic-value">0</span></div>
+            <div class="diagnostic-row"><span class="diagnostic-name">直连路由</span><span class="diagnostic-value">78</span></div>
+            <div class="diagnostic-row"><span class="diagnostic-name">DNS 查询</span><span class="diagnostic-value">0</span></div>
+            <div class="diagnostic-row"><span class="diagnostic-name">DNS 失败</span><span class="diagnostic-value" style="color:#16a34a">0</span></div>
+            <div class="diagnostic-row"><span class="diagnostic-name">Wintun 发送重试</span><span class="diagnostic-value" style="color:#16a34a">0</span></div>
+            <div class="diagnostic-row"><span class="diagnostic-name">Wintun 发送丢包</span><span class="diagnostic-value" style="color:#16a34a">0</span></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script type="application/json" id="vue-antd-implementation-notes">
+    {
+      "framework": "Vue 3 + Ant Design Vue",
+      "targetComponents": [
+        "a-layout",
+        "a-menu",
+        "a-card",
+        "a-tag",
+        "a-button",
+        "a-select",
+        "a-segmented",
+        "a-badge",
+        "a-statistic",
+        "a-table"
+      ],
+      "sourceEndpoint": "/api/status"
+    }
+  </script>
+</body>
+</html>

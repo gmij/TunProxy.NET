@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TunProxy Config Redesign - Vue + Ant Design</title>
+  <link rel="stylesheet" href="./tunproxy-antd-proposal.css">
+  <style>
+    .mode-card {
+      display: grid;
+      gap: 12px;
+    }
+
+    .notice {
+      border: 1px solid #fde68a;
+      background: #fffbeb;
+      color: #92400e;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .proxy-checks {
+      display: grid;
+      gap: 9px;
+      margin-top: 12px;
+    }
+
+    .check-target {
+      display: grid;
+      grid-template-columns: 78px auto minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .mode-options {
+      display: grid;
+      gap: 10px;
+    }
+
+    .mode-option {
+      border: 1px solid #e5eaf1;
+      border-radius: 8px;
+      padding: 12px;
+      display: grid;
+      gap: 6px;
+      background: #fff;
+    }
+
+    .mode-option.active {
+      border-color: #bfdbfe;
+      background: #eff6ff;
+    }
+
+    .option-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 720;
+    }
+
+    .save-bar {
+      position: sticky;
+      bottom: 0;
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .96);
+      box-shadow: 0 -12px 24px rgba(15, 23, 42, .06);
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell" data-framework-target="Vue 3 + Ant Design Vue">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">T</div>
+        <div>
+          <div class="brand-title">TunProxy</div>
+          <div class="brand-subtitle">Web Console</div>
+        </div>
+      </div>
+      <nav class="nav-list">
+        <div class="nav-item"><span class="nav-icon">●</span><span>状态</span></div>
+        <div class="nav-item active"><span class="nav-icon">⚙</span><span>配置</span></div>
+        <div class="nav-item"><span class="nav-icon">D</span><span>DNS</span></div>
+        <div class="nav-item"><span class="nav-icon">≡</span><span>日志</span></div>
+      </nav>
+      <div class="sidebar-footer">
+        <div>配置文件 <strong>tunproxy.json</strong></div>
+        <div>当前模式 <strong>TUN</strong></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="mobile-tabs"><span>状态</span><span class="active">配置</span><span>DNS</span><span>日志</span></div>
+
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">配置 / 工作流</div>
+          <h1>配置</h1>
+        </div>
+        <div class="toolbar">
+          <div class="ant-select">简体中文 <span>⌄</span></div>
+          <button class="ant-btn ant-btn-primary" type="button">保存并重启</button>
+        </div>
+      </header>
+
+      <div class="page-grid">
+        <div>
+          <section class="section mode-card">
+            <div class="section-head">
+              <div>
+                <div class="section-title">当前运行模式</div>
+                <div class="muted">服务正在通过虚拟网卡透明接管 TCP 流量</div>
+              </div>
+              <span class="ant-tag tag-amber">TUN</span>
+            </div>
+            <div class="notice">
+              TUN 模式默认启用 FakeIP DNS。DNS 代理返回虚拟地址，以便在获知真实 IP 之前即可进行基于域名的路由决策。
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-head">
+              <div>
+                <div class="step-title"><span class="step-number">1</span><span>上游代理</span></div>
+                <div class="muted">先填写代理端点。连接测试只是辅助，不会阻止保存和资源下载。</div>
+              </div>
+              <span class="ant-tag tag-blue">HTTP</span>
+            </div>
+
+            <div class="three-grid">
+              <div class="field">
+                <div class="field-label">代理地址</div>
+                <div class="input-value">10.144.20.222</div>
+              </div>
+              <div class="field">
+                <div class="field-label">端口</div>
+                <div class="input-value">3128</div>
+              </div>
+              <div class="field">
+                <div class="field-label">类型</div>
+                <div class="input-value">HTTP</div>
+              </div>
+            </div>
+
+            <div class="two-grid" style="margin-top: 12px">
+              <div class="field">
+                <div class="field-label">用户名（可选）</div>
+                <div class="input-value muted">未设置</div>
+              </div>
+              <div class="field">
+                <div class="field-label">密码（可选）</div>
+                <div class="input-value muted">未设置</div>
+              </div>
+            </div>
+
+            <div class="helper-box" style="margin-top: 14px">
+              <div class="section-head" style="margin-bottom: 8px">
+                <div>
+                  <strong>代理可用性检测</strong>
+                  <div class="muted">通过当前上游代理访问 Google、GitHub、YouTube</div>
+                </div>
+                <button class="ant-btn" type="button">检测上游代理</button>
+              </div>
+              <div class="proxy-checks">
+                <div class="check-target"><strong>Google</strong><span class="ant-tag tag-success">200</span><span class="muted">126 ms 内返回 200</span></div>
+                <div class="check-target"><strong>GitHub</strong><span class="ant-tag tag-success">200</span><span class="muted">154 ms 内返回 200</span></div>
+                <div class="check-target"><strong>YouTube</strong><span class="ant-tag tag-success">200</span><span class="muted">221 ms 内返回 200</span></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-head">
+              <div>
+                <div class="step-title"><span class="step-number">2</span><span>路由资源</span></div>
+                <div class="muted">先下载 GFWList 和 GeoIP 资源，再使用依赖它们的智能路由模式。</div>
+              </div>
+              <span class="ant-tag tag-success">资源有效</span>
+            </div>
+
+            <div class="two-grid">
+              <div class="mode-option active">
+                <div class="option-title"><span>启用 GFWList 路由</span><span class="ant-tag tag-success">已启用</span></div>
+                <div class="muted">优先命中 GFWList 规则后走代理</div>
+              </div>
+              <div class="mode-option active">
+                <div class="option-title"><span>启用 GeoIP 路由</span><span class="ant-tag tag-success">已启用</span></div>
+                <div class="muted">通过 GeoIP 判断直连或代理</div>
+              </div>
+            </div>
+
+            <div class="helper-box" style="margin-top: 14px">
+              <div class="resource-row">
+                <div><strong>GFW</strong> <span class="code">E:\GreenSoft\tunproxy\gfwlist.txt</span></div>
+                <span class="ant-tag tag-success">有效</span>
+              </div>
+              <div class="resource-row">
+                <div><strong>GEO</strong> <span class="code">E:\GreenSoft\tunproxy\GeoLite2-Country.mmdb</span></div>
+                <span class="ant-tag tag-success">有效</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-head">
+              <div>
+                <div class="step-title"><span class="step-number">3</span><span>代理方式</span></div>
+                <div class="muted">选择 TunProxy 接管流量的方式，然后保存并重启生效。</div>
+              </div>
+            </div>
+
+            <div class="mode-options">
+              <div class="mode-option">
+                <div class="option-title"><span>PAC 自动代理</span><span class="ant-tag">可选</span></div>
+                <div class="muted">根据域名规则自动决定走代理还是直连</div>
+              </div>
+              <div class="mode-option">
+                <div class="option-title"><span>全局代理</span><span class="ant-tag">可选</span></div>
+                <div class="muted">将系统代理指向本地监听端口 8080</div>
+              </div>
+              <div class="mode-option active">
+                <div class="option-title"><span>TUN</span><span class="ant-tag tag-blue">当前选择</span></div>
+                <div class="muted">通过虚拟网卡透明接管 TCP 流量，FakeIP 已开启</div>
+              </div>
+              <div class="mode-option">
+                <div class="option-title"><span>不修改系统代理</span><span class="ant-tag">可选</span></div>
+                <div class="muted">仅保留本地服务，不写入系统代理设置</div>
+              </div>
+            </div>
+          </section>
+
+          <div class="save-bar">
+            <span class="muted">当前没有需要保存的配置更改。</span>
+            <div class="toolbar">
+              <button class="ant-btn" type="button">保存配置</button>
+              <button class="ant-btn ant-btn-success" type="button">保存并重启</button>
+            </div>
+          </div>
+        </div>
+
+        <aside>
+          <section class="section">
+            <div class="section-title">配置摘要</div>
+            <div class="kv-row"><span class="muted">代理服务器</span><strong>10.144.20.222:3128</strong></div>
+            <div class="kv-row"><span class="muted">系统代理方式</span><strong>TUN</strong></div>
+            <div class="kv-row"><span class="muted">本地代理端口</span><strong>8080</strong></div>
+            <div class="kv-row"><span class="muted">路由模式</span><strong>smart</strong></div>
+            <div class="kv-row"><span class="muted">FakeIP</span><strong>开启</strong></div>
+          </section>
+
+          <section class="section">
+            <div class="section-title">PAC 自动代理</div>
+            <p class="muted">PAC 会根据域名规则自动决定走代理还是直连。启用 GFWList 后，相关域名会自动合并进 PAC。</p>
+            <div class="helper-box code">http://127.0.0.1:50000/proxy.pac</div>
+            <div class="toolbar" style="justify-content:flex-start;margin-top:12px">
+              <button class="ant-btn" type="button">复制地址</button>
+              <button class="ant-btn" type="button">预览 PAC</button>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

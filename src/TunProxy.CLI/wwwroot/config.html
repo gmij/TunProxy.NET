@@ -1,167 +1,32 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TunProxy</title>
-  <link rel="stylesheet" href="/bootstrap/bootstrap.min.css" />
+  <link rel="stylesheet" href="/vendor/antd-reset.css" />
+  <link rel="stylesheet" href="/app.css" />
+  <link rel="stylesheet" href="/console.css" />
   <link rel="icon" href="/favicon.png" />
 </head>
 <body data-page-title-key="Page.Config.Title">
+<div id="app" v-cloak>
+  <button id="check-proxy-button" style="display:none"></button>
+</div>
 <script src="/i18n.js"></script>
 <script src="/nav.js"></script>
-
-<div class="container-fluid px-4">
-  <div id="alert-restart" class="alert alert-warning" style="display:none"></div>
-  <div id="alert-error" class="alert alert-danger" style="display:none"></div>
-
-  <h4 class="mb-3" data-i18n="Page.Config.Title"></h4>
-  <div class="mb-4 pb-3 border-bottom">
-    <div class="d-flex align-items-center gap-2 mb-2">
-      <span class="text-muted small" data-i18n="Page.Config.CurrentMode"></span>
-      <span id="mode-badge" class="badge bg-secondary" data-i18n="Shared.Loading"></span>
-    </div>
-    <div id="mode-hint-proxy" class="alert alert-info py-2 small mb-2" style="display:none" data-i18n-html="Page.Config.ModeHintProxyHtml"></div>
-    <div id="mode-hint-tun" class="alert alert-warning py-2 small mb-2" style="display:none" data-i18n-html="Page.Config.ModeHintTunHtml"></div>
-    </div>
-
-  <section id="upstream-section" class="mb-4 pb-3 border-bottom">
-    <div class="mb-3">
-      <div class="d-flex align-items-center gap-2 mb-1">
-        <span class="badge rounded-pill text-bg-secondary">1</span>
-        <h5 class="mb-0" data-i18n="Page.Config.StepUpstream"></h5>
-      </div>
-      <div class="small text-muted" data-i18n="Page.Config.StepUpstreamHint"></div>
-    </div>
-    <div class="row g-2 mb-2">
-      <div class="col-8 col-md-5">
-        <label class="form-label small text-muted" for="proxyHost" data-i18n="Page.Config.ProxyHost"></label>
-        <input type="text" class="form-control form-control-sm" id="proxyHost" placeholder="127.0.0.1" />
-      </div>
-      <div class="col-4 col-md-2">
-        <label class="form-label small text-muted" for="proxyPort" data-i18n="Page.Config.ProxyPort"></label>
-        <input type="number" class="form-control form-control-sm" id="proxyPort" placeholder="7890" />
-      </div>
-      <div class="col-6 col-md-2">
-        <label class="form-label small text-muted" for="proxyType" data-i18n="Page.Config.ProxyType"></label>
-        <select class="form-select form-select-sm" id="proxyType">
-          <option value="Socks5">SOCKS5</option>
-          <option value="Http">HTTP</option>
-        </select>
-      </div>
-    </div>
-    <div class="row g-2 mb-3">
-      <div class="col-6 col-md-3">
-        <label class="form-label small text-muted" for="proxyUsername" data-i18n="Page.Config.ProxyUsername"></label>
-        <input type="text" class="form-control form-control-sm" id="proxyUsername" />
-      </div>
-      <div class="col-6 col-md-3">
-        <label class="form-label small text-muted" for="proxyPassword" data-i18n="Page.Config.ProxyPassword"></label>
-        <input type="password" class="form-control form-control-sm" id="proxyPassword" />
-      </div>
-    </div>
-    <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
-      <button type="button" class="btn btn-sm btn-outline-primary" id="check-proxy-button" data-i18n="Page.Config.ProxyCheck"></button>
-      <span id="proxy-status-badge" class="badge bg-secondary" data-i18n="Page.Config.ProxyStatus.Unknown"></span>
-      <span id="proxy-status-text" class="small text-muted" data-i18n="Page.Config.ProxyStatus.Hint"></span>
-    </div>
-    <div class="border rounded p-2 small" id="proxy-check-panel" style="display:none">
-      <div id="proxy-check-targets" class="vstack gap-1"></div>
-    </div>
-  </section>
-
-  <section id="routing-section" class="mb-4 pb-3 border-bottom">
-    <div class="mb-3">
-      <div class="d-flex align-items-center gap-2 mb-1">
-        <span class="badge rounded-pill text-bg-secondary">2</span>
-        <h5 class="mb-0" data-i18n="Page.Config.StepRoutingResources"></h5>
-      </div>
-      <div class="small text-muted" data-i18n="Page.Config.StepRoutingResourcesHint"></div>
-    </div>
-    <div id="routing-panel">
-      <div class="alert alert-info py-2 small mb-3" data-i18n="Page.Config.SmartRoutingDescription"></div>
-      <div class="row g-2 mb-3">
-        <div class="col-auto">
-          <div class="form-check">
-            <input type="checkbox" class="form-check-input" id="enableGfw" checked />
-            <label class="form-check-label small" for="enableGfw" data-i18n="Page.Config.EnableGfw"></label>
-          </div>
-        </div>
-        <div class="col-auto">
-          <div class="form-check">
-            <input type="checkbox" class="form-check-input" id="enableGeo" checked />
-            <label class="form-check-label small" for="enableGeo" data-i18n="Page.Config.EnableGeo"></label>
-          </div>
-        </div>
-      </div>
-      <div class="border rounded p-2 small mb-2" id="rule-resource-panel">
-        <div class="d-flex align-items-center gap-2 flex-wrap mb-2" id="gfw-resource-row">
-          <span class="fw-semibold" style="width:72px">GFW</span>
-          <span class="badge bg-secondary" id="gfw-resource-status">-</span>
-          <code class="text-muted flex-grow-1 text-truncate" id="gfw-resource-path"></code>
-          <button type="button" class="btn btn-sm btn-outline-primary" id="gfw-resource-button" style="display:none"></button>
-        </div>
-        <div class="d-flex align-items-center gap-2 flex-wrap" id="geo-resource-row">
-          <span class="fw-semibold" style="width:72px">GEO</span>
-          <span class="badge bg-secondary" id="geo-resource-status">-</span>
-          <code class="text-muted flex-grow-1 text-truncate" id="geo-resource-path"></code>
-          <button type="button" class="btn btn-sm btn-outline-primary" id="geo-resource-button" style="display:none"></button>
-        </div>
-      </div>
-      <div class="d-flex align-items-center gap-2 flex-wrap mt-2">
-        <button type="button" class="btn btn-sm btn-outline-primary" id="prepare-resources-button" style="display:none"></button>
-      </div>
-    </div>
-  </section>
-
-  <section id="mode-section" class="mb-4">
-    <div class="mb-3">
-      <div class="d-flex align-items-center gap-2 mb-1">
-        <span class="badge rounded-pill text-bg-secondary">3</span>
-        <h5 class="mb-0" data-i18n="Page.Config.StepProxyMode"></h5>
-      </div>
-      <div class="small text-muted" data-i18n="Page.Config.StepProxyModeHint"></div>
-    </div>
-    <div id="local-port-row" class="row g-2 mb-3" style="display:none">
-      <div class="col-8 col-md-3">
-        <label class="form-label small text-muted" for="systemProxyMode" data-i18n="Page.Config.SystemProxyMode"></label>
-        <select class="form-select form-select-sm" id="systemProxyMode">
-          <option value="pac" data-i18n="Page.Config.SystemProxyMode.Pac"></option>
-          <option value="global" data-i18n="Page.Config.SystemProxyMode.Global"></option>
-          <option value="tun" data-i18n="Page.Config.SystemProxyMode.Tun"></option>
-          <option value="none" data-i18n="Page.Config.SystemProxyMode.None"></option>
-        </select>
-      </div>
-      <div id="local-port-col" class="col-4 col-md-2">
-        <label class="form-label small text-muted" for="localPort" data-i18n="Page.Config.LocalProxyPort"></label>
-        <input type="number" class="form-control form-control-sm" id="localPort" value="8080" />
-      </div>
-    </div>
-    <div class="d-flex align-items-center gap-2 flex-wrap">
-      <button type="button" class="btn btn-sm btn-success" id="save-config-button" data-i18n="Page.Config.SaveRestart"></button>
-      <span id="save-status-text" class="small text-muted" data-i18n="Page.Config.SaveStatus.NoChanges"></span>
-    </div>
-  </section>
-
-  <section id="pac-section" style="display:none">
-    <hr class="my-4" />
-
-    <h4 class="mb-2" data-i18n="Page.Config.PacHeading"></h4>
-    <p class="text-muted small mb-3" data-i18n-html="Page.Config.PacDescriptionHtml"></p>
-    <div class="mb-3 d-flex flex-wrap align-items-center gap-2">
-      <code id="pac-url" class="bg-light border rounded px-2 py-1 small">http://127.0.0.1:50000/proxy.pac</code>
-      <button class="btn btn-sm btn-outline-secondary" id="copy-pac-button" data-i18n="Page.Config.CopyAddress"></button>
-      <a class="btn btn-sm btn-outline-primary" href="/proxy.pac" target="_blank" data-i18n="Page.Config.PreviewPac"></a>
-    </div>
-    <div id="pac-win-controls" class="d-flex gap-2 flex-wrap">
-      <button class="btn btn-sm btn-success" id="apply-pac-button" data-i18n="Page.Config.ApplyPac"></button>
-      <button class="btn btn-sm btn-outline-danger" id="clear-pac-button" data-i18n="Page.Config.ClearPac"></button>
-      <span id="pac-result" class="small align-self-center text-muted"></span>
-    </div>
-  </section>
-</div>
-
 <script src="/api.js"></script>
+<script src="/vendor/dayjs.min.js"></script>
+<script src="/vendor/dayjs_plugin_advancedFormat.js"></script>
+<script src="/vendor/dayjs_plugin_customParseFormat.js"></script>
+<script src="/vendor/dayjs_plugin_localeData.js"></script>
+<script src="/vendor/dayjs_plugin_quarterOfYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekOfYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekday.js"></script>
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/vendor/antd.min.js"></script>
+<script src="/console-app.js"></script>
 <script src="/config-page.js"></script>
 </body>
 </html>

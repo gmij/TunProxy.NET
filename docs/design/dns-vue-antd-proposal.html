@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TunProxy DNS Redesign - Vue + Ant Design</title>
+  <link rel="stylesheet" href="./tunproxy-antd-proposal.css">
+  <style>
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .summary-card {
+      border: 1px solid #e5eaf1;
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+      min-height: 92px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .summary-value {
+      font-size: 24px;
+      font-weight: 780;
+      line-height: 1;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .domain {
+      font-weight: 700;
+      color: #18202f;
+    }
+
+    .empty-state {
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      padding: 28px;
+      text-align: center;
+      background: #f8fafc;
+    }
+
+    .route-map {
+      display: grid;
+      gap: 10px;
+    }
+
+    .route-node {
+      border: 1px solid #e5eaf1;
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+      display: grid;
+      gap: 8px;
+    }
+
+    .route-node.active {
+      border-color: #a5f3fc;
+      background: #ecfeff;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell" data-framework-target="Vue 3 + Ant Design Vue">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">T</div>
+        <div>
+          <div class="brand-title">TunProxy</div>
+          <div class="brand-subtitle">Web Console</div>
+        </div>
+      </div>
+      <nav class="nav-list">
+        <div class="nav-item"><span class="nav-icon">●</span><span>状态</span></div>
+        <div class="nav-item"><span class="nav-icon">⚙</span><span>配置</span></div>
+        <div class="nav-item active"><span class="nav-icon">D</span><span>DNS</span></div>
+        <div class="nav-item"><span class="nav-icon">≡</span><span>日志</span></div>
+      </nav>
+      <div class="sidebar-footer">
+        <div>模式 <strong>TUN</strong></div>
+        <div>刷新间隔 <strong>10 秒</strong></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="mobile-tabs"><span>状态</span><span>配置</span><span class="active">DNS</span><span>日志</span></div>
+
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">DNS / 解析记录</div>
+          <h1>DNS 解析记录</h1>
+        </div>
+        <div class="toolbar">
+          <div class="ant-input" style="min-width: 300px">搜索 IP 或域名...</div>
+          <button class="ant-btn" type="button">清除</button>
+        </div>
+      </header>
+
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="muted">记录数量</div>
+          <div class="summary-value">0</div>
+          <div class="muted">当前没有 DNS 解析记录</div>
+        </div>
+        <div class="summary-card">
+          <div class="muted">代理路由</div>
+          <div class="summary-value">0</div>
+          <div class="muted">GFW / Geo / 默认规则</div>
+        </div>
+        <div class="summary-card">
+          <div class="muted">直连路由</div>
+          <div class="summary-value">0</div>
+          <div class="muted">私网 IP 与直连域名</div>
+        </div>
+        <div class="summary-card">
+          <div class="muted">DNS 缓存</div>
+          <div class="summary-value">0</div>
+          <div class="muted">可单条清除</div>
+        </div>
+      </div>
+
+      <div class="page-grid">
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <div class="section-title">记录列表</div>
+              <div class="muted">每 10 秒自动刷新，支持搜索、排序与单条缓存清理</div>
+            </div>
+            <span class="ant-tag tag-blue">TUN 模式</span>
+          </div>
+
+          <div class="legend">
+            <span class="legend-item"><span class="ant-tag">直连</span> 私网 IP、直连域名或直连 Geo</span>
+            <span class="legend-item"><span class="ant-tag tag-success">代理</span> 命中 GFW 列表</span>
+            <span class="legend-item"><span class="ant-tag tag-cyan">代理</span> 命中 GeoIP</span>
+            <span class="legend-item"><span class="ant-tag tag-amber">代理</span> 默认规则或 GeoIP 未知</span>
+          </div>
+
+          <div class="table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>解析域名 ↑</th>
+                  <th>IP 地址</th>
+                  <th>命中次数</th>
+                  <th>路由</th>
+                  <th>原因</th>
+                  <th>最近活跃</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colspan="7">
+                    <div class="empty-state">
+                      <div class="section-title">暂无记录</div>
+                      <div class="muted">服务运行后会随流量自动填充。当前 `/api/dns-records` 返回空数组。</div>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td><span class="domain">example.github.com</span></td>
+                  <td class="code">198.18.0.24</td>
+                  <td>3</td>
+                  <td><span class="ant-tag tag-success">代理</span> <span class="ant-tag tag-blue">DNS cache</span></td>
+                  <td class="code">GFW</td>
+                  <td class="code">08:42:18</td>
+                  <td><button class="ant-btn ant-btn-danger" type="button">Clear</button></td>
+                </tr>
+                <tr>
+                  <td><span class="domain">intranet.local</span></td>
+                  <td class="code">10.0.0.105</td>
+                  <td>2</td>
+                  <td><span class="ant-tag">直连</span> <span class="ant-tag">私网</span></td>
+                  <td class="code">PrivateIP</td>
+                  <td class="code">08:39:34</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="muted">每 10 秒自动刷新 | 上次更新：08:42:24</p>
+        </section>
+
+        <aside>
+          <section class="section">
+            <div class="section-title">路由判定说明</div>
+            <div class="route-map">
+              <div class="route-node active">
+                <strong>1. DNS 命中缓存</strong>
+                <span class="muted">如果 FakeIP 已映射域名，优先展示 DNS cache 标记</span>
+              </div>
+              <div class="route-node">
+                <strong>2. 直连规则</strong>
+                <span class="muted">私网 IP、直连域名或直连 Geo 直接放行</span>
+              </div>
+              <div class="route-node">
+                <strong>3. 代理规则</strong>
+                <span class="muted">GFWList、GeoIP 或默认规则决定是否走代理</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-title">当前 DNS 链路</div>
+            <div class="kv-row"><span class="muted">TUN DNS</span><strong>8.8.8.8</strong></div>
+            <div class="kv-row"><span class="muted">FakeIP</span><strong>开启</strong></div>
+            <div class="kv-row"><span class="muted">DNS 查询</span><strong>0</strong></div>
+            <div class="kv-row"><span class="muted">DNS 失败</span><strong>0</strong></div>
+          </section>
+        </aside>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

@@ -33,7 +33,13 @@ public class WebConsoleAssetTests
         Assert.Contains("<script src=\"/i18n.js\"></script>", html);
         Assert.Contains("<script src=\"/nav.js\"></script>", html);
         Assert.Contains("<script src=\"/api.js\"></script>", html);
+        Assert.Contains("<script src=\"/vendor/vue.global.prod.js\"></script>", html);
+        Assert.Contains("<script src=\"/vendor/antd.min.js\"></script>", html);
+        Assert.Contains("<script src=\"/vendor/dayjs.min.js\"></script>", html);
+        Assert.Contains("<script src=\"/console-app.js\"></script>", html);
         Assert.Contains($"<script src=\"/{pageScript}\"></script>", html);
+        Assert.Contains("href=\"/vendor/antd-reset.css\"", html);
+        Assert.Contains("href=\"/console.css\"", html);
         Assert.DoesNotContain("<script>\r\n", html);
         Assert.DoesNotContain("<script>\n", html);
     }
@@ -77,7 +83,13 @@ public class WebConsoleAssetTests
     [Theory]
     [InlineData("index.html", "text/html")]
     [InlineData("status-page.js", "text/javascript")]
+    [InlineData("console-app.js", "text/javascript")]
+    [InlineData("vendor/vue.global.prod.js", "text/javascript")]
+    [InlineData("vendor/antd.min.js", "text/javascript")]
+    [InlineData("vendor/dayjs.min.js", "text/javascript")]
     [InlineData("app.css", "text/css")]
+    [InlineData("console.css", "text/css")]
+    [InlineData("vendor/antd-reset.css", "text/css")]
     [InlineData("favicon.png", "image/png")]
     public void EmbeddedAssets_OpenWithExpectedContentType(string path, string expectedContentType)
     {

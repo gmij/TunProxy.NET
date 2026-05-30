@@ -1,108 +1,32 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TunProxy</title>
-  <link rel="stylesheet" href="/bootstrap/bootstrap.min.css" />
+  <link rel="stylesheet" href="/vendor/antd-reset.css" />
+  <link rel="stylesheet" href="/app.css" />
+  <link rel="stylesheet" href="/console.css" />
   <link rel="icon" href="/favicon.png" />
-  <style>
-    #log-box {
-      background: #1a1a1a;
-      color: #d4d4d4;
-      font-family: 'Consolas', 'Cascadia Code', 'Fira Mono', monospace;
-      font-size: 12.5px;
-      line-height: 1.6;
-      height: calc(100vh - 200px);
-      min-height: 300px;
-      overflow-y: auto;
-      padding: 10px 12px;
-      border-radius: 6px;
-    }
-
-    .log-line {
-      display: block;
-      margin: 0;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-
-    .log-time  { color: #6a9955; }
-    .log-INF   { color: #9cdcfe; }
-    .log-WRN   { color: #dcdcaa; }
-    .log-ERR   { color: #f44747; }
-    .log-FTL   { color: #f44747; font-weight: bold; }
-    .log-DBG   { color: #606060; }
-    .log-VRB   { color: #606060; }
-    .log-ex    { color: #cd5c5c; padding-left: 2em; display: block; }
-    .log-hidden { display: none !important; }
-    #filter-input {
-      background: #2d2d2d;
-      color: #d4d4d4;
-      border-color: #555;
-    }
-    #filter-input::placeholder { color: #666; }
-    #filter-input:focus {
-      background: #2d2d2d;
-      color: #d4d4d4;
-      box-shadow: 0 0 0 .2rem rgba(100, 150, 255, .3);
-      border-color: #5b9bd5;
-      outline: none;
-    }
-    #log-empty {
-      color: #666;
-      font-size: 13px;
-      padding: 20px 0;
-    }
-    #btn-bottom {
-      position: fixed;
-      bottom: 24px;
-      right: 28px;
-      z-index: 200;
-      width: 38px;
-      height: 38px;
-      border-radius: 50%;
-      padding: 0;
-      font-size: 18px;
-      line-height: 1;
-      opacity: 0.7;
-      transition: opacity .2s;
-    }
-    #btn-bottom:hover { opacity: 1; }
-  </style>
 </head>
 <body data-page-title-key="Page.Logs.Title">
+<div id="app" v-cloak>
+  <div id="log-box" style="display:none"></div>
+</div>
 <script src="/i18n.js"></script>
 <script src="/nav.js"></script>
-
-<div class="container-fluid px-4">
-  <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
-    <h4 class="mb-0 me-1" data-i18n="Page.Logs.Heading"></h4>
-    <button class="btn btn-sm btn-outline-secondary" id="btn-pause"></button>
-    <button class="btn btn-sm btn-outline-danger" id="btn-clear" data-i18n="Page.Logs.Clear"></button>
-    <div class="btn-group btn-group-sm ms-1" role="group">
-      <button type="button" class="btn btn-outline-secondary" data-filter="" data-i18n="Page.Logs.FilterAll"></button>
-      <button type="button" class="btn btn-outline-info" data-filter="[CONN]" data-i18n="Page.Logs.FilterConnections"></button>
-      <button type="button" class="btn btn-outline-success" data-filter="[DNS ]" data-i18n="Page.Logs.FilterDns"></button>
-      <button type="button" class="btn btn-outline-warning" data-filter="WRN" data-i18n="Page.Logs.FilterWarnings"></button>
-      <button type="button" class="btn btn-outline-danger" data-filter="ERR" data-i18n="Page.Logs.FilterErrors"></button>
-    </div>
-    <input id="filter-input"
-           type="text"
-           class="form-control form-control-sm ms-1"
-           style="max-width:220px"
-           data-i18n-placeholder="Page.Logs.FilterPlaceholder" />
-    <span class="text-muted small ms-auto" id="log-status"></span>
-  </div>
-
-  <div id="log-box">
-    <span id="log-empty" data-i18n-html="Page.Logs.EmptyHtml"></span>
-  </div>
-</div>
-
-<button id="btn-bottom" class="btn btn-secondary" data-i18n-title="Page.Logs.ScrollToLatest">&darr;</button>
-
 <script src="/api.js"></script>
+<script src="/vendor/dayjs.min.js"></script>
+<script src="/vendor/dayjs_plugin_advancedFormat.js"></script>
+<script src="/vendor/dayjs_plugin_customParseFormat.js"></script>
+<script src="/vendor/dayjs_plugin_localeData.js"></script>
+<script src="/vendor/dayjs_plugin_quarterOfYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekOfYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekday.js"></script>
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/vendor/antd.min.js"></script>
+<script src="/console-app.js"></script>
 <script src="/logs-page.js"></script>
 </body>
 </html>

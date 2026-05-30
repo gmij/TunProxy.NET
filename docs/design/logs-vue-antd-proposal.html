@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TunProxy Logs Redesign - Vue + Ant Design</title>
+  <link rel="stylesheet" href="./tunproxy-antd-proposal.css">
+  <style>
+    .log-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .log-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .log-filters {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .terminal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: #98a2b3;
+      border-bottom: 1px solid #253044;
+      padding-bottom: 10px;
+      margin-bottom: 10px;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+      font-size: 13px;
+    }
+
+    .log-line {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .log-count-card {
+      border: 1px solid #e5eaf1;
+      border-radius: 8px;
+      padding: 14px;
+      background: #fff;
+      display: grid;
+      gap: 8px;
+    }
+
+    .count-value {
+      font-size: 24px;
+      font-weight: 780;
+    }
+
+    .quick-actions {
+      display: grid;
+      gap: 10px;
+    }
+
+    .quick-actions .ant-btn {
+      justify-content: center;
+      width: 100%;
+    }
+
+    @media (max-width: 1120px) {
+      .log-layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell" data-framework-target="Vue 3 + Ant Design Vue">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">T</div>
+        <div>
+          <div class="brand-title">TunProxy</div>
+          <div class="brand-subtitle">Web Console</div>
+        </div>
+      </div>
+      <nav class="nav-list">
+        <div class="nav-item"><span class="nav-icon">●</span><span>状态</span></div>
+        <div class="nav-item"><span class="nav-icon">⚙</span><span>配置</span></div>
+        <div class="nav-item"><span class="nav-icon">D</span><span>DNS</span></div>
+        <div class="nav-item active"><span class="nav-icon">≡</span><span>日志</span></div>
+      </nav>
+      <div class="sidebar-footer">
+        <div>当前筛选 <strong>[CONN]</strong></div>
+        <div>轮询间隔 <strong>2 秒</strong></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="mobile-tabs"><span>状态</span><span>配置</span><span>DNS</span><span class="active">日志</span></div>
+
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">日志 / 实时流</div>
+          <h1>实时日志</h1>
+        </div>
+        <div class="toolbar">
+          <button class="ant-btn" type="button">暂停</button>
+          <button class="ant-btn ant-btn-danger" type="button">清空</button>
+          <button class="ant-btn ant-btn-primary" type="button">滚到最新</button>
+        </div>
+      </header>
+
+      <div class="log-layout">
+        <section class="section">
+          <div class="log-toolbar">
+            <div class="log-filters">
+              <div class="segmented"><span>全部</span><span class="active">连接</span><span>DNS</span><span>警告</span><span>错误</span></div>
+            </div>
+            <div class="toolbar">
+              <div class="ant-input" style="min-width: 240px">过滤关键词...</div>
+              <span class="ant-tag tag-blue">最后更新：08:42:24</span>
+            </div>
+          </div>
+
+          <div class="terminal">
+            <div class="terminal-head">
+              <span>tunproxy-.log</span>
+              <span>max 1000 lines · filter [CONN]</span>
+            </div>
+            <p class="log-line"><span class="log-time">08:27:23.368</span> <span class="log-inf">[INF]</span> Configuration loaded from E:\GreenSoft\tunproxy\tunproxy.json</p>
+            <p class="log-line"><span class="log-time">08:27:23.387</span> <span class="log-inf">[INF]</span> Proxy: 10.144.20.222:3128 (Http)</p>
+            <p class="log-line"><span class="log-time">08:27:23.387</span> <span class="log-route">[TUN ]</span> Loading existing GFWList/GeoIP resources before applying TUN routes.</p>
+            <p class="log-line"><span class="log-time">08:27:23.391</span> <span class="log-route">[GFW]</span> Loaded 3913 rules from E:\GreenSoft\tunproxy\gfwlist.txt</p>
+            <p class="log-line"><span class="log-time">08:27:24.036</span> <span class="log-inf">[INF]</span> TunProxy is running. Press Ctrl+C to stop.</p>
+            <p class="log-line"><span class="log-time">08:27:26.839</span> <span class="log-wrn">[WRN]</span> [GEO] Lookup found no record: 224.0.0.251 (count=1)</p>
+            <p class="log-line"><span class="log-time">08:29:20.199</span> <span class="log-inf">[INF]</span> <span class="log-route">[CONN]</span> 10.0.0.105:1498 DIRECT (IP/PrivateIP; Cache=miss; DestIP=10.0.0.105)</p>
+            <p class="log-line"><span class="log-time">08:29:24.026</span> <span class="log-inf">[INF]</span> Traffic: sent 104 B, received 2513 B, active 0, relays 0, dns tcp 0/0, doh 0/0</p>
+            <p class="log-line"><span class="log-time">08:39:24.046</span> <span class="log-inf">[INF]</span> [ROUTE] Direct bypass route expired: 10.0.0.105 (removed=true)</p>
+            <p class="log-line"><span class="log-time">08:39:34.911</span> <span class="log-inf">[INF]</span> <span class="log-route">[CONN]</span> 10.0.0.105:1498 DIRECT (IP/PrivateIP; Cache=miss; DestIP=10.0.0.105)</p>
+            <p class="log-line"><span class="log-time">08:42:24.024</span> <span class="log-inf">[INF]</span> Traffic: sent 208 B, received 5026 B, active 0, relays 0, dns tcp 0/0, doh 0/0</p>
+          </div>
+        </section>
+
+        <aside>
+          <section class="section">
+            <div class="section-title">日志概览</div>
+            <div class="two-grid" style="grid-template-columns: 1fr 1fr; margin-top: 12px">
+              <div class="log-count-card">
+                <span class="muted">总行数</span>
+                <span class="count-value">79</span>
+              </div>
+              <div class="log-count-card">
+                <span class="muted">警告</span>
+                <span class="count-value" style="color: var(--amber)">10</span>
+              </div>
+              <div class="log-count-card">
+                <span class="muted">连接</span>
+                <span class="count-value">2</span>
+              </div>
+              <div class="log-count-card">
+                <span class="muted">错误</span>
+                <span class="count-value" style="color: var(--green)">0</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-title">快速过滤</div>
+            <div class="quick-actions" style="margin-top: 12px">
+              <button class="ant-btn ant-btn-primary" type="button">连接 [CONN]</button>
+              <button class="ant-btn" type="button">DNS [DNS]</button>
+              <button class="ant-btn" type="button">警告 WRN</button>
+              <button class="ant-btn" type="button">错误 ERR</button>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-title">运行状态</div>
+            <div class="kv-row"><span class="muted">服务</span><strong>运行中</strong></div>
+            <div class="kv-row"><span class="muted">模式</span><strong>TUN</strong></div>
+            <div class="kv-row"><span class="muted">代理</span><strong>10.144.20.222:3128</strong></div>
+            <div class="kv-row"><span class="muted">最近异常</span><strong>无</strong></div>
+          </section>
+        </aside>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

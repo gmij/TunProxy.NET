@@ -1,107 +1,32 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TunProxy</title>
-  <link rel="stylesheet" href="/bootstrap/bootstrap.min.css" />
+  <link rel="stylesheet" href="/vendor/antd-reset.css" />
+  <link rel="stylesheet" href="/app.css" />
+  <link rel="stylesheet" href="/console.css" />
   <link rel="icon" href="/favicon.png" />
-  <style>
-    #dns-table {
-      table-layout: fixed;
-      min-width: 980px;
-    }
-
-    #dns-table th,
-    #dns-table td {
-      vertical-align: middle;
-    }
-
-    .dns-sort-button {
-      align-items: center;
-      background: transparent;
-      border: 0;
-      color: inherit;
-      display: inline-flex;
-      font: inherit;
-      gap: 0.25rem;
-      padding: 0;
-      text-align: left;
-      width: 100%;
-    }
-
-    .dns-sort-button:hover,
-    .dns-sort-button:focus {
-      color: #0d6efd;
-    }
-
-    .sort-indicator {
-      color: #6c757d;
-      min-width: 1em;
-    }
-  </style>
 </head>
 <body data-page-title-key="Page.Dns.Title">
+<div id="app" v-cloak>
+  <table id="dns-table" style="display:none"></table>
+</div>
 <script src="/i18n.js"></script>
 <script src="/nav.js"></script>
-
-<div class="container-fluid px-4">
-  <div id="proxy-mode-notice" class="alert alert-info" style="display:none" data-i18n-html="Page.Dns.ProxyModeNoticeHtml"></div>
-
-  <div id="tun-content" style="display:none">
-    <div class="d-flex align-items-center gap-3 mb-3">
-      <h4 class="mb-0" data-i18n="Page.Dns.Heading"></h4>
-      <span class="badge bg-secondary" id="dns-count">0</span>
-    </div>
-
-    <div class="mb-3 d-flex gap-2">
-      <input type="text"
-             class="form-control form-control-sm"
-             id="search-input"
-             style="max-width:300px"
-             data-i18n-placeholder="Page.Dns.SearchPlaceholder" />
-      <button class="btn btn-sm btn-outline-secondary" id="clear-search-button" data-i18n="Page.Dns.ClearSearch"></button>
-    </div>
-
-    <div class="d-flex flex-wrap gap-2 align-items-center small mb-2">
-      <span><span class="badge bg-secondary" data-i18n="Page.Dns.RouteDirect"></span> <span data-i18n="Page.Dns.LegendDirect"></span></span>
-      <span><span class="badge bg-success" data-i18n="Page.Dns.RouteProxy"></span> <span data-i18n="Page.Dns.LegendGfw"></span></span>
-      <span><span class="badge bg-info text-dark" data-i18n="Page.Dns.RouteProxy"></span> <span data-i18n="Page.Dns.LegendGeo"></span></span>
-      <span><span class="badge bg-warning text-dark" data-i18n="Page.Dns.RouteProxy"></span> <span data-i18n="Page.Dns.LegendDefault"></span></span>
-    </div>
-
-    <div id="dns-table-wrap" class="table-responsive mb-4">
-      <table class="table table-sm table-hover" id="dns-table">
-        <colgroup>
-          <col style="width:28%" />
-          <col style="width:16%" />
-          <col style="width:8%" />
-          <col style="width:14%" />
-          <col style="width:14%" />
-          <col style="width:12%" />
-          <col style="width:8%" />
-        </colgroup>
-        <thead class="table-light">
-          <tr>
-            <th><button type="button" class="dns-sort-button" data-sort-key="hostname"><span data-i18n="Page.Dns.ResolvedDomain"></span><span class="sort-indicator"></span></button></th>
-            <th><button type="button" class="dns-sort-button" data-sort-key="ipAddress"><span data-i18n="Page.Dns.IpAddress"></span><span class="sort-indicator"></span></button></th>
-            <th><button type="button" class="dns-sort-button" data-sort-key="seenCount"><span data-i18n="Page.Dns.SeenCount"></span><span class="sort-indicator"></span></button></th>
-            <th><button type="button" class="dns-sort-button" data-sort-key="route"><span data-i18n="Page.Dns.Route"></span><span class="sort-indicator"></span></button></th>
-            <th><button type="button" class="dns-sort-button" data-sort-key="reason"><span data-i18n="Page.Dns.Reason"></span><span class="sort-indicator"></span></button></th>
-            <th><button type="button" class="dns-sort-button" data-sort-key="lastActiveUtc"><span data-i18n="Page.Dns.LastActive"></span><span class="sort-indicator"></span></button></th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="dns-tbody"></tbody>
-      </table>
-      <p id="dns-empty" class="text-muted" style="display:none" data-i18n="Page.Dns.Empty"></p>
-    </div>
-
-    <p class="text-muted small mt-2" id="last-update"></p>
-  </div>
-</div>
-
 <script src="/api.js"></script>
+<script src="/vendor/dayjs.min.js"></script>
+<script src="/vendor/dayjs_plugin_advancedFormat.js"></script>
+<script src="/vendor/dayjs_plugin_customParseFormat.js"></script>
+<script src="/vendor/dayjs_plugin_localeData.js"></script>
+<script src="/vendor/dayjs_plugin_quarterOfYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekOfYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekday.js"></script>
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/vendor/antd.min.js"></script>
+<script src="/console-app.js"></script>
 <script src="/dns-page.js"></script>
 </body>
 </html>

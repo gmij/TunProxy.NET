@@ -1,33 +1,25 @@
 (function () {
   var pages = [
-    { href: '/index.html', key: 'Nav.Status' },
-    { href: '/config.html', key: 'Nav.Config' },
-    { href: '/dns.html', key: 'Nav.Dns' },
-    { href: '/logs.html', key: 'Nav.Logs' }
+    { href: '/index.html', key: 'Nav.Status', icon: '●', id: 'status' },
+    { href: '/config.html', key: 'Nav.Config', icon: '⚙', id: 'config' },
+    { href: '/dns.html', key: 'Nav.Dns', icon: 'D', id: 'dns' },
+    { href: '/logs.html', key: 'Nav.Logs', icon: '≡', id: 'logs' }
   ];
 
-  var currentPath = location.pathname;
-  if (currentPath === '/' || currentPath === '') {
-    currentPath = '/index.html';
+  function normalizePath(path) {
+    return path === '/' || path === '' ? '/index.html' : path;
   }
 
-  var links = pages.map(function (page) {
-    var classes = 'nav-link' + (currentPath === page.href ? ' active' : '');
-    return '<a class="' + classes + '" href="' + page.href + '" data-i18n="' + page.key + '"></a>';
-  }).join('');
+  function pageIdFromPath(path) {
+    var current = normalizePath(path || location.pathname);
+    var page = pages.find(function (item) {
+      return item.href === current;
+    });
+    return page ? page.id : 'status';
+  }
 
-  document.body.insertAdjacentHTML(
-    'afterbegin',
-    '<nav class="navbar navbar-expand-sm navbar-dark bg-dark px-3 mb-4">' +
-      '<a class="navbar-brand fw-bold" href="/index.html">TunProxy</a>' +
-      '<div class="navbar-nav me-auto">' + links + '</div>' +
-      '<div class="d-flex align-items-center gap-2 text-white small">' +
-        '<label for="language-switcher" class="mb-0" data-i18n="Nav.Language"></label>' +
-        '<select id="language-switcher" class="form-select form-select-sm" style="width:auto">' +
-          '<option value="zh-CN">简体中文</option>' +
-          '<option value="en">English</option>' +
-        '</select>' +
-      '</div>' +
-    '</nav>'
-  );
+  window.TunProxyNav = {
+    pageIdFromPath: pageIdFromPath,
+    pages: pages.slice()
+  };
 })();

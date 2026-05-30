@@ -1,103 +1,32 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TunProxy</title>
-  <link rel="stylesheet" href="/bootstrap/bootstrap.min.css" />
+  <link rel="stylesheet" href="/vendor/antd-reset.css" />
+  <link rel="stylesheet" href="/app.css" />
+  <link rel="stylesheet" href="/console.css" />
   <link rel="icon" href="/favicon.png" />
 </head>
 <body data-page-title-key="Page.Status.Title">
+<div id="app" v-cloak>
+  <span id="status-badges" style="display:none"></span>
+</div>
 <script src="/i18n.js"></script>
 <script src="/nav.js"></script>
-
-<div class="container-fluid px-4">
-  <h4 class="mb-3" data-i18n="Page.Status.Heading"></h4>
-  <div id="service-action-alert" class="alert alert-info py-2 small" style="display:none"></div>
-  <div id="connect-issue-alert" class="alert alert-warning py-2 small" style="display:none"></div>
-
-  <div class="card mb-3">
-    <div class="card-body">
-      <div class="d-flex align-items-center justify-content-between gap-3 mb-3 flex-wrap">
-        <span class="fs-5 fw-bold" id="status-badges">
-          <span class="badge bg-secondary" data-i18n="Page.Status.Badge.Loading"></span>
-        </span>
-        <div class="d-flex gap-2">
-          <button type="button" class="btn btn-sm btn-outline-primary" id="restart-service-button" data-i18n="Page.Status.ServiceRestart"></button>
-          <button type="button" class="btn btn-sm btn-outline-danger" id="stop-service-button" data-i18n="Page.Status.ServiceStop"></button>
-        </div>
-      </div>
-      <table class="table table-sm table-borderless mb-0">
-        <tbody>
-          <tr><td class="text-muted" data-i18n="Page.Status.ProxyServer"></td><td id="proxy-info">-</td></tr>
-          <tr><td class="text-muted" data-i18n="Page.Status.ActiveConnections"></td><td id="active-conn">-</td></tr>
-          <tr><td class="text-muted" data-i18n="Page.Status.Uptime"></td><td id="uptime">-</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <h5 class="mb-2" data-i18n="Page.Status.Traffic"></h5>
-  <div class="row g-2 mb-3">
-    <div class="col-6 col-md-3">
-      <div class="card text-center h-100">
-        <div class="card-body py-2">
-          <div class="text-muted small" data-i18n="Page.Status.BytesSent"></div>
-          <div class="fw-bold" id="bytes-sent">-</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-6 col-md-3">
-      <div class="card text-center h-100">
-        <div class="card-body py-2">
-          <div class="text-muted small" data-i18n="Page.Status.BytesReceived"></div>
-          <div class="fw-bold" id="bytes-recv">-</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-6 col-md-3">
-      <div class="card text-center h-100">
-        <div class="card-body py-2">
-          <div class="text-muted small" data-i18n="Page.Status.TotalConnections"></div>
-          <div class="fw-bold" id="total-conn">-</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-6 col-md-3">
-      <div class="card text-center h-100">
-        <div class="card-body py-2">
-          <div class="text-muted small" data-i18n="Page.Status.FailedConnections"></div>
-          <div class="fw-bold" id="failed-conn">-</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="tun-diagnostics" style="display:none">
-    <h5 class="mb-2" data-i18n="Page.Status.TunDiagnostics"></h5>
-    <div class="card">
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0">
-          <tbody>
-            <tr><td data-i18n="Page.Status.RawPackets"></td><td id="raw-packets">-</td></tr>
-            <tr><td data-i18n="Page.Status.Ipv6Packets"></td><td id="ipv6-packets">-</td></tr>
-            <tr><td data-i18n="Page.Status.ParseFailures"></td><td id="parse-fail">-</td></tr>
-            <tr><td data-i18n="Page.Status.PortFiltered"></td><td id="port-filtered">-</td></tr>
-            <tr><td data-i18n="Page.Status.DirectRouted"></td><td id="direct-routed">-</td></tr>
-            <tr><td data-i18n="Page.Status.DnsQueries"></td><td id="dns-queries">-</td></tr>
-            <tr><td data-i18n="Page.Status.DnsFailures"></td><td id="dns-fail">-</td></tr>
-            <tr><td data-i18n="Page.Status.TunSendAllocationRetryAttempts"></td><td id="tun-write-retry">-</td></tr>
-            <tr><td data-i18n="Page.Status.TunSendAllocationDrops"></td><td id="tun-write-drop">-</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <p class="text-muted small mt-3" id="last-update"></p>
-</div>
-
 <script src="/api.js"></script>
+<script src="/vendor/dayjs.min.js"></script>
+<script src="/vendor/dayjs_plugin_advancedFormat.js"></script>
+<script src="/vendor/dayjs_plugin_customParseFormat.js"></script>
+<script src="/vendor/dayjs_plugin_localeData.js"></script>
+<script src="/vendor/dayjs_plugin_quarterOfYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekOfYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekYear.js"></script>
+<script src="/vendor/dayjs_plugin_weekday.js"></script>
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/vendor/antd.min.js"></script>
+<script src="/console-app.js"></script>
 <script src="/status-page.js"></script>
 </body>
 </html>

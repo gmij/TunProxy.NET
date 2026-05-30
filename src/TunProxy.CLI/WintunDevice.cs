@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Serilog;
@@ -22,9 +24,13 @@ public sealed class WintunDevice : ITunDevice
 
     private WintunAdapter? _adapter;
     private WintunSession? _session;
+    private readonly string _dnsServer;
     private bool _disposed;
 
-    public WintunDevice(TunConfig config) { }
+    public WintunDevice(TunConfig config)
+    {
+        _dnsServer = config.DnsServer;
+    }
 
     public void Configure(string ip, string subnetMask, int mtu = 1500)
     {
@@ -43,6 +49,8 @@ public sealed class WintunDevice : ITunDevice
             CreateNoWindow = true, UseShellExecute = false
         });
         setMtu?.WaitForExit(3000);
+
+        ConfigureDnsServer();
     }
 
     public void Start()
@@ -53,10 +61,43 @@ public sealed class WintunDevice : ITunDevice
 
     public void Stop()
     {
+        ClearDnsServers();
         _session?.Dispose();
         _session = null;
         _adapter?.Dispose();
         _adapter = null;
+    }
+
+    private void ConfigureDnsServer()
+    {
+        if (!IPAddress.TryParse(_dnsServer, out var dnsAddress) ||
+            dnsAddress.AddressFamily != AddressFamily.InterNetwork)
+        {
+            Log.Warning("[TUN ] Skipping TUN DNS configuration because {DnsServer} is not an IPv4 address.", _dnsServer);
+            return;
+        }
+
+        Log.Information("[TUN ] Configuring TUN DNS server {DnsServer} on {AdapterName}.", _dnsServer, AdapterName);
+        var setDns = Process.Start(new ProcessStartInfo
+        {
+            FileName = "netsh",
+            Arguments = $"interface ipv4 set dnsservers name=\"{AdapterName}\" static {_dnsServer} primary validate=no",
+            CreateNoWindow = true,
+            UseShellExecute = false
+        });
+        setDns?.WaitForExit(3000);
+    }
+
+    private static void ClearDnsServers()
+    {
+        var clearDns = Process.Start(new ProcessStartInfo
+        {
+            FileName = "netsh",
+            Arguments = $"interface ipv4 delete dnsservers name=\"{AdapterName}\" all",
+            CreateNoWindow = true,
+            UseShellExecute = false
+        });
+        clearDns?.WaitForExit(3000);
     }
 
     public byte[]? ReadPacket()

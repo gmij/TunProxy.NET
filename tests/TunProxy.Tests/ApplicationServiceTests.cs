@@ -91,6 +91,7 @@ public class ApplicationServiceTests
             Assert.NotNull(saved);
             Assert.True(saved.Tun.Enabled);
             Assert.Equal(SystemProxyModes.Tun, saved.LocalProxy.SystemProxyMode);
+            Assert.Equal(ConfigWorkflowService.CurrentDefaultTunIpAddress, saved.Tun.IpAddress);
             if (OperatingSystem.IsWindows())
             {
                 Assert.Equal(1, sideEffectCount);
@@ -100,6 +101,23 @@ public class ApplicationServiceTests
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public void NormalizeTunDefaultsForSave_DoesNotChangeCustomTunAddress()
+    {
+        var config = new AppConfig
+        {
+            Tun =
+            {
+                Enabled = true,
+                IpAddress = "172.31.255.1"
+            }
+        };
+
+        ConfigWorkflowService.NormalizeTunDefaultsForSave(config);
+
+        Assert.Equal("172.31.255.1", config.Tun.IpAddress);
     }
 
     [Theory]

@@ -327,6 +327,12 @@
   <data name="Page.Dns.Title" xml:space="preserve">
     <value>DNS</value>
   </data>
+  <data name="Page.Dns.DoHNoticeTitle" xml:space="preserve">
+    <value>About incomplete DNS records</value>
+  </data>
+  <data name="Page.Dns.DoHNoticeBody" xml:space="preserve">
+    <value>Chrome and Edge enable Secure DNS (DoH) by default. DNS queries are sent over HTTPS and bypass TUN's UDP port 53 interception, so they do not appear here. To see complete records, disable "Use secure DNS" in your browser's security settings.</value>
+  </data>
   <data name="Page.Logs.Clear" xml:space="preserve">
     <value>Clear</value>
   </data>

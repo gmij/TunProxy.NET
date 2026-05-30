@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -24,12 +25,21 @@ public sealed class WintunDevice : ITunDevice
 
     private WintunAdapter? _adapter;
     private WintunSession? _session;
-    private readonly string _dnsServer;
+    // Virtual DNS interceptor IP derived from the TUN adapter's own address.
+    // By placing this IP inside the TUN subnet (e.g. 10.255.0.1 → 10.255.0.2),
+    // this address is only reachable via the TUN interface's connected route.
+    // All adapters (physical and TUN) are pointed at this IP so that every DNS
+    // query – regardless of which interface Windows SMHNR picks – must travel
+    // through TUN, where it is intercepted and forwarded via the upstream proxy.
+    private readonly string _dnsInterceptorIp;
+    // Saved DNS state for each physical adapter so it can be restored on stop.
+    // Key = adapter Name, Value = (was DHCP, saved static DNS servers).
+    private readonly Dictionary<string, (bool IsDhcp, string[] Addresses)> _savedAdapterDns = new();
     private bool _disposed;
 
     public WintunDevice(TunConfig config)
     {
-        _dnsServer = config.DnsServer;
+        _dnsInterceptorIp = DeriveDnsInterceptorIp(config.IpAddress);
     }
 
     public void Configure(string ip, string subnetMask, int mtu = 1500)
@@ -70,34 +80,143 @@ public sealed class WintunDevice : ITunDevice
 
     private void ConfigureDnsServer()
     {
-        if (!IPAddress.TryParse(_dnsServer, out var dnsAddress) ||
-            dnsAddress.AddressFamily != AddressFamily.InterNetwork)
-        {
-            Log.Warning("[TUN ] Skipping TUN DNS configuration because {DnsServer} is not an IPv4 address.", _dnsServer);
-            return;
-        }
+        Log.Information("[TUN ] DNS interceptor IP: {InterceptorIp}", _dnsInterceptorIp);
 
-        Log.Information("[TUN ] Configuring TUN DNS server {DnsServer} on {AdapterName}.", _dnsServer, AdapterName);
-        var setDns = Process.Start(new ProcessStartInfo
-        {
-            FileName = "netsh",
-            Arguments = $"interface ipv4 set dnsservers name=\"{AdapterName}\" static {_dnsServer} primary validate=no",
-            CreateNoWindow = true,
-            UseShellExecute = false
-        });
-        setDns?.WaitForExit(3000);
+        // Step 1 – TUN adapter itself: point at the virtual interceptor IP with metric=1
+        // so the TUN interface is the preferred name-resolution interface.
+        RunNetsh($"interface ipv4 set dnsservers name=\"{AdapterName}\" static {_dnsInterceptorIp} primary validate=no");
+        RunNetsh($"interface ipv4 set interface \"{AdapterName}\" metric=1");
+
+        // Step 2 – Every active physical adapter: save current DNS and redirect it to
+        // the same interceptor IP.  Because 10.255.0.0/24 has a connected route only
+        // on the TUN interface, the OS routes DNS queries from *all* adapters through
+        // TUN regardless of which adapter Windows SMHNR happens to pick.  This is
+        // identical to what Clash / sing-box do on Windows.
+        SaveAndRedirectPhysicalAdapterDns();
+
+        // Step 3 – Flush the resolver cache so stale (possibly GFW-poisoned) answers
+        // are discarded and all subsequent lookups go through TUN.
+        FlushDnsCache();
     }
 
-    private static void ClearDnsServers()
+    private void ClearDnsServers()
     {
-        var clearDns = Process.Start(new ProcessStartInfo
+        RunNetsh($"interface ipv4 delete dnsservers name=\"{AdapterName}\" all");
+        RestorePhysicalAdapterDns();
+        FlushDnsCache();
+    }
+
+    // ── Physical-adapter DNS save / restore ───────────────────────────────────
+
+    private void SaveAndRedirectPhysicalAdapterDns()
+    {
+        foreach (var adapter in GetPhysicalAdapters())
+        {
+            var props = adapter.GetIPProperties();
+            var ipv4Props = props.GetIPv4Properties();
+            var isDhcp = ipv4Props?.IsDhcpEnabled ?? false;
+            var currentDns = props.DnsAddresses
+                .Where(a => a.AddressFamily == AddressFamily.InterNetwork)
+                .Select(a => a.ToString())
+                .ToArray();
+
+            _savedAdapterDns[adapter.Name] = (isDhcp, currentDns);
+            Log.Information(
+                "[TUN ] Redirecting DNS on \"{Adapter}\" to {InterceptorIp} (saved: {Saved})",
+                adapter.Name,
+                _dnsInterceptorIp,
+                isDhcp ? "dhcp" : (currentDns.Length > 0 ? string.Join(", ", currentDns) : "none"));
+
+            RunNetsh($"interface ipv4 set dnsservers name=\"{adapter.Name}\" static {_dnsInterceptorIp} primary validate=no");
+        }
+    }
+
+    private void RestorePhysicalAdapterDns()
+    {
+        foreach (var (adapterName, (isDhcp, addresses)) in _savedAdapterDns)
+        {
+            if (isDhcp)
+            {
+                RunNetsh($"interface ipv4 set dnsservers name=\"{adapterName}\" dhcp");
+                Log.Information("[TUN ] Restored DNS on \"{Adapter}\" → DHCP", adapterName);
+            }
+            else if (addresses.Length > 0)
+            {
+                RunNetsh($"interface ipv4 set dnsservers name=\"{adapterName}\" static {addresses[0]} primary validate=no");
+                for (var i = 1; i < addresses.Length; i++)
+                {
+                    RunNetsh($"interface ipv4 add dnsservers name=\"{adapterName}\" {addresses[i]} index={i + 1} validate=no");
+                }
+                Log.Information("[TUN ] Restored DNS on \"{Adapter}\" → {DNS}", adapterName, string.Join(", ", addresses));
+            }
+            else
+            {
+                // No DNS was configured on this adapter – remove the override we added.
+                RunNetsh($"interface ipv4 delete dnsservers name=\"{adapterName}\" all");
+                Log.Information("[TUN ] Cleared DNS on \"{Adapter}\" (was empty)", adapterName);
+            }
+        }
+
+        _savedAdapterDns.Clear();
+    }
+
+    /// <summary>
+    /// Returns active physical IPv4 adapters – excludes loopback, tunnel, and the TUN
+    /// adapter itself so we only touch real network interfaces.
+    /// </summary>
+    private static IEnumerable<NetworkInterface> GetPhysicalAdapters() =>
+        NetworkInterface.GetAllNetworkInterfaces()
+            .Where(ni =>
+                ni.OperationalStatus == OperationalStatus.Up &&
+                ni.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                ni.NetworkInterfaceType != NetworkInterfaceType.Tunnel &&
+                !ni.Name.Equals(AdapterName, StringComparison.OrdinalIgnoreCase) &&
+                ni.GetIPProperties().UnicastAddresses
+                    .Any(a => a.Address.AddressFamily == AddressFamily.InterNetwork));
+
+    // ── Shared helpers ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Derives a virtual DNS interceptor IP from the TUN adapter's IP address by
+    /// incrementing the last octet.  Example: 10.255.0.1 → 10.255.0.2.
+    /// The resulting address lives inside the TUN subnet, so the OS connected
+    /// route for that subnet forces all queries to it through the TUN interface.
+    /// </summary>
+    private static string DeriveDnsInterceptorIp(string tunIpAddress)
+    {
+        if (!IPAddress.TryParse(tunIpAddress, out var tunIp) ||
+            tunIp.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return "10.255.0.2";
+        }
+
+        var bytes = tunIp.GetAddressBytes();
+        bytes[3] = bytes[3] == 254 ? (byte)1 : (byte)(bytes[3] + 1);
+        return new IPAddress(bytes).ToString();
+    }
+
+    private static void RunNetsh(string arguments)
+    {
+        var process = Process.Start(new ProcessStartInfo
         {
             FileName = "netsh",
-            Arguments = $"interface ipv4 delete dnsservers name=\"{AdapterName}\" all",
+            Arguments = arguments,
             CreateNoWindow = true,
             UseShellExecute = false
         });
-        clearDns?.WaitForExit(3000);
+        process?.WaitForExit(3000);
+    }
+
+    private static void FlushDnsCache()
+    {
+        var flush = Process.Start(new ProcessStartInfo
+        {
+            FileName = "ipconfig",
+            Arguments = "/flushdns",
+            CreateNoWindow = true,
+            UseShellExecute = false
+        });
+        flush?.WaitForExit(3000);
     }
 
     public byte[]? ReadPacket()

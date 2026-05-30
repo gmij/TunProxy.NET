@@ -67,11 +67,11 @@ public class WindowsRouteService : IRouteService
                      route.Gateway == _tunIpAddress &&
                      !IsTunDefaultRoute(route, _tunIpAddress)))
         {
-            Log.Debug(
-                "[ROUTE] Removing stale TUN default route 0.0.0.0 via {Gateway} on {Interface}",
+            Log.Warning(
+                "[ROUTE] Removing stale default route via TUN gateway from non-TUN interface: 0.0.0.0 via {Gateway} on {Interface}",
                 stale.Gateway,
                 stale.Interface);
-            ExecuteNetshCommand($"interface ipv4 delete route 0.0.0.0/0 \"{tunInterfaceName}\" {_tunIpAddress}");
+            ExecuteCommandWithOutput("route", $"delete 0.0.0.0 mask 0.0.0.0 {_tunIpAddress}");
         }
 
         if (HasTunDefaultRoute())
@@ -330,7 +330,8 @@ public class WindowsRouteService : IRouteService
         var tunInterfaceName = GetTunInterfaceName();
         var removed = ExecuteNetshCommand($"interface ipv4 delete route 0.0.0.0/0 \"{tunInterfaceName}\" {_tunIpAddress}");
         var removedOnLink = ExecuteNetshCommand($"interface ipv4 delete route 0.0.0.0/0 \"{tunInterfaceName}\" 0.0.0.0");
-        return removed || removedOnLink;
+        var removedByGateway = ExecuteCommandWithOutput("route", $"delete 0.0.0.0 mask 0.0.0.0 {_tunIpAddress}").ExitCode == 0;
+        return removed || removedOnLink || removedByGateway;
     }
 
     public void ClearAllBypassRoutes()
@@ -465,13 +466,9 @@ public class WindowsRouteService : IRouteService
             return false;
         }
 
-        if (route.Gateway.Equals(tunIpAddress, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
         return route.Interface.Equals(tunIpAddress, StringComparison.OrdinalIgnoreCase) &&
-               IsOnLinkGateway(route.Gateway);
+               (route.Gateway.Equals(tunIpAddress, StringComparison.OrdinalIgnoreCase) ||
+                IsOnLinkGateway(route.Gateway));
     }
 
     private bool TryAddDefaultRoute(string tunInterfaceName, string nextHop)

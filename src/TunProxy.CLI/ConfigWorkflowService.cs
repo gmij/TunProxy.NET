@@ -4,6 +4,9 @@ namespace TunProxy.CLI;
 
 internal sealed class ConfigWorkflowService
 {
+    internal const string LegacyDefaultTunIpAddress = "10.0.0.1";
+    internal const string CurrentDefaultTunIpAddress = "10.255.0.1";
+
     private readonly AppConfigStore _configStore;
     private readonly Action<AppConfig> _disableSystemProxyForTun;
 
@@ -28,6 +31,8 @@ internal sealed class ConfigWorkflowService
 
     public async Task SaveCurrentAsync(AppConfig config, CancellationToken ct)
     {
+        NormalizeTunDefaultsForSave(config);
+
         if (config.Tun.Enabled && OperatingSystem.IsWindows())
         {
             _disableSystemProxyForTun(config);
@@ -53,6 +58,17 @@ internal sealed class ConfigWorkflowService
         {
             activeConfig.LocalProxy.SystemProxyBackup.ApplyFrom(activeSystemProxyBackup);
         }
+    }
+
+    internal static void NormalizeTunDefaultsForSave(AppConfig config)
+    {
+        if (!config.Tun.Enabled ||
+            !string.Equals(config.Tun.IpAddress, LegacyDefaultTunIpAddress, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        config.Tun.IpAddress = CurrentDefaultTunIpAddress;
     }
 
     private static void DisableSystemProxyForTun(AppConfig config)

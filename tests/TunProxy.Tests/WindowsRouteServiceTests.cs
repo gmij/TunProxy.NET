@@ -64,6 +64,21 @@ public class WindowsRouteServiceTests
     }
 
     [Fact]
+    public void IsTunDefaultRoute_RejectsDefaultRouteViaTunGatewayOnPhysicalInterface()
+    {
+        var route = new RouteEntry
+        {
+            Network = "0.0.0.0",
+            Netmask = "0.0.0.0",
+            Gateway = "10.0.0.1",
+            Interface = "10.0.0.138",
+            Metric = "25"
+        };
+
+        Assert.False(WindowsRouteService.IsTunDefaultRoute(route, "10.0.0.1"));
+    }
+
+    [Fact]
     public void IsSpecificRouteForDestination_MatchesExistingCorporateRoute()
     {
         var route = new RouteEntry

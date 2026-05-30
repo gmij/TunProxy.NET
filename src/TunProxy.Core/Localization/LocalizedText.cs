@@ -159,6 +159,8 @@ public static class LocalizedText
         "Page.Dns.LegendGeo",
         "Page.Dns.LegendDefault",
         "Page.Dns.Empty",
+        "Page.Dns.DoHNoticeTitle",
+        "Page.Dns.DoHNoticeBody",
         "Page.Logs.Title",
         "Page.Logs.Heading",
         "Page.Logs.Pause",

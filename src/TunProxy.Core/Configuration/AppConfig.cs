@@ -52,7 +52,7 @@ public class ProxyConfig
 public class TunConfig
 {
     public bool Enabled { get; set; }
-    public string IpAddress { get; set; } = "10.0.0.1";
+    public string IpAddress { get; set; } = "10.255.0.1";
     public string SubnetMask { get; set; } = "255.255.255.0";
     public bool AddDefaultRoute { get; set; } = true;
     public string DnsServer { get; set; } = "8.8.8.8";

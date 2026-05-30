@@ -9,7 +9,6 @@
       var query = Vue.ref('');
       var loading = Vue.ref(true);
       var lastUpdate = Vue.ref('-');
-      var sortState = Vue.reactive({ key: 'hostname', direction: 'asc' });
       var timer = null;
 
       var filteredRecords = Vue.computed(function () {
@@ -23,12 +22,57 @@
               String(record.reason || '').toLowerCase().indexOf(text) >= 0;
           });
         }
-
-        entries.sort(function (left, right) {
-          var result = compareValue(left, right, sortState.key);
-          return sortState.direction === 'desc' ? -result : result;
-        });
         return entries;
+      });
+
+      var columns = Vue.computed(function () {
+        return [
+          {
+            title: C.t('Page.Dns.ResolvedDomain'),
+            key: 'hostname',
+            dataIndex: 'hostname',
+            sorter: function (a, b) { return String(a.hostname || '').localeCompare(String(b.hostname || '')); },
+            defaultSortOrder: 'ascend'
+          },
+          {
+            title: C.t('Page.Dns.IpAddress'),
+            key: 'ipAddress',
+            dataIndex: 'ipAddress',
+            sorter: function (a, b) { return String(a.ipAddress || '').localeCompare(String(b.ipAddress || '')); }
+          },
+          {
+            title: C.t('Page.Dns.SeenCount'),
+            key: 'seenCount',
+            dataIndex: 'seenCount',
+            width: 100,
+            sorter: function (a, b) { return Number(a.seenCount || 0) - Number(b.seenCount || 0); }
+          },
+          {
+            title: C.t('Page.Dns.Route'),
+            key: 'route',
+            width: 200
+          },
+          {
+            title: C.t('Page.Dns.Reason'),
+            key: 'reason',
+            dataIndex: 'reason',
+            width: 120
+          },
+          {
+            title: C.t('Page.Dns.LastActive'),
+            key: 'lastActiveUtc',
+            dataIndex: 'lastActiveUtc',
+            width: 110,
+            sorter: function (a, b) {
+              return new Date(a.lastActiveUtc || 0).getTime() - new Date(b.lastActiveUtc || 0).getTime();
+            }
+          },
+          {
+            title: '',
+            key: 'action',
+            width: 80
+          }
+        ];
       });
 
       var summary = Vue.computed(function () {
@@ -36,7 +80,7 @@
         var direct = records.value.filter(function (record) { return record.route === 'DIRECT'; }).length;
         var cached = records.value.filter(function (record) { return record.isDnsCached; }).length;
         return [
-          { label: '记录数量', value: records.value.length, sub: records.value.length ? C.t('Page.Dns.Heading') : C.t('Page.Dns.Empty') },
+          { label: C.t('Page.Dns.Heading'), value: records.value.length, sub: records.value.length ? C.t('Page.Dns.Heading') : C.t('Page.Dns.Empty') },
           { label: C.t('Page.Dns.RouteProxy'), value: proxy, sub: 'GFW / Geo / Default' },
           { label: C.t('Page.Dns.RouteDirect'), value: direct, sub: C.t('Page.Dns.LegendDirect') },
           { label: 'DNS cache', value: cached, sub: C.t('Page.Dns.ClearSearch') }
@@ -55,37 +99,6 @@
           ? '接口当前返回 0 条记录。产生新的 DNS/TUN 流量后会自动刷新。'
           : C.htmlText(C.t('Page.Dns.ProxyModeNoticeHtml'));
       });
-
-      function compareValue(left, right, key) {
-        function value(record) {
-          if (key === 'seenCount') return Number(record.seenCount || 0);
-          if (key === 'lastActiveUtc') {
-            var time = new Date(record.lastActiveUtc || 0).getTime();
-            return Number.isNaN(time) ? 0 : time;
-          }
-          return String(record[key] || '').toLowerCase();
-        }
-
-        var leftValue = value(left);
-        var rightValue = value(right);
-        if (typeof leftValue === 'number' && typeof rightValue === 'number') {
-          return leftValue === rightValue ? 0 : (leftValue < rightValue ? -1 : 1);
-        }
-        return String(leftValue).localeCompare(String(rightValue));
-      }
-
-      function setSort(key) {
-        if (sortState.key === key) {
-          sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
-        } else {
-          sortState.key = key;
-          sortState.direction = key === 'seenCount' || key === 'lastActiveUtc' ? 'desc' : 'asc';
-        }
-      }
-
-      function sortLabel(label, key) {
-        return label + (sortState.key === key ? (sortState.direction === 'asc' ? ' ↑' : ' ↓') : '');
-      }
 
       function loadData() {
         loading.value = true;
@@ -126,6 +139,7 @@
       return {
         C: C,
         clearDnsCache: clearDnsCache,
+        columns: columns,
         filteredRecords: filteredRecords,
         emptyMessage: emptyMessage,
         isTunMode: isTunMode,
@@ -135,9 +149,7 @@
         records: records,
         routeColor: C.routeColor,
         routeLabel: C.routeLabel,
-        setSort: setSort,
         sidebarLines: sidebarLines,
-        sortLabel: sortLabel,
         summary: summary
       };
     },
@@ -182,45 +194,46 @@
               <span class="tp-legend-item"><a-tag color="warning">{{ t('Page.Dns.RouteProxy') }}</a-tag>{{ t('Page.Dns.LegendDefault') }}</span>
             </div>
 
-            <a-spin :spinning="loading">
-              <div v-if="filteredRecords.length === 0" class="tp-empty-state">
-                <div class="tp-section-title">{{ t('Page.Dns.Empty') }}</div>
-                <div class="tp-muted">{{ emptyMessage }}</div>
-                <div class="tp-code" style="margin-top:8px">GET /api/dns-records -> {{ records.length }} records</div>
-              </div>
-              <div v-else style="overflow-x:auto">
-                <table class="ant-table" style="min-width: 920px">
-                  <thead class="ant-table-thead">
-                    <tr>
-                      <th><a-button type="link" @click="setSort('hostname')">{{ sortLabel(t('Page.Dns.ResolvedDomain'), 'hostname') }}</a-button></th>
-                      <th><a-button type="link" @click="setSort('ipAddress')">{{ sortLabel(t('Page.Dns.IpAddress'), 'ipAddress') }}</a-button></th>
-                      <th><a-button type="link" @click="setSort('seenCount')">{{ sortLabel(t('Page.Dns.SeenCount'), 'seenCount') }}</a-button></th>
-                      <th>{{ t('Page.Dns.Route') }}</th>
-                      <th>{{ t('Page.Dns.Reason') }}</th>
-                      <th><a-button type="link" @click="setSort('lastActiveUtc')">{{ sortLabel(t('Page.Dns.LastActive'), 'lastActiveUtc') }}</a-button></th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody class="ant-table-tbody">
-                    <tr v-for="record in filteredRecords" :key="record.ipAddress + record.hostname">
-                      <td><strong>{{ record.hostname || '-' }}</strong></td>
-                      <td class="tp-code">{{ record.ipAddress }}</td>
-                      <td>{{ record.seenCount || 0 }}</td>
-                      <td>
-                        <span class="tp-toolbar" style="justify-content:flex-start">
-                          <a-tag :color="routeColor(record)">{{ routeLabel(record) }}</a-tag>
-                          <a-tag v-if="record.isDnsCached" color="blue">DNS cache</a-tag>
-                          <a-tag v-if="record.isPrivateIp">{{ t('Page.Dns.PrivateIp') }}</a-tag>
-                        </span>
-                      </td>
-                      <td class="tp-code">{{ record.reason || '-' }}</td>
-                      <td class="tp-code">{{ C.dateTime(record.lastActiveUtc) }}</td>
-                      <td><a-button v-if="record.isDnsCached" danger size="small" @click="clearDnsCache(record)">Clear</a-button></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </a-spin>
+            <a-table
+              :data-source="filteredRecords"
+              :columns="columns"
+              :loading="loading"
+              :pagination="false"
+              size="small"
+              :row-key="(r) => r.ipAddress + '_' + r.hostname"
+              :scroll="{ x: 920 }"
+            >
+              <template #bodyCell="{ column, record }">
+                <template v-if="column.key === 'hostname'">
+                  <strong>{{ record.hostname || '-' }}</strong>
+                </template>
+                <template v-else-if="column.key === 'ipAddress'">
+                  <span class="tp-code">{{ record.ipAddress }}</span>
+                </template>
+                <template v-else-if="column.key === 'route'">
+                  <span class="tp-toolbar" style="justify-content:flex-start;gap:4px">
+                    <a-tag :color="routeColor(record)">{{ routeLabel(record) }}</a-tag>
+                    <a-tag v-if="record.isDnsCached" color="blue">DNS cache</a-tag>
+                    <a-tag v-if="record.isPrivateIp">{{ t('Page.Dns.PrivateIp') }}</a-tag>
+                  </span>
+                </template>
+                <template v-else-if="column.key === 'reason'">
+                  <span class="tp-code">{{ record.reason || '-' }}</span>
+                </template>
+                <template v-else-if="column.key === 'lastActiveUtc'">
+                  <span class="tp-code">{{ C.dateTime(record.lastActiveUtc) }}</span>
+                </template>
+                <template v-else-if="column.key === 'action'">
+                  <a-button v-if="record.isDnsCached" danger size="small" @click="clearDnsCache(record)">Clear</a-button>
+                </template>
+              </template>
+              <template #emptyText>
+                <div class="tp-empty-state">
+                  <div class="tp-section-title">{{ t('Page.Dns.Empty') }}</div>
+                  <div class="tp-muted">{{ emptyMessage }}</div>
+                </div>
+              </template>
+            </a-table>
           </section>
 
           <aside>
@@ -239,6 +252,10 @@
                 { label: 'Records', value: records.length },
                 { label: t('Shared.RefreshAt').split('|')[0].replace('{0}', '10'), value: lastUpdate }
               ]"></tp-kv-list>
+            </section>
+            <section v-if="isTunMode" class="tp-section" style="margin-top:16px">
+              <div class="tp-section-title" style="margin-bottom:8px">{{ t('Page.Dns.DoHNoticeTitle') }}</div>
+              <div class="tp-muted" style="font-size:12px;line-height:1.6">{{ t('Page.Dns.DoHNoticeBody') }}</div>
             </section>
           </aside>
         </div>

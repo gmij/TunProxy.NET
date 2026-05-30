@@ -327,6 +327,12 @@
   <data name="Page.Dns.Title" xml:space="preserve">
     <value>DNS</value>
   </data>
+  <data name="Page.Dns.DoHNoticeTitle" xml:space="preserve">
+    <value>关于 DNS 记录不完整</value>
+  </data>
+  <data name="Page.Dns.DoHNoticeBody" xml:space="preserve">
+    <value>Chrome / Edge 默认开启「安全 DNS（DoH）」，DNS 查询通过 HTTPS 发送，不经过 TUN 的 UDP 53 端口拦截，因此这类查询不会出现在此记录中。如需完整记录，请在浏览器安全设置中关闭「使用安全 DNS」。</value>
+  </data>
   <data name="Page.Logs.Clear" xml:space="preserve">
     <value>清空</value>
   </data>

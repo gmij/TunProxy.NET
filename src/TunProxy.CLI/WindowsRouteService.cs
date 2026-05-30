@@ -477,7 +477,7 @@ public class WindowsRouteService : IRouteService
         var (exitCode, output) = ExecuteCommandWithOutput("netsh", command);
         if (exitCode == 0 || IsAlreadyExistsOutput(output))
         {
-            if (HasTunDefaultRoute())
+            if (WaitForTunDefaultRouteReady())
             {
                 Log.Information("[ROUTE] TUN default route ready. NextHop={NextHop}", nextHop);
                 return true;
@@ -496,6 +496,22 @@ public class WindowsRouteService : IRouteService
             exitCode,
             output.Trim());
         return false;
+    }
+
+    private bool WaitForTunDefaultRouteReady(int maxWaitMilliseconds = 1500)
+    {
+        var started = Stopwatch.StartNew();
+        while (started.ElapsedMilliseconds < maxWaitMilliseconds)
+        {
+            if (HasTunDefaultRoute())
+            {
+                return true;
+            }
+
+            Thread.Sleep(100);
+        }
+
+        return HasTunDefaultRoute();
     }
 
     private string? GetGatewayFromNetworkInterfaces()

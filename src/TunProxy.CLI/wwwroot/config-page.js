@@ -4,6 +4,7 @@
   C.mountPage({
     pageId: 'config',
     setup: function () {
+      var messageApi = window.antd && window.antd.message ? window.antd.message : null;
       var cfg = Vue.ref(null);
       var status = Vue.ref(null);
       var resources = Vue.ref(null);
@@ -112,6 +113,37 @@
         });
       });
 
+      function notify(type, text) {
+        if (!text) return;
+        if (messageApi && typeof messageApi[type] === 'function') {
+          messageApi[type](text);
+          return;
+        }
+
+        pacResult.value = text;
+      }
+
+      function isResourceReady(statusMap, resourceName) {
+        if (!statusMap || !statusMap[resourceName]) {
+          return false;
+        }
+
+        var item = statusMap[resourceName];
+        return !!item.enabled && !!item.ready;
+      }
+
+      function areEnabledResourcesReady(statusMap) {
+        if (!statusMap) {
+          return false;
+        }
+
+        var names = ['gfw', 'geo'];
+        return names.every(function (name) {
+          var item = statusMap[name];
+          return !item || !item.enabled || !!item.ready;
+        });
+      }
+
       var resourceRows = Vue.computed(function () {
         var data = resources.value || {};
         return [
@@ -185,6 +217,7 @@
       function loadResources() {
         return window.TunProxyApi.getJson('/api/rule-resources/status').then(function (payload) {
           resources.value = payload;
+          return payload;
         });
       }
 
@@ -205,6 +238,7 @@
           password: form.proxyPassword || null
         }).then(function (payload) {
           proxyStatus.value = payload;
+          notify('success', C.t('Page.Config.ProxyStatus.CheckCompleted'));
         }).catch(function (err) {
           error.value = C.format('Page.Config.ProxyStatus.CheckFailed', err.message);
         }).finally(function () {
@@ -217,11 +251,16 @@
           error.value = C.t('Page.Config.ProxyStatus.RequiredBeforeSave');
           return;
         }
+        var wasReady = isResourceReady(resources.value, name);
         preparing.value = true;
         error.value = '';
         window.TunProxyApi.postJson('/api/rule-resources/download?resource=' + encodeURIComponent(name), buildPayload())
           .then(function (payload) {
             resources.value = payload;
+            var nowReady = isResourceReady(payload, name);
+            notify('success', wasReady && nowReady
+              ? C.t('Page.Config.RuleResource.AlreadyLatest')
+              : C.t('Page.Config.RuleResource.Refreshed'));
           })
           .catch(function (err) {
             error.value = C.format('Page.Config.SaveFailed', err.message);
@@ -236,10 +275,17 @@
           error.value = C.t('Page.Config.ProxyStatus.RequiredBeforeSave');
           return;
         }
+        var wasAllReady = areEnabledResourcesReady(resources.value);
         preparing.value = true;
         error.value = '';
         window.TunProxyApi.postJson('/api/rule-resources/prepare', buildPayload())
-          .then(function () { return loadResources(); })
+          .then(function () {
+            return loadResources().then(function (latest) {
+              notify('success', wasAllReady && areEnabledResourcesReady(latest)
+                ? C.t('Page.Config.RuleResource.AlreadyLatest')
+                : C.t('Page.Config.RuleResource.Refreshed'));
+            });
+          })
           .catch(function (err) {
             error.value = C.format('Page.Config.SaveFailed', err.message);
           })
@@ -361,6 +407,10 @@
         :sidebar-lines="[{ label: t('Page.Config.ConfigPath').replace(/<[^>]*>/g, ''), value: '' }, { label: t('Page.Config.CurrentMode'), value: C.modeLabel(currentMode) }]"
         :title="t('Page.Config.Title')"
         @change-culture="setCulture">
+        <template #actions>
+          <a-tag :color="saveStatusType">{{ saveStatusText }}</a-tag>
+          <a-button type="primary" :disabled="!canSave" :loading="saving" @click="saveConfig">{{ t('Page.Config.SaveRestart') }}</a-button>
+        </template>
           <a-alert v-if="restartMessage" type="warning" :message="restartMessage" show-icon style="margin-bottom: 14px"></a-alert>
           <a-alert v-if="error" type="error" :message="error" show-icon closable style="margin-bottom: 14px" @close="error = ''"></a-alert>
 
@@ -407,10 +457,6 @@
                 <label v-if="form.systemProxyMode === 'pac' || form.systemProxyMode === 'global'" class="tp-field" style="margin-top: 12px"><span class="tp-field-label">{{ t('Page.Config.LocalProxyPort') }}</span><a-input-number v-model:value="form.localPort" style="width:160px" :min="1" :max="65535"></a-input-number></label>
               </section>
 
-              <div class="tp-save-bar">
-                <a-tag :color="saveStatusType">{{ saveStatusText }}</a-tag>
-                <div class="tp-toolbar"><a-button type="primary" :disabled="!canSave" :loading="saving" @click="saveConfig">{{ t('Page.Config.SaveRestart') }}</a-button></div>
-              </div>
             </div>
 
             <aside>
@@ -420,7 +466,7 @@
                     <div class="tp-title-inline"><div class="tp-section-title">{{ t('Page.Config.ProxyCheck') }}</div><a-tag :color="proxyStatusTag.color">{{ proxyStatusTag.text }}</a-tag></div>
                     <div class="tp-muted">{{ t('Page.Config.ProxyStatus.Hint') }}</div>
                   </div>
-                  <a-button shape="circle" :title="t('Page.Config.ProxyCheck')" :aria-label="t('Page.Config.ProxyCheck')" :disabled="!hasProxyEndpoint || checking || saving" :loading="checking" @click="checkProxy"><span class="tp-refresh-icon" aria-hidden="true">↻</span></a-button>
+                  <a-button shape="circle" :title="t('Page.Config.ProxyCheck')" :aria-label="t('Page.Config.ProxyCheck')" :disabled="!hasProxyEndpoint || checking || saving" :loading="checking" @click="checkProxy"><span v-if="!checking" class="tp-refresh-icon" aria-hidden="true">↻</span></a-button>
                 </div>
                 <template v-if="proxyStatus">
                   <div class="tp-muted" style="margin-top: 8px">{{ proxyStatus.isAvailable ? t('Page.Config.ProxyStatus.AvailableHint') : t('Page.Config.ProxyStatus.UnavailableHint') }}</div>
@@ -432,7 +478,7 @@
               <section class="tp-section">
                 <div class="tp-section-head">
                   <div><div class="tp-section-title">{{ t('Page.Config.StepRoutingResources') }}</div><div class="tp-muted">{{ t('Page.Config.SmartRoutingDescription') }}</div></div>
-                  <a-button shape="circle" :title="t('Page.Config.RuleResource.Download')" :aria-label="t('Page.Config.RuleResource.Download')" :disabled="preparing || saving" :loading="preparing" @click="prepareResources"><span class="tp-refresh-icon" aria-hidden="true">↻</span></a-button>
+                  <a-button shape="circle" :title="t('Page.Config.RuleResource.Download')" :aria-label="t('Page.Config.RuleResource.Download')" :disabled="preparing || saving" :loading="preparing" @click="prepareResources"><span v-if="!preparing" class="tp-refresh-icon" aria-hidden="true">↻</span></a-button>
                 </div>
                 <div class="tp-helper-box">
                   <div v-for="item in resourceRows" :key="item.name" class="tp-resource-row">
@@ -449,7 +495,7 @@
                 <div class="tp-section-title">{{ t('Page.Config.PacHeading') }}</div>
                 <p class="tp-muted">{{ C.htmlText(t('Page.Config.PacDescriptionHtml')) }}</p>
                 <div class="tp-helper-box tp-code">{{ pacUrl }}</div>
-                <div class="tp-toolbar" style="justify-content:flex-start;margin-top:12px">
+                <div class="tp-toolbar" style="justify-content:flex-end;margin-top:12px">
                   <a-dropdown-button type="primary" @click="applyPac">
                     {{ t('Page.Config.ApplyPac') }}
                     <template #overlay>

@@ -87,6 +87,12 @@
   <data name="Page.Config.RuleResource.Retry" xml:space="preserve">
     <value>Retry</value>
   </data>
+  <data name="Page.Config.RuleResource.AlreadyLatest" xml:space="preserve">
+    <value>Rule resources are already up to date.</value>
+  </data>
+  <data name="Page.Config.RuleResource.Refreshed" xml:space="preserve">
+    <value>Rule resources refreshed.</value>
+  </data>
   <data name="Page.Config.LocalProxyPort" xml:space="preserve">
     <value>Local proxy port</value>
   </data>
@@ -158,6 +164,9 @@
   </data>
   <data name="Page.Config.ProxyStatus.CheckFailed" xml:space="preserve">
     <value>Proxy check failed: {0}</value>
+  </data>
+  <data name="Page.Config.ProxyStatus.CheckCompleted" xml:space="preserve">
+    <value>Upstream proxy check completed.</value>
   </data>
   <data name="Page.Config.ProxyStatus.RequiredBeforeSave" xml:space="preserve">
     <value>Enter the upstream proxy host and port before saving or downloading rule resources.</value>

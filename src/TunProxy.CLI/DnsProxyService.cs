@@ -39,6 +39,7 @@ public class DnsProxyService
     private DateTime? _lastQueryUtc;
     private DateTime? _lastSuccessUtc;
     private DateTime? _lastFailureUtc;
+    private volatile bool _httpConnectTo53Rejected;
 
     public DnsProxyService(
         string proxyHost,
@@ -326,6 +327,15 @@ public class DnsProxyService
         var stopwatch = Stopwatch.StartNew();
         Interlocked.Increment(ref _tcpQueries);
         _lastMethod = "tcp-proxy";
+
+        if (_proxyType == ProxyType.Http && _httpConnectTo53Rejected)
+        {
+            // Some HTTP proxies explicitly deny CONNECT to destination port 53.
+            // After the first definitive policy rejection, skip repeated CONNECT attempts
+            // and let caller fall back to DoH directly.
+            return null;
+        }
+
         try
         {
             client = new System.Net.Sockets.TcpClient();
@@ -360,9 +370,16 @@ public class DnsProxyService
                     var response = httpSb.ToString();
                     if (response.Contains("\r\n\r\n", StringComparison.Ordinal))
                     {
-                        if (!response.Split('\r')[0].Contains("200", StringComparison.Ordinal))
+                        var statusLine = response.Split('\r')[0];
+                        if (!statusLine.Contains("200", StringComparison.Ordinal))
                         {
-                            Log.Warning("HTTP proxy rejected DNS CONNECT: {Status}", response.Split('\r')[0]);
+                            if (statusLine.Contains("403", StringComparison.Ordinal) ||
+                                statusLine.Contains("405", StringComparison.Ordinal))
+                            {
+                                _httpConnectTo53Rejected = true;
+                            }
+
+                            Log.Warning("HTTP proxy rejected DNS CONNECT: {Status}", statusLine);
                             return null;
                         }
 

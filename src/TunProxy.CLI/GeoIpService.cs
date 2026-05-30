@@ -3,6 +3,7 @@ using System.Net;
 using MaxMind.GeoIP2;
 using Serilog;
 using TunProxy.Core.Configuration;
+using TunProxy.Core.Packets;
 
 namespace TunProxy.CLI;
 
@@ -155,6 +156,11 @@ public class GeoIpService : IDisposable
 
     public string? GetCountryCode(IPAddress ipAddress)
     {
+        if (ShouldSkipGeoLookup(ipAddress))
+        {
+            return null;
+        }
+
         if (_reader == null)
         {
             LogGeoLookupIssue(
@@ -213,6 +219,36 @@ public class GeoIpService : IDisposable
         }
 
         return null;
+    }
+
+    private static bool ShouldSkipGeoLookup(IPAddress ipAddress)
+    {
+        if (ipAddress.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            return true;
+        }
+
+        var bytes = ipAddress.GetAddressBytes();
+
+        // Multicast 224.0.0.0/4 and reserved class E 240.0.0.0/4
+        if (bytes[0] >= 224)
+        {
+            return true;
+        }
+
+        // Limited broadcast 255.255.255.255
+        if (bytes[0] == 255 && bytes[1] == 255 && bytes[2] == 255 && bytes[3] == 255)
+        {
+            return true;
+        }
+
+        // Benchmark testing range 198.18.0.0/15 (includes FakeIP pools)
+        if (bytes[0] == 198 && (bytes[1] == 18 || bytes[1] == 19))
+        {
+            return true;
+        }
+
+        return ProtocolInspector.IsPrivateIp(ipAddress);
     }
 
     private static void LogGeoLookupIssue(ref long counter, string messageTemplate, IPAddress ipAddress)

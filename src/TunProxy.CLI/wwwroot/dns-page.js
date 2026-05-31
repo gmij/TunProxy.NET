@@ -7,9 +7,9 @@
       var records = Vue.ref([]);
       var isTunMode = Vue.ref(false);
       var query = Vue.ref('');
-      var loading = Vue.ref(true);
+      var refreshPipeline = C.createAsyncPipeline({ initialLoading: true });
       var lastUpdate = Vue.ref('-');
-      var timer = null;
+      var stopPolling = null;
 
       // Group raw records by hostname; each group becomes one display row.
       var groupedRecords = Vue.computed(function () {
@@ -112,7 +112,7 @@
           { label: C.t('Page.Dns.Heading'), value: groupedRecords.value.length, sub: groupedRecords.value.length ? C.t('Page.Dns.Heading') : C.t('Page.Dns.Empty') },
           { label: C.t('Page.Dns.RouteProxy'), value: proxy, sub: 'GFW / Geo / Default' },
           { label: C.t('Page.Dns.RouteDirect'), value: direct, sub: C.t('Page.Dns.LegendDirect') },
-          { label: 'DNS cache', value: cached, sub: C.t('Page.Dns.ClearSearch') }
+          { label: C.t('Page.Dns.DnsCache'), value: cached, sub: C.t('Page.Dns.ClearSearch') }
         ];
       });
 
@@ -125,28 +125,31 @@
 
       var emptyMessage = Vue.computed(function () {
         return isTunMode.value
-          ? '接口当前返回 0 条记录。产生新的 DNS/TUN 流量后会自动刷新。'
+          ? C.t('Page.Dns.EmptyApi')
           : C.htmlText(C.t('Page.Dns.ProxyModeNoticeHtml'));
       });
 
       function loadData() {
-        loading.value = true;
-        return window.TunProxyApi.getJson('/api/status')
-          .then(function (status) {
-            isTunMode.value = status.mode === 'tun';
-            if (!isTunMode.value) {
-              records.value = [];
-              lastUpdate.value = C.currentTime();
-              return null;
-            }
-            return window.TunProxyApi.getJson('/api/dns-records').then(function (payload) {
-              records.value = Array.isArray(payload) ? payload : [];
-              lastUpdate.value = C.currentTime();
+        return refreshPipeline.run(function () {
+          return window.TunProxyApi.getJson('/api/status')
+            .then(function (status) {
+              if (status.mode !== 'tun') {
+                return { status: status, records: [] };
+              }
+
+              return window.TunProxyApi.getJson('/api/dns-records').then(function (payload) {
+                return { status: status, records: Array.isArray(payload) ? payload : [] };
+              });
             });
-          })
-          .finally(function () {
-            loading.value = false;
-          });
+        }, {
+          success: function (payload) {
+            if (!payload) return;
+            var status = payload.status || {};
+            isTunMode.value = status.mode === 'tun';
+            records.value = payload.records || [];
+            lastUpdate.value = C.currentTime();
+          }
+        });
       }
 
       function clearDnsCache(group) {
@@ -162,12 +165,11 @@
       }
 
       Vue.onMounted(function () {
-        loadData();
-        timer = window.setInterval(loadData, 10000);
+        stopPolling = C.startPolling(loadData, 10000);
       });
 
       Vue.onBeforeUnmount(function () {
-        if (timer) window.clearInterval(timer);
+        if (stopPolling) stopPolling();
       });
 
       return {
@@ -179,7 +181,7 @@
         emptyMessage: emptyMessage,
         isTunMode: isTunMode,
         lastUpdate: lastUpdate,
-        loading: loading,
+        loading: refreshPipeline.loading,
         query: query,
         records: records,
         routeColor: C.routeColor,
@@ -268,7 +270,7 @@
                     <span class="tp-code">{{ C.dateTime(record.lastActiveUtc) }}</span>
                   </template>
                   <template v-else-if="column.key === 'action'">
-                    <a-button v-if="record.isDnsCached" danger size="small" @click="clearDnsCache(record)">Clear</a-button>
+                    <a-button v-if="record.isDnsCached" danger size="small" @click="clearDnsCache(record)">{{ t('Page.Dns.ClearCache') }}</a-button>
                   </template>
                 </template>
                 <template #emptyText>
@@ -285,16 +287,16 @@
             <section class="tp-section">
               <div class="tp-section-title">{{ t('Page.Dns.Route') }}</div>
               <div class="tp-route-map" style="margin-top: 12px">
-                <div class="tp-route-node active"><strong>1. DNS cache</strong><span class="tp-muted">{{ t('Page.Dns.PrivateIp') }} / FakeIP</span></div>
-                <div class="tp-route-node"><strong>2. {{ t('Page.Dns.RouteDirect') }}</strong><span class="tp-muted">{{ t('Page.Dns.LegendDirect') }}</span></div>
-                <div class="tp-route-node"><strong>3. {{ t('Page.Dns.RouteProxy') }}</strong><span class="tp-muted">{{ t('Page.Dns.LegendGfw') }} / {{ t('Page.Dns.LegendGeo') }}</span></div>
+                <div class="tp-route-node active"><strong>1. {{ t('Page.Dns.RouteStepCache') }}</strong><span class="tp-muted">{{ t('Page.Dns.PrivateIp') }} / FakeIP</span></div>
+                <div class="tp-route-node"><strong>2. {{ t('Page.Dns.RouteStepDirect') }}</strong><span class="tp-muted">{{ t('Page.Dns.LegendDirect') }}</span></div>
+                <div class="tp-route-node"><strong>3. {{ t('Page.Dns.RouteStepProxy') }}</strong><span class="tp-muted">{{ t('Page.Dns.LegendGfw') }} / {{ t('Page.Dns.LegendGeo') }}</span></div>
               </div>
             </section>
             <section class="tp-section">
               <div class="tp-section-title">DNS</div>
               <tp-kv-list :items="[
                 { label: t('Page.Config.SystemProxyMode'), value: isTunMode ? t('Page.Config.SystemProxyMode.Tun') : t('Mode.Proxy') },
-                { label: 'Records', value: groupedRecords.length + ' domains / ' + records.length + ' IPs' },
+                { label: t('Page.Dns.Records'), value: C.format('Page.Dns.RecordsSummary', groupedRecords.length, records.length) },
                 { label: t('Shared.RefreshAt').split('|')[0].replace('{0}', '10'), value: lastUpdate }
               ]"></tp-kv-list>
             </section>

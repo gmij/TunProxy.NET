@@ -15,14 +15,14 @@
       var trafficStoreKey = 'tunproxy.status.trafficSamples.v1';
       var totalsStoreKey = 'tunproxy.status.previousTotals.v1';
       var status = Vue.ref(null);
-      var loading = Vue.ref(true);
+      var refreshPipeline = C.createAsyncPipeline({ initialLoading: true });
       var serviceBusy = Vue.ref(false);
       var serviceMessage = Vue.ref('');
       var serviceAlertType = Vue.ref('info');
       var lastUpdate = Vue.ref('-');
       var previousTotals = Vue.ref(null);
       var trafficSamples = Vue.ref([]);
-      var timer = null;
+      var stopPolling = null;
       var sampleIntervalSeconds = 5;
       var trafficWindowSeconds = 30 * 60;
       var maxTrafficSamples = Math.floor(trafficWindowSeconds / sampleIntervalSeconds);
@@ -104,7 +104,7 @@
           {
             label: C.t('Page.Config.SystemProxyMode'),
             value: status.value.mode === 'tun' ? C.t('Page.Config.SystemProxyMode.Tun') : C.t('Mode.Proxy'),
-            sub: 'FakeIP: ' + (status.value.fakeIpMode ? 'On' : 'Off')
+            sub: C.t('Page.Status.FakeIp') + ': ' + C.t(status.value.fakeIpMode ? 'Shared.On' : 'Shared.Off')
           },
           {
             label: C.t('Page.Status.ConnectIssue.Title'),
@@ -114,7 +114,7 @@
           {
             label: C.t('Page.Status.BytesSent'),
             value: C.fmtRate(metrics.value.bytesPerSecond, 'B/s'),
-            sub: 'Packet rate: ' + C.fmtRate(metrics.value.packetsPerSecond, 'pkt/s')
+            sub: C.t('Page.Status.PacketRate') + ': ' + C.fmtRate(metrics.value.packetsPerSecond, 'pkt/s')
           }
         ];
       });
@@ -234,22 +234,24 @@
       }
 
       function refreshStatus() {
-        return window.TunProxyApi.getJson('/api/status')
-          .then(function (payload) {
+        return refreshPipeline.run(function () {
+          return window.TunProxyApi.getJson('/api/status');
+        }, {
+          success: function (payload) {
+            if (!payload) return;
             recordTrafficSample(payload);
             status.value = payload;
-            loading.value = false;
             serviceBusy.value = false;
             serviceMessage.value = '';
             lastUpdate.value = C.currentTime();
-          })
-          .catch(function () {
-            loading.value = false;
+          },
+          error: function () {
             status.value = null;
             serviceBusy.value = false;
             serviceAlertType.value = 'warning';
             serviceMessage.value = C.t('Page.Status.ServiceUnavailableHint');
-          });
+          }
+        });
       }
 
       function controlService(action) {
@@ -269,12 +271,11 @@
 
       Vue.onMounted(function () {
         loadTrafficState();
-        refreshStatus();
-        timer = window.setInterval(refreshStatus, 5000);
+        stopPolling = C.startPolling(refreshStatus, 5000);
       });
 
       Vue.onBeforeUnmount(function () {
-        if (timer) window.clearInterval(timer);
+        if (stopPolling) stopPolling();
       });
 
       return {
@@ -286,7 +287,7 @@
         diagnostics: diagnostics,
         isRunning: isRunning,
         lastUpdate: lastUpdate,
-        loading: loading,
+        loading: refreshPipeline.loading,
         metricCards: metricCards,
         metrics: metrics,
         modeTags: modeTags,
@@ -338,7 +339,7 @@
                     <div class="tp-status-title">{{ t('Page.Status.Heading') }}</div>
                     <a-tag v-for="tag in modeTags" :key="tag.text" :color="tag.color">{{ tag.text }}</a-tag>
                   </div>
-                  <div class="tp-muted">{{ status && status.mode === 'tun' ? 'TUN 透明接管流量，按规则自动分流。' : t('Mode.Proxy') }}</div>
+                  <div class="tp-muted">{{ status && status.mode === 'tun' ? t('Page.Status.ModeTunDescription') : t('Mode.Proxy') }}</div>
                 </div>
               </div>
             </section>
@@ -360,7 +361,7 @@
                 <section class="tp-section">
                   <div class="tp-section-head">
                     <div><div class="tp-section-title">{{ t('Page.Status.Traffic') }}</div><div class="tp-muted">{{ t('Page.Status.BytesSent') }} / {{ t('Page.Status.BytesReceived') }}</div></div>
-                    <a-tag color="processing">5s rolling</a-tag>
+                    <a-tag color="processing">{{ t('Page.Status.RollingWindow') }}</a-tag>
                   </div>
                   <div class="tp-four-grid tp-status-metric-grid">
                     <a-card v-for="card in metricCards" :key="card.label" class="tp-metric-card" size="small">
@@ -374,7 +375,7 @@
                     </a-card>
                   </div>
                   <div class="tp-chart">
-                    <div class="tp-section-head" style="margin-bottom: 6px"><div class="tp-section-title">最近 30 分钟流量曲线</div><div class="tp-muted">每 {{ sampleIntervalSeconds }} 秒采样，蓝色发送，青色接收 · {{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</div></div>
+                    <div class="tp-section-head" style="margin-bottom: 6px"><div class="tp-section-title">{{ t('Page.Status.TrafficChartTitle') }}</div><div class="tp-muted">{{ C.format('Page.Status.TrafficChartDescription', sampleIntervalSeconds) }} · {{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</div></div>
                     <div class="tp-line-chart" ref="chartRef" style="position:relative;cursor:crosshair" @mousemove="handleChartMove" @mouseleave="handleChartLeave">
                       <svg preserveAspectRatio="none" :viewBox="trafficLineChart.viewBox" role="img" aria-label="Traffic line chart">
                         <path class="tp-line-grid" d="M12 208 L988 208"></path>
@@ -393,7 +394,7 @@
                 </section>
               </div>
               <section class="tp-section" v-if="status && status.mode === 'tun'">
-                <div class="tp-section-head"><div><div class="tp-section-title">{{ t('Page.Status.TunDiagnostics') }}</div><div class="tp-muted">Wintun</div></div><a-tag color="success">正常</a-tag></div>
+                <div class="tp-section-head"><div><div class="tp-section-title">{{ t('Page.Status.TunDiagnostics') }}</div><div class="tp-muted">{{ t('Page.Status.Wintun') }}</div></div><a-tag color="success">{{ t('Shared.Healthy') }}</a-tag></div>
                 <div class="tp-diagnostics">
                   <div v-for="item in diagnostics" :key="item.name" class="tp-diagnostic-row"><span class="tp-diagnostic-name">{{ item.name }}</span><span class="tp-diagnostic-value" :style="{ color: item.color === 'red' ? '#dc2626' : item.color === 'orange' ? '#d97706' : item.color === 'green' ? '#16a34a' : '#18202f' }">{{ item.value }}</span></div>
                 </div>

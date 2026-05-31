@@ -83,6 +83,97 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  function createAsyncPipeline(options) {
+    var settings = options || {};
+    var loading = Vue.ref(settings.initialLoading !== false);
+    var busy = Vue.ref(false);
+    var error = Vue.ref('');
+    var lastFinishedAt = Vue.ref(null);
+    var currentRun = 0;
+
+    function describeError(err) {
+      if (!err) return '';
+      return err.message || String(err);
+    }
+
+    function run(stage, callbacks) {
+      var handlers = callbacks || {};
+      if (busy.value && settings.dropIfBusy !== false) {
+        return Promise.resolve(null);
+      }
+
+      var runId = ++currentRun;
+      busy.value = true;
+      if (settings.clearErrorOnRun !== false) {
+        error.value = '';
+      }
+
+      return Promise.resolve()
+        .then(stage)
+        .then(function (result) {
+          if (runId !== currentRun) {
+            return null;
+          }
+
+          if (handlers.success) {
+            handlers.success(result);
+          }
+
+          return result;
+        })
+        .catch(function (err) {
+          if (runId === currentRun) {
+            error.value = describeError(err);
+            if (handlers.error) {
+              handlers.error(err);
+            }
+          }
+
+          return null;
+        })
+        .finally(function () {
+          if (runId === currentRun) {
+            loading.value = false;
+            busy.value = false;
+            lastFinishedAt.value = new Date();
+          }
+        });
+    }
+
+    function resetError() {
+      error.value = '';
+    }
+
+    return {
+      busy: busy,
+      error: error,
+      lastFinishedAt: lastFinishedAt,
+      loading: loading,
+      resetError: resetError,
+      run: run
+    };
+  }
+
+  function startPolling(callback, intervalMs, runImmediately) {
+    var timer = null;
+
+    function tick() {
+      callback();
+    }
+
+    if (runImmediately !== false) {
+      tick();
+    }
+
+    timer = window.setInterval(tick, intervalMs);
+    return function () {
+      if (timer) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+  }
+
   function normalizeSystemProxyMode(value) {
     if (value === 'manual') return 'global';
     return value === 'pac' || value === 'global' || value === 'tun' ? value : 'none';
@@ -247,6 +338,7 @@
 
   window.TunProxyConsole = {
     clone: clone,
+    createAsyncPipeline: createAsyncPipeline,
     currentTime: currentTime,
     dateTime: dateTime,
     fmtBytes: fmtBytes,
@@ -259,6 +351,7 @@
     normalizeSystemProxyMode: normalizeSystemProxyMode,
     routeColor: routeColor,
     routeLabel: routeLabel,
+    startPolling: startPolling,
     systemProxyModeLabel: systemProxyModeLabel,
     t: t,
     timeString: timeString

@@ -2,9 +2,13 @@
 
 [中文](README.md)
 
-TunProxy.NET is a .NET 8 proxy tool with both local proxy mode and TUN transparent proxy mode. It forwards system or application traffic to an upstream SOCKS5/HTTP proxy, then applies smart routing with GFWList, GeoIP, DNS caching, and direct-route bypass rules.
+TunProxy.NET is a .NET 8 proxy runtime with both local proxy mode and TUN transparent proxy mode. It forwards system or application traffic to an upstream SOCKS5/HTTP proxy, then makes routing decisions with GFWList, GeoIP, DNS/FakeIP cache state, and direct-route bypass state.
 
-The current system includes both a Web console and a full command-line configuration flow, which is useful on Linux or headless hosts. The tray app handles the Windows service lifecycle, the Web console provides visual configuration and diagnostics, and the CLI can initialize and update config when opening an HTTP page is not practical.
+The current project has three user surfaces:
+
+- Web console: static Vue global + Ant Design pages for status, configuration, DNS diagnostics, and live logs.
+- CLI: useful on Linux, macOS, or headless hosts for initializing config, checking resources, and running in the background.
+- Windows tray: opens the console, starts/stops the runtime, installs/uninstalls `TunProxyService`, and coordinates restarts after config saves.
 
 ## Screenshots
 
@@ -20,21 +24,20 @@ The Web console is available at `http://localhost:50000/` by default.
 
 ## Features
 
-- Local proxy mode: listens on a local port and can automatically configure the Windows system proxy.
-- TUN mode: transparently captures TCP traffic through a Wintun virtual adapter, with automatic TUN address, route, and DNS forwarding setup.
+- Local proxy mode: listens on a local port and can connect browsers/system traffic through PAC or global system proxy settings.
+- TUN transparent proxy: captures TCP traffic through Wintun, with virtual adapter setup, default route setup, upstream-proxy bypass route, and DNS forwarding.
 - Upstream proxy support: SOCKS5, HTTP CONNECT, and optional username/password authentication.
-- Smart routing: GFWList first, then GeoIP; private addresses and direct-bypass addresses use the original gateway.
-- DNS cache: TUN mode caches A records, can answer safe cache hits directly, and exposes records for search and cleanup in the DNS page.
-- Rule resource validation: GeoIP must be loadable by MaxMind, and GFWList must be parseable; missing or invalid resources block direct TUN startup.
-- Web console: status, configuration, DNS records, direct IPs, live logs, PAC preview, and system PAC controls.
-- Upstream proxy check: routing configuration is unlocked only after Google, GitHub, and YouTube all return HTTP 200 through the configured proxy.
-- Save and restart flow: configuration is written to `tunproxy.json`, then a `tunproxy.restart` marker asks the tray app to restart the service after the old process has stopped.
-- Windows tray app: start/stop service, install/uninstall Windows service, open console, and repair TUN mode mismatch.
-- Logs and metrics: console logs, rolling file logs, in-memory log API, connection counters, DNS counters, TUN packet counters, failures, and throughput.
+- Upstream health check: checks Google, GitHub, and YouTube through the configured upstream proxy before depending on routing resources.
+- Smart routing: GFWList first, private and explicit direct addresses direct, GeoIP by country/region when enabled, and unknown destinations proxy by default.
+- DNS and FakeIP: in TUN mode, A records can receive `198.18.0.0/16` fake IPs while the runtime resolves real addresses in the background and maps TCP connections back to domains.
+- Rule resource management: GeoIP must be readable by MaxMind, and GFWList must be parseable. Missing or invalid enabled resources keep the app in local-proxy setup mode instead of starting incomplete TUN routing.
+- PAC support: serves `/proxy.pac` and supports copy, preview, apply, and clear system PAC actions.
+- Logs and metrics: console logs, file logs, in-memory log API, connections, throughput, DNS queries, TUN packet diagnostics, and failure counters.
+- Bilingual console: simplified Chinese and English can be switched in the Web console.
 
-## Running
+## Quick Start
 
-### Recommended: tray app
+### Recommended Windows Tray Flow
 
 Publish to `dist`, then run the tray app:
 
@@ -47,44 +50,48 @@ The tray app polls `http://localhost:50000/api/status` and handles:
 
 - Starting or stopping `TunProxy.CLI.exe`.
 - Installing or uninstalling the `TunProxyService` Windows service.
-- Waiting for the old service to stop before starting it again when the Web console requests a restart.
-- Applying the system proxy in local proxy mode and disabling it in TUN mode.
+- Waiting for the old runtime to stop before starting a replacement after the Web console requests a restart.
+- Applying PAC/global system proxy settings in local proxy mode and disabling system proxy in TUN mode.
 
-### Development run
+Recommended console setup order:
+
+1. Open the Config page and enter upstream host, port, type, and optional credentials.
+2. Run the upstream proxy check and confirm the three targets are reachable.
+3. Enable or disable GFWList and GeoIP, then prepare rule resources.
+4. Choose the system proxy mode: PAC, Global, TUN, or None.
+5. Save and restart. On Windows, run TUN mode through the tray-installed service when possible.
+
+### Development Run
 
 ```powershell
 dotnet run --project src\TunProxy.CLI\TunProxy.CLI.csproj -- --proxy 127.0.0.1:7890 --type socks5
 ```
 
-Common arguments:
+Common startup arguments:
 
-```powershell
+```text
 --proxy, -p      Upstream proxy endpoint, for example 127.0.0.1:7890
 --type, -t       Upstream proxy type: socks5 or http
 --username, -u   Upstream proxy username
 --password, -w   Upstream proxy password
---install        Install the Windows service and set tun.enabled to true
---uninstall      Uninstall the Windows service and set tun.enabled to false
+--api-host       API listen host: localhost, 0.0.0.0, or a specific IP
+--background     Run in the background on Linux/macOS
+--install        Windows: install the service and set tun.enabled to true
+--uninstall      Windows: uninstall the service and set tun.enabled to false
 ```
 
-### Linux command-line configuration
+Windows listens on `127.0.0.1:50000` by default. Linux/macOS listens on `0.0.0.0:50000` by default. You can override either behavior with `--api-host`.
 
-On Linux or headless hosts, you can manage `tunproxy.json` entirely from the terminal without opening the HTTP page:
+### Linux or Headless Hosts
+
+You can initialize, inspect, and update `tunproxy.json` from the terminal:
 
 ```bash
 ./TunProxy.CLI config wizard
 ./TunProxy.CLI --api-host 0.0.0.0 --background
 ```
 
-`config wizard` now continues through the default setup flow: it defaults the upstream proxy type to `HTTP`, enables `TUN`, then automatically runs the upstream proxy check and prepares enabled `GFWList` / `GeoIP` resources after saving the config.
-
-If you only want to inspect or adjust config, you can still use:
-
-```bash
-./TunProxy.CLI config show
-./TunProxy.CLI config set --proxy 127.0.0.1:7890 --type http --mode tun
-./TunProxy.CLI resource status
-```
+`config wizard` defaults to HTTP upstream proxy, TUN mode, and enabled GFWList/GeoIP preparation. After saving config, it runs the upstream proxy check and prepares enabled resources.
 
 Common commands:
 
@@ -93,32 +100,84 @@ config path      Print the current config file path
 config show      Print the current config as JSON
 config init      Create the config file
 config set       Update config values from CLI flags
-config wizard    Run an interactive setup and auto-check proxy/prepare resources
-resource status  Show GFW/GeoIP resource status
-resource prepare Download or load enabled GFW/GeoIP resources
+config wizard    Run interactive setup, proxy check, and resource preparation
+resource status  Show GFWList/GeoIP resource status
+resource prepare Prepare enabled resources
+resource prepare geo|gfw|all
 ```
 
-After startup, open:
+Example:
 
-```text
-http://localhost:50000/
+```bash
+./TunProxy.CLI config set --proxy 127.0.0.1:7890 --type http --mode tun --fake-ip
+./TunProxy.CLI resource prepare
 ```
 
-## Modes
+## Web Console
 
-### Local Proxy Mode
+### Status
 
-When `tun.enabled = false`, TunProxy starts in local proxy mode. It listens on `localProxy.listenPort` and can set the Windows system proxy to that local endpoint. This mode does not require administrator privileges and is useful for setting up the upstream proxy, downloading GeoIP/GFWList resources, and configuring PAC.
+The Status page shows runtime state, current mode, upstream proxy, active connections, uptime, system proxy mode, FakeIP state, and the latest TCP connection failure. It refreshes every 5 seconds and keeps a 30-minute rolling traffic sample for sent/received charts, throughput, total connections, failed connections, and TUN packet diagnostics.
 
-### TUN Mode
+Page actions:
 
-When `tun.enabled = true`, TunProxy starts in TUN mode. On Windows this requires administrator privileges or the Windows service. The app creates a Wintun adapter, configures the TUN address, default route, upstream proxy bypass route, and DNS forwarding.
+- Restart service: writes a restart request.
+- Stop service: writes a stop request.
+- Connection issue hint: classifies proxy denial, connect failures, DNS failures, and generic failures.
 
-If GeoIP or GFWList is enabled but the resource is missing or invalid, TunProxy starts in Local Proxy setup mode first. Prepare or repair the resources from the Web console, then save the configuration and restart into TUN mode.
+### Config
+
+The Config page is organized into three steps:
+
+1. Upstream proxy: host, port, type, and optional username/password.
+2. Routing resources: enable GFWList/GeoIP, inspect readiness, download one resource, or prepare all enabled resources.
+3. System proxy mode: PAC, Global, TUN, or None, plus the local proxy port.
+
+The side panel shows upstream check results, resource status, a config summary, and PAC actions. Saving config writes `tunproxy.json`, then creates `tunproxy.restart` so the tray or service can coordinate restart.
+
+### DNS
+
+The DNS page shows full data only in TUN mode. In local proxy mode, it explains that DNS interception is unavailable.
+
+In TUN mode, the DNS page groups records by domain and shows:
+
+- Domain, IP list, seen count, and last active time.
+- Route result: DIRECT, PROXY, or unknown.
+- Route reason: GFW, Geo, Default, private address, or FakeIP-related state.
+- DNS cache markers and per-record cache clear actions.
+
+### Logs
+
+The Logs page polls in-memory logs every 2 seconds, keeps up to 1000 lines, and defaults to connection logs. It supports:
+
+- All, Connections, DNS, Warnings, and Errors segmented filters.
+- Custom text filter.
+- Pause/resume, clear, and scroll to latest.
+- Side statistics for current logs, warnings, connections, and errors.
+
+## Runtime Modes
+
+### Local Proxy
+
+When `tun.enabled = false`, TunProxy runs in local proxy mode. The runtime listens on `localProxy.listenPort`, then uses `localProxy.systemProxyMode` to decide whether to modify system proxy settings:
+
+- `pac`: system PAC points to `http://127.0.0.1:50000/proxy.pac`.
+- `global`: system proxy points directly to the local proxy port.
+- `none`: local proxy runs without changing system proxy settings.
+
+This mode does not require administrator privileges and is useful for upstream checks, rule resource downloads, and PAC setup.
+
+### TUN
+
+When `tun.enabled = true` or `localProxy.systemProxyMode = "tun"`, TunProxy runs in TUN mode. On Windows this requires administrator privileges or the Windows service. The runtime creates a Wintun adapter, configures the TUN address, default route, upstream-proxy bypass route, and DNS forwarding.
+
+FakeIP is enabled by default in TUN mode. The DNS service returns addresses from `198.18.0.0/16` for A records, and the TUN layer maps those fake-IP connections back to domain names and real addresses so routing does not lose domain context.
+
+If GeoIP or GFWList is enabled but missing or invalid, TunProxy stays in local-proxy setup mode. Prepare or repair resources, then save config and restart into TUN.
 
 ## Configuration
 
-The configuration file is `tunproxy.json` in the application directory. Both the Web console and the `config` commands update this file.
+The configuration file is `tunproxy.json` in the application directory. Both the Web console and `config` commands update this file.
 
 ```json
 {
@@ -131,14 +190,16 @@ The configuration file is `tunproxy.json` in the application directory. Both the
   },
   "tun": {
     "enabled": false,
-    "ipAddress": "10.0.0.1",
+    "ipAddress": "10.255.0.1",
     "subnetMask": "255.255.255.0",
     "addDefaultRoute": true,
-    "dnsServer": "8.8.8.8"
+    "dnsServer": "8.8.8.8",
+    "fakeIpMode": true
   },
   "localProxy": {
     "listenPort": 8080,
-    "setSystemProxy": true,
+    "setSystemProxy": false,
+    "systemProxyMode": "none",
     "bypassList": "<local>;localhost;127.0.0.1;10.*;192.168.*",
     "systemProxyBackup": {
       "captured": false,
@@ -152,6 +213,7 @@ The configuration file is `tunproxy.json` in the application directory. Both the
     "mode": "smart",
     "proxyDomains": [],
     "directDomains": [],
+    "probeDirectDomains": [],
     "enableGeo": true,
     "geoProxy": [],
     "geoDirect": [],
@@ -174,41 +236,38 @@ The configuration file is `tunproxy.json` in the application directory. Both the
 
 Smart routing roughly follows this order:
 
-1. If the domain matches GFWList, use the proxy.
-2. If the destination IP is private, go direct.
-3. If there is a domain but no destination IP, resolve and cache it.
-4. If GeoIP is enabled, evaluate `geoDirect` and `geoProxy`.
-5. If no rule matches or the address cannot be identified, use the proxy by default.
+1. Explicit direct hits and private addresses go direct.
+2. Domains matching GFWList use the proxy.
+3. In TUN + FakeIP scenarios, fake IPs are mapped back to domains before waiting for real DNS results.
+4. When GeoIP is enabled and the database is ready, `geoDirect` and `geoProxy` are evaluated.
+5. If no usable rule matches or the target cannot be identified, proxy is the default.
 
-The policy favors reachability and safety: unknown addresses default to proxy, while private addresses default to direct.
+The policy favors reachability and leak avoidance: unknown destinations default to proxy, while private addresses default to direct.
 
-## Web Console
+## HTTP API
 
-Main pages:
-
-- `Status`: runtime state, proxy details, connection counts, throughput, and TUN diagnostics.
-- `Config`: upstream proxy, smart routing, GeoIP/GFWList resources, save-and-restart, and PAC controls.
-- `DNS`: TUN DNS records, route reasons, DNS cache state, and direct IP list.
-- `Logs`: live in-memory logs with pause, clear, scroll-to-bottom, and filters for connection/DNS/warning/error lines.
-
-Main APIs:
+Main APIs used by the Web console:
 
 ```text
 GET    /api/status
 GET    /api/config
 POST   /api/config
 POST   /api/restart
+POST   /api/service/restart
+POST   /api/service/stop
 POST   /api/upstream-proxy/check
 GET    /api/rule-resources/status
 POST   /api/rule-resources/prepare
-POST   /api/rule-resources/download
+POST   /api/rule-resources/download?resource=geo|gfw
 GET    /api/dns-records
-DELETE /api/dns-cache?ip=...
-GET    /api/direct-ips
-GET    /api/logs
+DELETE /api/dns-cache?ip=...&domain=...
+GET    /api/diagnostics/tun
+GET    /api/logs?after=...
+GET    /api/i18n?culture=zh-CN|en
 GET    /proxy.pac
 POST   /api/set-pac
 POST   /api/clear-pac
+POST   /api/enable-tun
 ```
 
 ## Build and Test
@@ -232,9 +291,9 @@ Local publish:
 ```text
 TunProxy.NET/
 ├─ src/
-│  ├─ TunProxy.Core/       Core config, packet parsing, connection management, Wintun abstractions
-│  ├─ TunProxy.CLI/        Web console, API, local proxy, TUN service, routing, DNS
-│  ├─ TunProxy.Tray/       Windows tray and service lifecycle management
+│  ├─ TunProxy.Core/       Shared config, connections, metrics, service helpers, platform helpers, Wintun abstractions
+│  ├─ TunProxy.CLI/        Runtime, HTTP API, Web console, local proxy, TUN, DNS, rule resources
+│  ├─ TunProxy.Tray/       Windows tray, service lifecycle, restart orchestration, system proxy integration
 │  └─ TunProxy.Tray.macOS/ Experimental macOS tray project
 ├─ tests/TunProxy.Tests/   xUnit tests
 ├─ docs/images/            README screenshots
@@ -246,19 +305,19 @@ TunProxy.NET/
 
 ### Why does saving configuration restart the service?
 
-The upstream proxy, TUN adapter, route service, and DNS service all hold runtime state such as sockets, routes, and listeners. Saving configuration only writes `tunproxy.json`; applying it requires a restart. The Web console writes `tunproxy.restart`, and the tray app starts the service only after the old process has stopped, avoiding port and route races.
+The upstream proxy, TUN adapter, DNS service, routes, and listening ports are runtime state. Saving config only writes `tunproxy.json`; applying it requires restart. The Web console creates `tunproxy.restart`, and the tray or service starts a replacement only after the old runtime has stopped, avoiding port, route, and driver ownership races.
 
 ### Why did TUN not start directly?
 
-When GeoIP or GFWList is enabled, TunProxy checks that the corresponding files are actually valid. A file that merely exists is not enough. Prepare the resources from the Config page, then save and restart.
+When GeoIP or GFWList is enabled, TunProxy verifies that the corresponding files are actually valid. A file that exists but cannot be read or parsed still blocks direct TUN startup and keeps local-proxy setup mode. Prepare resources from the Config page, then save and restart.
 
 ### Why is the DNS page empty?
 
-DNS records are only available in TUN mode. In local proxy mode, browsers hand hostnames directly to the local/upstream proxy, so TUN DNS interception is not needed.
+The DNS page mainly shows TUN DNS interception, FakeIP, and routing records. In local proxy mode, browsers usually hand hostnames to the local/upstream proxy, so TUN DNS interception is not needed.
 
 ### When are administrator privileges required?
 
-Local proxy mode does not require administrator privileges. TUN mode creates a virtual adapter and changes system routes, so on Windows you should install the service from the tray app or run the CLI as administrator.
+Local proxy, PAC, and global system proxy modes do not require administrator privileges. TUN mode creates a virtual adapter and changes system routes, so on Windows you should install the service from the tray app or run the CLI as administrator.
 
 ## License
 

@@ -243,6 +243,9 @@
   <data name="Page.Config.SystemProxyMode.Tun" xml:space="preserve">
     <value>TUN</value>
   </data>
+  <data name="Page.Config.SystemProxyMode.TunDescription" xml:space="preserve">
+    <value>TUN + FakeIP</value>
+  </data>
   <data name="Page.Config.SystemProxyMode.Manual" xml:space="preserve">
     <value>Global proxy</value>
   </data>
@@ -318,6 +321,30 @@
   <data name="Page.Dns.PrivateIp" xml:space="preserve">
     <value>Private</value>
   </data>
+  <data name="Page.Dns.DnsCache" xml:space="preserve">
+    <value>DNS cache</value>
+  </data>
+  <data name="Page.Dns.EmptyApi" xml:space="preserve">
+    <value>The API returned no records. New DNS/TUN traffic will appear automatically.</value>
+  </data>
+  <data name="Page.Dns.ClearCache" xml:space="preserve">
+    <value>Clear</value>
+  </data>
+  <data name="Page.Dns.RouteStepCache" xml:space="preserve">
+    <value>DNS cache</value>
+  </data>
+  <data name="Page.Dns.RouteStepDirect" xml:space="preserve">
+    <value>Direct route</value>
+  </data>
+  <data name="Page.Dns.RouteStepProxy" xml:space="preserve">
+    <value>Proxy route</value>
+  </data>
+  <data name="Page.Dns.Records" xml:space="preserve">
+    <value>Records</value>
+  </data>
+  <data name="Page.Dns.RecordsSummary" xml:space="preserve">
+    <value>{0} domains / {1} IPs</value>
+  </data>
   <data name="Page.Dns.LegendDirect" xml:space="preserve">
     <value>Private IP, resolved private IP, direct domain, or direct Geo</value>
   </data>
@@ -390,6 +417,9 @@
   <data name="Page.Logs.Waiting" xml:space="preserve">
     <value>Waiting for logs...</value>
   </data>
+  <data name="Page.Logs.TerminalMeta" xml:space="preserve">
+    <value>max {0} lines | filter {1}</value>
+  </data>
   <data name="Page.Status.ActiveConnections" xml:space="preserve">
     <value>Active connections</value>
   </data>
@@ -426,11 +456,32 @@
   <data name="Page.Status.ServiceUnavailableHint" xml:space="preserve">
     <value>The service is not reachable. Start it from the system service manager or command line, then refresh this page.</value>
   </data>
+  <data name="Page.Status.ModeTunDescription" xml:space="preserve">
+    <value>TUN transparently captures traffic and routes it by rule.</value>
+  </data>
   <data name="Page.Status.BytesReceived" xml:space="preserve">
     <value>Received</value>
   </data>
   <data name="Page.Status.BytesSent" xml:space="preserve">
     <value>Sent</value>
+  </data>
+  <data name="Page.Status.FakeIp" xml:space="preserve">
+    <value>FakeIP</value>
+  </data>
+  <data name="Page.Status.PacketRate" xml:space="preserve">
+    <value>Packet rate</value>
+  </data>
+  <data name="Page.Status.RollingWindow" xml:space="preserve">
+    <value>5s rolling</value>
+  </data>
+  <data name="Page.Status.TrafficChartTitle" xml:space="preserve">
+    <value>Traffic trend for the last 30 minutes</value>
+  </data>
+  <data name="Page.Status.TrafficChartDescription" xml:space="preserve">
+    <value>Sampled every {0} seconds. Blue is sent, cyan is received.</value>
+  </data>
+  <data name="Page.Status.Wintun" xml:space="preserve">
+    <value>Wintun</value>
   </data>
   <data name="Page.Status.DirectRouted" xml:space="preserve">
     <value>Direct routed</value>
@@ -515,6 +566,15 @@
   </data>
   <data name="Shared.Loading" xml:space="preserve">
     <value>Loading...</value>
+  </data>
+  <data name="Shared.On" xml:space="preserve">
+    <value>On</value>
+  </data>
+  <data name="Shared.Off" xml:space="preserve">
+    <value>Off</value>
+  </data>
+  <data name="Shared.Healthy" xml:space="preserve">
+    <value>Healthy</value>
   </data>
   <data name="Shared.None" xml:space="preserve">
     <value>None</value>

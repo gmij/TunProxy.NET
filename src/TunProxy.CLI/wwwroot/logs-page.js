@@ -22,7 +22,8 @@
       var lines = Vue.ref([]);
       var filterText = Vue.ref('[CONN]');
       var lastUpdate = Vue.ref(C.t('Page.Logs.Waiting'));
-      var timer = null;
+      var pollPipeline = C.createAsyncPipeline({ initialLoading: false });
+      var stopPolling = null;
       var terminalRef = Vue.ref(null);
 
       var filterOptions = Vue.computed(function () {
@@ -80,8 +81,10 @@
       }
 
       function poll() {
-        window.TunProxyApi.getJson('/api/logs?after=' + afterId.value)
-          .then(function (entries) {
+        return pollPipeline.run(function () {
+          return window.TunProxyApi.getJson('/api/logs?after=' + afterId.value);
+        }, {
+          success: function (entries) {
             if (!entries || entries.length === 0) return;
             afterId.value = entries[entries.length - 1].id;
             lastUpdate.value = C.currentTime();
@@ -91,10 +94,11 @@
             } else {
               appendItems(items);
             }
-          })
-          .catch(function () {
+          },
+          error: function () {
             lastUpdate.value = C.t('Page.Logs.Reconnecting');
-          });
+          }
+        });
       }
 
       function togglePause() {
@@ -118,12 +122,11 @@
       }
 
       Vue.onMounted(function () {
-        poll();
-        timer = window.setInterval(poll, 2000);
+        stopPolling = C.startPolling(poll, 2000);
       });
 
       Vue.onBeforeUnmount(function () {
-        if (timer) window.clearInterval(timer);
+        if (stopPolling) stopPolling();
       });
 
       return {
@@ -172,7 +175,7 @@
 
             <div class="tp-log-body">
               <div ref="terminalRef" class="tp-terminal tp-scrollbar">
-                <div class="tp-terminal-head"><span>tunproxy-.log</span><span>max 1000 lines · filter {{ filterText || t('Page.Logs.FilterAll') }}</span></div>
+                <div class="tp-terminal-head"><span>tunproxy-.log</span><span>{{ C.format('Page.Logs.TerminalMeta', 1000, filterText || t('Page.Logs.FilterAll')) }}</span></div>
                 <div v-if="visibleLines.length === 0" class="tp-empty-state">
                   <div class="tp-section-title">{{ C.htmlText(t('Page.Logs.EmptyHtml')) }}</div>
                 </div>

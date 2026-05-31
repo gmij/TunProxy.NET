@@ -9,8 +9,11 @@
       var status = Vue.ref(null);
       var resources = Vue.ref(null);
       var proxyStatus = Vue.ref(null);
-      var checking = Vue.ref(false);
-      var preparing = Vue.ref(false);
+      var initialLoadPipeline = C.createAsyncPipeline({ initialLoading: true });
+      var proxyCheckPipeline = C.createAsyncPipeline({ initialLoading: false });
+      var resourcePipeline = C.createAsyncPipeline({ initialLoading: false });
+      var checking = proxyCheckPipeline.busy;
+      var preparing = resourcePipeline.busy;
       var saving = Vue.ref(false);
       var error = Vue.ref('');
       var restartMessage = Vue.ref('');
@@ -91,7 +94,7 @@
         return [
           { value: 'pac', title: C.t('Page.Config.SystemProxyMode.Pac'), desc: 'PAC' },
           { value: 'global', title: C.t('Page.Config.SystemProxyMode.Global'), desc: C.t('Page.Config.Route.Global') },
-          { value: 'tun', title: C.t('Page.Config.SystemProxyMode.Tun'), desc: 'TUN + FakeIP' },
+          { value: 'tun', title: C.t('Page.Config.SystemProxyMode.Tun'), desc: C.t('Page.Config.SystemProxyMode.TunDescription') },
           { value: 'none', title: C.t('Page.Config.SystemProxyMode.None'), desc: C.t('Page.Config.SystemProxyMode.None') }
         ];
       });
@@ -173,7 +176,7 @@
           { label: C.t('Page.Config.SystemProxyMode'), value: C.systemProxyModeLabel(form.systemProxyMode) },
           { label: C.t('Page.Config.LocalProxyPort'), value: form.localPort },
           { label: C.t('Page.Config.RouteMode'), value: form.systemProxyMode === 'global' ? 'global' : 'smart' },
-          { label: 'FakeIP', value: cfg.value && cfg.value.tun && cfg.value.tun.fakeIpMode ? 'On' : 'Off' }
+          { label: C.t('Page.Status.FakeIp'), value: C.t(cfg.value && cfg.value.tun && cfg.value.tun.fakeIpMode ? 'Shared.On' : 'Shared.Off') }
         ];
       });
 
@@ -217,21 +220,23 @@
       function checkProxy() {
         if (!hasProxyEndpoint.value) return;
         error.value = '';
-        checking.value = true;
         proxyStatus.value = null;
-        window.TunProxyApi.postJson('/api/upstream-proxy/check', {
-          host: form.proxyHost.trim(),
-          port: Number(form.proxyPort || 7890),
-          type: form.proxyType,
-          username: form.proxyUsername.trim() || null,
-          password: form.proxyPassword || null
-        }).then(function (payload) {
-          proxyStatus.value = payload;
-          notify('success', C.t('Page.Config.ProxyStatus.CheckCompleted'));
-        }).catch(function (err) {
-          error.value = C.format('Page.Config.ProxyStatus.CheckFailed', err.message);
-        }).finally(function () {
-          checking.value = false;
+        return proxyCheckPipeline.run(function () {
+          return window.TunProxyApi.postJson('/api/upstream-proxy/check', {
+            host: form.proxyHost.trim(),
+            port: Number(form.proxyPort || 7890),
+            type: form.proxyType,
+            username: form.proxyUsername.trim() || null,
+            password: form.proxyPassword || null
+          });
+        }, {
+          success: function (payload) {
+            proxyStatus.value = payload;
+            notify('success', C.t('Page.Config.ProxyStatus.CheckCompleted'));
+          },
+          error: function (err) {
+            error.value = C.format('Page.Config.ProxyStatus.CheckFailed', err.message);
+          }
         });
       }
 
@@ -241,22 +246,21 @@
           return;
         }
         var wasReady = isResourceReady(resources.value, name);
-        preparing.value = true;
         error.value = '';
-        window.TunProxyApi.postJson('/api/rule-resources/download?resource=' + encodeURIComponent(name), buildPayload())
-          .then(function (payload) {
+        return resourcePipeline.run(function () {
+          return window.TunProxyApi.postJson('/api/rule-resources/download?resource=' + encodeURIComponent(name), buildPayload());
+        }, {
+          success: function (payload) {
             resources.value = payload;
             var nowReady = isResourceReady(payload, name);
             notify('success', wasReady && nowReady
               ? C.t('Page.Config.RuleResource.AlreadyLatest')
               : C.t('Page.Config.RuleResource.Refreshed'));
-          })
-          .catch(function (err) {
+          },
+          error: function (err) {
             error.value = C.format('Page.Config.SaveFailed', err.message);
-          })
-          .finally(function () {
-            preparing.value = false;
-          });
+          }
+        });
       }
 
       function prepareResources() {
@@ -265,22 +269,32 @@
           return;
         }
         var wasAllReady = areEnabledResourcesReady(resources.value);
-        preparing.value = true;
         error.value = '';
-        window.TunProxyApi.postJson('/api/rule-resources/prepare', buildPayload())
-          .then(function () {
-            return loadResources().then(function (latest) {
-              notify('success', wasAllReady && areEnabledResourcesReady(latest)
-                ? C.t('Page.Config.RuleResource.AlreadyLatest')
-                : C.t('Page.Config.RuleResource.Refreshed'));
+        return resourcePipeline.run(function () {
+          return window.TunProxyApi.postJson('/api/rule-resources/prepare', buildPayload())
+            .then(function () {
+              return loadResources();
             });
-          })
-          .catch(function (err) {
+        }, {
+          success: function (latest) {
+            notify('success', wasAllReady && areEnabledResourcesReady(latest)
+              ? C.t('Page.Config.RuleResource.AlreadyLatest')
+              : C.t('Page.Config.RuleResource.Refreshed'));
+          },
+          error: function (err) {
             error.value = C.format('Page.Config.SaveFailed', err.message);
-          })
-          .finally(function () {
-            preparing.value = false;
-          });
+          }
+        });
+      }
+
+      function loadInitialData() {
+        return initialLoadPipeline.run(function () {
+          return Promise.all([loadMode(), loadConfig(), loadResources()]);
+        }, {
+          error: function (err) {
+            error.value = C.format('Page.Config.SaveFailed', err.message);
+          }
+        });
       }
 
       function saveConfig() {
@@ -347,9 +361,7 @@
       }
 
       Vue.onMounted(function () {
-        Promise.all([loadMode(), loadConfig(), loadResources()]).catch(function (err) {
-          error.value = C.format('Page.Config.SaveFailed', err.message);
-        });
+        loadInitialData();
       });
 
       return {
@@ -366,6 +378,7 @@
         form: form,
         handlePacMenu: handlePacMenu,
         hasProxyEndpoint: hasProxyEndpoint,
+        loading: initialLoadPipeline.loading,
         modeOptions: modeOptions,
         modeSegmentOptions: modeSegmentOptions,
         pacUrl: pacUrl,
@@ -400,6 +413,7 @@
           <a-alert v-if="restartMessage" type="warning" :message="restartMessage" show-icon style="margin-bottom: 14px"></a-alert>
           <a-alert v-if="error" type="error" :message="error" show-icon closable style="margin-bottom: 14px" @close="error = ''"></a-alert>
 
+          <a-spin :spinning="loading">
           <div class="tp-page-grid">
             <div>
               <section class="tp-section">
@@ -504,6 +518,7 @@
               </section>
             </aside>
           </div>
+          </a-spin>
       </tp-shell>
     `
   });

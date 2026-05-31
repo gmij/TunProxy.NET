@@ -311,7 +311,7 @@
             </section>
 
             <div class="tp-four-grid tp-status-overview-grid" style="margin-top: 12px">
-              <div v-for="card in overviewCards" :key="card.label" class="tp-metric-card tp-overview-card">
+              <a-card v-for="card in overviewCards" :key="card.label" class="tp-metric-card tp-overview-card" size="small">
                 <div class="tp-card-line">
                   <div class="tp-card-meta">
                     <div class="tp-card-label">{{ card.label }}</div>
@@ -319,7 +319,7 @@
                   </div>
                   <div class="tp-card-value tp-overview-value">{{ card.value }}</div>
                 </div>
-              </div>
+              </a-card>
             </div>
 
             <div class="tp-page-grid" :class="{ 'tp-page-grid-single': !(status && status.mode === 'tun') }" style="margin-top: 18px">
@@ -329,8 +329,8 @@
                     <div><div class="tp-section-title">{{ t('Page.Status.Traffic') }}</div><div class="tp-muted">{{ t('Page.Status.BytesSent') }} / {{ t('Page.Status.BytesReceived') }}</div></div>
                     <a-tag color="processing">5s rolling</a-tag>
                   </div>
-                  <div class="tp-four-grid">
-                    <div v-for="card in metricCards" :key="card.label" class="tp-metric-card">
+                  <div class="tp-four-grid tp-status-metric-grid">
+                    <a-card v-for="card in metricCards" :key="card.label" class="tp-metric-card" size="small">
                       <div class="tp-card-line">
                         <div class="tp-card-meta">
                           <div class="tp-metric-label"><span>{{ card.label }}</span><span class="tp-metric-icon">{{ card.icon }}</span></div>
@@ -338,7 +338,7 @@
                         </div>
                         <div class="tp-card-value tp-metric-value">{{ card.value }}</div>
                       </div>
-                    </div>
+                    </a-card>
                   </div>
                   <div class="tp-chart">
                     <div class="tp-section-head" style="margin-bottom: 6px"><div class="tp-section-title">最近 30 分钟流量曲线</div><div class="tp-muted">每 {{ sampleIntervalSeconds }} 秒采样，蓝色发送，青色接收 · {{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</div></div>

@@ -371,6 +371,12 @@ body {
   padding: 12px;
 }
 
+.tp-status-overview-grid,
+.tp-status-metric-grid,
+.tp-dns-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
 .tp-overview-value {
   font-size: 20px;
   line-height: 1.15;
@@ -413,11 +419,16 @@ body {
 }
 
 .tp-info-tile,
-.tp-summary-card,
-.tp-metric-card,
 .tp-mode-option,
 .tp-mini-panel,
 .tp-log-count-card {
+  border: 1px solid #e5eaf1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tp-summary-card:not(.ant-card),
+.tp-metric-card:not(.ant-card) {
   border: 1px solid #e5eaf1;
   border-radius: 8px;
   background: #fff;
@@ -473,30 +484,43 @@ body {
 }
 
 .tp-metric-card {
-  padding: 14px;
   min-height: 126px;
+}
+
+.tp-metric-card.ant-card,
+.tp-summary-card.ant-card {
+  height: 100%;
+}
+
+.tp-metric-card.ant-card .ant-card-body,
+.tp-summary-card.ant-card .ant-card-body {
+  padding: 14px;
   display: flex;
   align-items: center;
+  width: 100%;
+  height: 100%;
 }
 
 .tp-metric-label {
   color: var(--tp-muted);
   font-size: 13px;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   align-items: center;
+  min-width: 0;
 }
 
 .tp-metric-icon {
-  width: 26px;
-  height: 26px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
   border-radius: 7px;
   display: grid;
   place-items: center;
   background: #eef2ff;
   color: var(--tp-blue);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -711,10 +735,13 @@ body {
 }
 
 .tp-summary-card {
-  padding: 14px;
   min-height: 92px;
-  display: grid;
-  gap: 8px;
+}
+
+.tp-summary-card:not(.ant-card) {
+  padding: 14px;
+  display: flex;
+  align-items: center;
 }
 
 .tp-legend {
@@ -994,10 +1021,15 @@ body {
     display: flex;
   }
 
-  .tp-status-overview-grid,
   .tp-page-grid,
   .tp-log-body {
     grid-template-columns: 1fr;
+  }
+
+  .tp-status-overview-grid,
+  .tp-status-metric-grid,
+  .tp-dns-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .tp-dns-main {
@@ -1065,6 +1097,12 @@ body {
   .tp-three-grid,
   .tp-four-grid,
   .tp-status-primary {
+    grid-template-columns: 1fr;
+  }
+
+  .tp-status-overview-grid,
+  .tp-status-metric-grid,
+  .tp-dns-summary-grid {
     grid-template-columns: 1fr;
   }
 

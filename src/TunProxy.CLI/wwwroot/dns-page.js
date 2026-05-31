@@ -174,12 +174,16 @@
             <template #description>{{ C.htmlText(t('Page.Dns.ProxyModeNoticeHtml')) }}</template>
           </a-alert>
 
-          <div v-if="isTunMode" class="tp-four-grid">
-            <div v-for="item in summary" :key="item.label" class="tp-summary-card">
-              <div class="tp-muted">{{ item.label }}</div>
-              <div class="tp-summary-value">{{ item.value }}</div>
-              <div class="tp-muted">{{ item.sub }}</div>
-            </div>
+          <div v-if="isTunMode" class="tp-four-grid tp-dns-summary-grid">
+            <a-card v-for="item in summary" :key="item.label" class="tp-summary-card" size="small">
+              <div class="tp-card-line">
+                <div class="tp-card-meta">
+                  <div class="tp-card-label">{{ item.label }}</div>
+                  <div class="tp-muted">{{ item.sub }}</div>
+                </div>
+                <div class="tp-card-value tp-summary-value">{{ item.value }}</div>
+              </div>
+            </a-card>
           </div>
 
           <div v-if="isTunMode" class="tp-page-grid">

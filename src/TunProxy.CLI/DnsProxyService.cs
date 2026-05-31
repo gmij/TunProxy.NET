@@ -16,7 +16,8 @@ public class DnsProxyService
     private const string FakeIpDnsSource = "DNS-FakeIP";
     private const string FakeIpInitialRoute = "UNKNOWN";
     private const string FakeIpLastMethod = "fakeip";
-    private const string DefaultDomesticDns = "119.29.29.29";
+    internal const string DefaultDomesticDns = "119.29.29.29";
+    private static readonly TimeSpan DirectDnsTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan HttpConnectRejectWarningWindow = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan DohSuccessInfoWindow = TimeSpan.FromMinutes(2);
     private static readonly HashSet<string> DomesticDnsServers = new(StringComparer.OrdinalIgnoreCase)
@@ -40,6 +41,7 @@ public class DnsProxyService
     private readonly ProxyConfig _proxyConfig;
     private readonly RouteDecisionService? _routeDecision;
     private readonly Func<IPAddress, RouteDecision, CancellationToken, Task>? _onDirectRouteCandidate;
+    private readonly Func<IPAddress, CancellationToken, Task>? _onDirectDnsServerCandidate;
     private readonly FakeIpPool? _fakeIpPool;
     private readonly HashSet<string> _probeDirectDomainSuffixes;
     private readonly string _dohEndpoint;
@@ -72,6 +74,7 @@ public class DnsProxyService
         string? proxyPassword = null,
         RouteDecisionService? routeDecision = null,
         Func<IPAddress, RouteDecision, CancellationToken, Task>? onDirectRouteCandidate = null,
+        Func<IPAddress, CancellationToken, Task>? onDirectDnsServerCandidate = null,
         IEnumerable<string>? probeDirectDomains = null,
         FakeIpPool? fakeIpPool = null)
     {
@@ -84,6 +87,7 @@ public class DnsProxyService
         _proxyPassword = proxyPassword;
         _routeDecision = routeDecision;
         _onDirectRouteCandidate = onDirectRouteCandidate;
+        _onDirectDnsServerCandidate = onDirectDnsServerCandidate;
         _fakeIpPool = fakeIpPool;
         _dohEndpoint = ResolveDohEndpoint(upstreamDns);
         _probeDirectDomainSuffixes = new HashSet<string>(
@@ -155,12 +159,15 @@ public class DnsProxyService
             var requestedDnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
                 ? _upstreamDns
                 : requestPacket.Header.DestinationAddress.ToString();
-            var dnsServer = SelectRoutingDnsServer(domain, requestedDnsServer);
+            var domainDecision = _routeDecision?.TryDecideWithoutIp(domain);
+            var dnsServer = SelectRoutingDnsServer(_upstreamDns, requestedDnsServer, domainDecision);
+            var useProxySideResolver = ShouldUseProxySideResolver(domainDecision);
 
             var dnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(
                 requestPacket.Payload,
                 domain,
                 dnsServer,
+                useProxySideResolver,
                 traceId,
                 ct);
 
@@ -214,13 +221,14 @@ public class DnsProxyService
         byte[] dnsQueryPayload,
         string domain,
         string dnsServer,
+        bool useProxySideResolver,
         string traceId,
         CancellationToken ct)
     {
-        var key = $"{domain.Trim().ToLowerInvariant()}|{dnsServer.Trim()}";
+        var key = $"{domain.Trim().ToLowerInvariant()}|{dnsServer.Trim()}|{(useProxySideResolver ? "proxy" : "direct")}";
         var task = _dnsResolveInflight.GetOrAdd(
             key,
-            _ => ResolveDnsThroughUpstreamAsync(dnsQueryPayload, domain, dnsServer, traceId, ct));
+            _ => ResolveDnsThroughUpstreamAsync(dnsQueryPayload, domain, dnsServer, useProxySideResolver, traceId, ct));
 
         try
         {
@@ -236,9 +244,24 @@ public class DnsProxyService
         byte[] dnsQueryPayload,
         string domain,
         string dnsServer,
+        bool useProxySideResolver,
         string traceId,
         CancellationToken ct)
     {
+        if (!useProxySideResolver)
+        {
+            var directDnsResponse = await QueryDnsDirectUdpAsync(dnsQueryPayload, domain, dnsServer, traceId, ct);
+            if (directDnsResponse != null && directDnsResponse.Length > 0)
+            {
+                return directDnsResponse;
+            }
+
+            Log.Warning("[DNS:{Trace}] Direct DNS failed for {Domain} via {DnsServer}; trying proxy/DoH fallback",
+                traceId,
+                domain,
+                dnsServer);
+        }
+
         if (ShouldBypassTcpProxyDns())
         {
             return await QueryDnsOverHttpsAsync(dnsQueryPayload, domain, traceId, ct, ResolveDohEndpoint(dnsServer));
@@ -281,11 +304,14 @@ public class DnsProxyService
         var requestedDnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
             ? _upstreamDns
             : requestPacket.Header.DestinationAddress.ToString();
-        var dnsServer = SelectRoutingDnsServer(domain, requestedDnsServer);
+        var domainDecision = _routeDecision?.TryDecideWithoutIp(domain);
+        var dnsServer = SelectRoutingDnsServer(_upstreamDns, requestedDnsServer, domainDecision);
+        var useProxySideResolver = ShouldUseProxySideResolver(domainDecision);
         var dnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(
             requestPacket.Payload,
             domain,
             dnsServer,
+            useProxySideResolver,
             traceId,
             ct);
 
@@ -336,14 +362,15 @@ public class DnsProxyService
 
         // Return the synthetic response immediately – no upstream round-trip needed.
         var fakeResponse = BuildFakeIpDnsResponse(query, domain, fakeIp);
-        TunWriter.WriteUdpResponse(device, requestPacket, fakeResponse);
 
-        // Background: resolve the real IP via the upstream proxy for routing-decision quality.
+        // Background: resolve the real IP for routing-decision quality. Start it before
+        // returning the fake response so a following TCP connection can reuse the same work.
         // We deliberately do NOT await so the client gets an instant response.
-        _ = StartFakeIpBackgroundResolutionAsync(domain, traceId, ct);
+        _ = EnsureFakeIpRealDnsResolutionAsync(domain, traceId, ct);
+        TunWriter.WriteUdpResponse(device, requestPacket, fakeResponse);
     }
 
-    private Task StartFakeIpBackgroundResolutionAsync(string domain, string traceId, CancellationToken ct)
+    internal Task EnsureFakeIpRealDnsResolutionAsync(string domain, string traceId, CancellationToken ct)
     {
         var key = domain.Trim().ToLowerInvariant();
         return _fakeIpBackgroundResolveInflight.GetOrAdd(
@@ -353,8 +380,10 @@ public class DnsProxyService
                 try
                 {
                     var queryPayload = BuildAQueryPayload(domain);
-                    var dnsServer = SelectRoutingDnsServer(domain, _upstreamDns);
-                    var realDnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(queryPayload, domain, dnsServer, traceId, ct);
+                    var domainDecision = _routeDecision?.TryDecideWithoutIp(domain);
+                    var dnsServer = SelectRoutingDnsServer(_upstreamDns, _upstreamDns, domainDecision);
+                    var useProxySideResolver = ShouldUseProxySideResolver(domainDecision);
+                    var realDnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(queryPayload, domain, dnsServer, useProxySideResolver, traceId, ct);
                     if (realDnsResponse != null && realDnsResponse.Length > 0)
                     {
                         var realPacket = DnsPacket.Parse(realDnsResponse);
@@ -464,6 +493,54 @@ public class DnsProxyService
         };
 
         return QueryDnsViaProxyAsync(dnsQuery.Build(), domain, dnsServer, traceId, ct);
+    }
+
+    internal async Task<byte[]?> QueryDnsDirectUdpAsync(
+        byte[] dnsQueryPayload,
+        string domain,
+        string dnsServer,
+        string traceId,
+        CancellationToken ct)
+    {
+        if (!IPAddress.TryParse(dnsServer, out var dnsAddress) ||
+            dnsAddress.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            return null;
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        _lastMethod = "udp-direct";
+
+        try
+        {
+            if (_onDirectDnsServerCandidate != null)
+            {
+                await _onDirectDnsServerCandidate(dnsAddress, ct);
+            }
+
+            using var udp = new System.Net.Sockets.UdpClient(System.Net.Sockets.AddressFamily.InterNetwork);
+            await udp.SendAsync(dnsQueryPayload, new IPEndPoint(dnsAddress, 53), ct);
+            var result = await udp.ReceiveAsync(ct).AsTask().WaitAsync(DirectDnsTimeout, ct);
+            _lastSuccessUtc = DateTime.UtcNow;
+            Log.Debug("[DNS:{Trace}] Direct UDP DNS succeeded for {Domain} via {DnsServer} in {ElapsedMs} ms",
+                traceId,
+                domain,
+                dnsServer,
+                stopwatch.ElapsedMilliseconds);
+            return result.Buffer;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _lastFailureUtc = DateTime.UtcNow;
+            _lastError = $"udp-direct: {ex.GetType().Name}: {ex.Message}";
+            Log.Debug(ex,
+                "[DNS:{Trace}] Direct UDP DNS failed for {Domain} via {DnsServer} in {ElapsedMs} ms",
+                traceId,
+                domain,
+                dnsServer,
+                stopwatch.ElapsedMilliseconds);
+            return null;
+        }
     }
 
     internal async Task<byte[]?> QueryDnsViaProxyAsync(byte[] dnsQueryPayload, string domain, string dnsServer, string traceId, CancellationToken ct)

@@ -12,6 +12,7 @@
     "Dns": "DNS",
     "Language": "Language",
     "Logs": "Logs",
+    "Rules": "Rules",
     "Status": "Status"
   },
   "Page": {
@@ -23,6 +24,11 @@
       "CopyAddress": "Copy URL",
       "CurrentMode": "Current mode:",
       "DirectDomains": "Direct domains (one per line)",
+      "DirectFailureFallback": "Auto proxy after direct failures",
+      "DirectFailureFallbackHint": "Temporarily route a domain through the proxy after repeated direct connection failures.",
+      "DirectFailureThreshold": "Failure threshold",
+      "DirectFailureWindowSeconds": "Failure window (seconds)",
+      "DirectFailureFallbackTtlSeconds": "Fallback TTL (seconds)",
       "EnableGeo": "Enable GeoIP routing",
       "EnableGfw": "Enable GFWList routing",
       "RuleResource": {
@@ -157,6 +163,15 @@
       "UpdatedAt": "Last updated: {0}",
       "Waiting": "Waiting for logs...",
       "TerminalMeta": "max {0} lines | filter {1}"
+    },
+    "Rules": {
+      "Title": "Routing Rules",
+      "ManualRules": "Manual domain rules",
+      "ManualRulesHint": "Proxy domains always use the upstream proxy; direct domains stay direct unless a higher-priority proxy rule such as GFWList matches.",
+      "ProxyDomainCount": "Proxy domains",
+      "DirectDomainCount": "Direct domains",
+      "Summary": "Summary",
+      "Saved": "Routing rules saved."
     },
     "Status": {
       "ActiveConnections": "Active connections",

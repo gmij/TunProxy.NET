@@ -56,8 +56,6 @@
         payload.proxy.username = form.proxyUsername.trim() || null;
         payload.proxy.password = form.proxyPassword || null;
         payload.route.mode = form.systemProxyMode === 'global' ? 'global' : 'smart';
-        payload.route.proxyDomains = [];
-        payload.route.directDomains = [];
         payload.route.enableGfwList = form.enableGfw;
         payload.route.enableGeo = form.enableGeo;
         return payload;

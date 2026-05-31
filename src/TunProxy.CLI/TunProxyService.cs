@@ -47,7 +47,7 @@ public class TunProxyService : IProxyService
     private readonly PendingRelayStateCleaner _pendingRelayStateCleaner = new();
     private readonly TunRuntimeStateStore _runtimeStateStore = new();
     private readonly FakeIpPool? _fakeIpPool;
-    private readonly DomainFailureTracker _domainFailureTracker = new();
+    private readonly DomainFailureTracker _domainFailureTracker;
     private readonly UdpDirectRelay _udpDirectRelay = new();
     private readonly TunMtuResolver _tunMtuResolver = new();
     private string? _lastTcpConnectFailure;
@@ -58,7 +58,7 @@ public class TunProxyService : IProxyService
     private const int PacketQueueCapacity = 4096;
     private const int MaxInitialPayloadBufferBytes = 64 * 1024;
     private static readonly TimeSpan ClientWindowPollInterval = TimeSpan.FromMilliseconds(1);
-    private static readonly TimeSpan FakeIpResolveWaitTimeout = TimeSpan.FromMilliseconds(1500);
+    private static readonly TimeSpan FakeIpResolveWaitTimeout = TimeSpan.FromMilliseconds(4500);
     private static readonly TimeSpan FakeIpResolvePollInterval = TimeSpan.FromMilliseconds(25);
     private static readonly TimeSpan PendingRelayStateIdleTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OutboundReadyWaitTimeout = TimeSpan.FromSeconds(30);
@@ -77,12 +77,15 @@ public class TunProxyService : IProxyService
             () => Interlocked.Increment(ref _downloadingCount),
             () => Interlocked.Decrement(ref _downloadingCount),
             () => _proxyReady.Task);
+        _domainFailureTracker = CreateDomainFailureTracker(config.Route);
 
         _routeDecision = new RouteDecisionService(
             config,
             _geoIpService,
             _gfwListService,
-            isProxyFallbackActive: _domainFailureTracker.IsProxyFallbackActive);
+            isProxyFallbackActive: config.Route.EnableDirectFailureFallback
+                ? _domainFailureTracker.IsProxyFallbackActive
+                : _ => false);
         _routeService = RouteServiceFactory.Create(config.Tun);
         _directBypassRoutes = new DirectBypassRouteManager(_routeService);
         _directBypassRouteScheduler = new DirectBypassRouteScheduler(
@@ -110,6 +113,7 @@ public class TunProxyService : IProxyService
             // In FakeIP mode bypass-route candidates are not added because traffic always
             // arrives at the fake IP (never at the real IP directly).
             onDirectRouteCandidate: _fakeIpPool != null ? null : _directBypassRouteScheduler.ScheduleAsync,
+            onDirectDnsServerCandidate: EnsureDirectDnsServerRouteAsync,
             probeDirectDomains: config.Route.ProbeDirectDomains,
             fakeIpPool: _fakeIpPool);
     }
@@ -239,6 +243,7 @@ public class TunProxyService : IProxyService
                 _ipCache.LoadBlockedIpCache();
                 var defaultRouteReady = _routeService!.AddDefaultRoute();
                 Log.Information("[ROUTE] Route setup completed. DefaultRouteReady={DefaultRouteReady}", defaultRouteReady);
+                await EnsureStartupDirectDnsRoutesAsync(ct);
                 if (!defaultRouteReady)
                 {
                     Log.Warning("[ROUTE] TUN default route is still missing; system traffic may not enter TUN.");
@@ -563,6 +568,14 @@ public class TunProxyService : IProxyService
                         else
                         {
                             // GeoIP lookup required — wait for background DoH to resolve the real IP.
+                            if (domainHint != null && _dnsProxy != null)
+                            {
+                                _ = _dnsProxy.EnsureFakeIpRealDnsResolutionAsync(
+                                    domainHint,
+                                    BuildTcpDnsTraceId(),
+                                    ct);
+                            }
+
                             var resolvedRealIp = domainHint == null
                                 ? null
                                 : await WaitForResolvedAddressAsync(domainHint, ct);
@@ -579,7 +592,7 @@ public class TunProxyService : IProxyService
                             finalDecision = effectiveDestIp != null
                                 ? await _routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct)
                                 : domainHint != null
-                                    ? _routeDecision.TryDecideWithoutIp(domainHint) ?? RouteDecision.Proxy("Default", domainHint, null)
+                                    ? _routeDecision.TryDecideWithoutIp(domainHint) ?? RouteDecision.Proxy("FakeIpUnresolved", domainHint, null)
                                     : RouteDecision.Proxy("Default", null, null);
                         }
                     }
@@ -1024,6 +1037,11 @@ public class TunProxyService : IProxyService
 
     private void RecordDirectDomainFailure(string? domain, TunConnectionFailure failure)
     {
+        if (!_config.Route.EnableDirectFailureFallback)
+        {
+            return;
+        }
+
         var result = _domainFailureTracker.RecordDirectFailure(domain, failure.Reason);
         if (result.Domain == null)
         {
@@ -1048,6 +1066,46 @@ public class TunProxyService : IProxyService
             result.DirectFailureThreshold,
             failure.Reason);
     }
+
+    private static DomainFailureTracker CreateDomainFailureTracker(RouteConfig route)
+    {
+        var threshold = Math.Clamp(route.DirectFailureThreshold, 1, 20);
+        var windowSeconds = Math.Clamp(route.DirectFailureWindowSeconds, 30, 3600);
+        var ttlSeconds = Math.Clamp(route.DirectFailureFallbackTtlSeconds, 60, 86400);
+        return new DomainFailureTracker(
+            threshold,
+            TimeSpan.FromSeconds(windowSeconds),
+            TimeSpan.FromSeconds(ttlSeconds));
+    }
+
+    private Task EnsureDirectDnsServerRouteAsync(IPAddress dnsServer, CancellationToken ct) =>
+        _directBypassRouteScheduler.EnsureAsync(
+            dnsServer,
+            RouteDecision.Direct("DnsResolver", null, dnsServer),
+            ct);
+
+    private async Task EnsureStartupDirectDnsRoutesAsync(CancellationToken ct)
+    {
+        var servers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            DnsProxyService.DefaultDomesticDns,
+            _config.Tun.DnsServer
+        };
+
+        foreach (var server in servers)
+        {
+            if (!IPAddress.TryParse(server, out var address) ||
+                address.AddressFamily != AddressFamily.InterNetwork)
+            {
+                continue;
+            }
+
+            await EnsureDirectDnsServerRouteAsync(address, ct);
+        }
+    }
+
+    private static string BuildTcpDnsTraceId() =>
+        $"tcp-{DateTime.UtcNow:HHmmssfff}";
 
     private void HandleConnectionFail(string connKey, ITunDevice device, IPPacket packet)
     {

@@ -221,6 +221,10 @@ TUN 模式默认启用 FakeIP。DNS 服务为 A 记录返回 `198.18.0.0/16` 地
     "enableGfwList": true,
     "gfwListUrl": "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt",
     "gfwListPath": "gfwlist.txt",
+    "enableDirectFailureFallback": true,
+    "directFailureThreshold": 3,
+    "directFailureWindowSeconds": 300,
+    "directFailureFallbackTtlSeconds": 900,
     "tunRouteMode": "global",
     "tunRouteApps": [],
     "autoAddDefaultRoute": true

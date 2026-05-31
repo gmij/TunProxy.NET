@@ -10,6 +10,7 @@
   "Nav": {
     "Config": "配置",
     "Dns": "DNS",
+    "Rules": "规则",
     "Language": "语言",
     "Logs": "日志",
     "Status": "状态"
@@ -23,6 +24,11 @@
       "CopyAddress": "复制地址",
       "CurrentMode": "当前模式：",
       "DirectDomains": "直连域名（每行一个）",
+      "DirectFailureFallback": "直连失败后自动代理",
+      "DirectFailureFallbackHint": "域名直连多次失败后，临时切换到代理线路。",
+      "DirectFailureThreshold": "失败阈值",
+      "DirectFailureWindowSeconds": "统计窗口（秒）",
+      "DirectFailureFallbackTtlSeconds": "临时代理 TTL（秒）",
       "EnableGeo": "启用 GeoIP 路由",
       "EnableGfw": "启用 GFWList 路由",
       "RuleResource": {
@@ -157,6 +163,15 @@
       "UpdatedAt": "最后更新：{0}",
       "Waiting": "等待日志...",
       "TerminalMeta": "最多 {0} 行 | 过滤 {1}"
+    },
+    "Rules": {
+      "Title": "路由规则",
+      "ManualRules": "手动域名规则",
+      "ManualRulesHint": "代理域名始终走上游代理；直连域名保持直连，除非命中 GFWList 等更高优先级代理规则。",
+      "ProxyDomainCount": "代理域名数",
+      "DirectDomainCount": "直连域名数",
+      "Summary": "摘要",
+      "Saved": "路由规则已保存。"
     },
     "Status": {
       "ActiveConnections": "活跃连接",

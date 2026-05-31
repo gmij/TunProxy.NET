@@ -24,6 +24,7 @@ public class WebConsoleAssetTests
     [Theory]
     [InlineData("index.html", "status-page.js")]
     [InlineData("config.html", "config-page.js")]
+    [InlineData("rules.html", "rules-page.js")]
     [InlineData("dns.html", "dns-page.js")]
     [InlineData("logs.html", "logs-page.js")]
     public void Pages_LoadSharedAndPageScriptsWithoutInlineScript(string htmlFile, string pageScript)
@@ -61,6 +62,7 @@ public class WebConsoleAssetTests
     [Theory]
     [InlineData("index.html", "status-badges")]
     [InlineData("config.html", "check-proxy-button")]
+    [InlineData("rules.html", "route-rules-form")]
     [InlineData("dns.html", "dns-table")]
     [InlineData("logs.html", "log-box")]
     public void Pages_ContainExpectedSmokeElements(string htmlFile, string elementId)

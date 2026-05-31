@@ -192,6 +192,10 @@ public class RouteConfig
     public bool EnableGfwList { get; set; } = true;
     public string GfwListUrl { get; set; } = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt";
     public string GfwListPath { get; set; } = "gfwlist.txt";
+    public bool EnableDirectFailureFallback { get; set; } = true;
+    public int DirectFailureThreshold { get; set; } = 3;
+    public int DirectFailureWindowSeconds { get; set; } = 300;
+    public int DirectFailureFallbackTtlSeconds { get; set; } = 900;
     public string TunRouteMode { get; set; } = "global";
     public List<string> TunRouteApps { get; set; } = new();
     public bool AutoAddDefaultRoute { get; set; } = true;
@@ -211,6 +215,10 @@ public class RouteConfig
         EnableGfwList = other.EnableGfwList;
         GfwListUrl = other.GfwListUrl;
         GfwListPath = other.GfwListPath;
+        EnableDirectFailureFallback = other.EnableDirectFailureFallback;
+        DirectFailureThreshold = other.DirectFailureThreshold;
+        DirectFailureWindowSeconds = other.DirectFailureWindowSeconds;
+        DirectFailureFallbackTtlSeconds = other.DirectFailureFallbackTtlSeconds;
         TunRouteMode = other.TunRouteMode;
         TunRouteApps = [.. other.TunRouteApps];
         AutoAddDefaultRoute = other.AutoAddDefaultRoute;

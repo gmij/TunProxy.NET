@@ -56,6 +56,10 @@ public class AppConfigTests
                 EnableGfwList = true,
                 GfwListUrl = "https://example/gfw.txt",
                 GfwListPath = "gfw.txt",
+                EnableDirectFailureFallback = false,
+                DirectFailureThreshold = 5,
+                DirectFailureWindowSeconds = 600,
+                DirectFailureFallbackTtlSeconds = 1800,
                 TunRouteMode = "selective",
                 TunRouteApps = ["chrome.exe"],
                 AutoAddDefaultRoute = false
@@ -95,6 +99,10 @@ public class AppConfigTests
         Assert.True(target.Route.EnableGfwList);
         Assert.Equal("https://example/gfw.txt", target.Route.GfwListUrl);
         Assert.Equal("gfw.txt", target.Route.GfwListPath);
+        Assert.False(target.Route.EnableDirectFailureFallback);
+        Assert.Equal(5, target.Route.DirectFailureThreshold);
+        Assert.Equal(600, target.Route.DirectFailureWindowSeconds);
+        Assert.Equal(1800, target.Route.DirectFailureFallbackTtlSeconds);
         Assert.Equal("selective", target.Route.TunRouteMode);
         Assert.Equal(["chrome.exe"], target.Route.TunRouteApps);
         Assert.False(target.Route.AutoAddDefaultRoute);

@@ -12,20 +12,28 @@ public sealed class RouteDecisionService
 
     private readonly AppConfig _config;
     private readonly HashSet<string> _probeDirectDomainSuffixes;
+    private readonly HashSet<string> _proxyDomainSuffixes;
+    private readonly HashSet<string> _directDomainSuffixes;
     private readonly Func<string, bool> _isInGfwList;
     private readonly Func<IPAddress, string?> _getCountryCode;
     private readonly Func<bool> _isGeoReady;
     private readonly Func<string, CancellationToken, Task<IPAddress?>> _resolveHost;
+    private readonly Func<string, bool> _isProxyFallbackActive;
     private readonly ConcurrentDictionary<string, HostResolutionCacheEntry> _hostResolutionCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, StickyRouteDecisionEntry> _stickyRouteDecisions = new(StringComparer.OrdinalIgnoreCase);
 
-    public RouteDecisionService(AppConfig config, GeoIpService? geoIpService, GfwListService? gfwListService)
+    public RouteDecisionService(
+        AppConfig config,
+        GeoIpService? geoIpService,
+        GfwListService? gfwListService,
+        Func<string, bool>? isProxyFallbackActive = null)
         : this(
             config,
             domain => gfwListService?.IsInGfwList(domain) == true,
             ip => geoIpService?.GetCountryCode(ip),
             () => geoIpService?.IsInitialized == true,
-            ResolveHostAsync)
+            ResolveHostAsync,
+            isProxyFallbackActive)
     {
     }
 
@@ -34,18 +42,18 @@ public sealed class RouteDecisionService
         Func<string, bool>? isInGfwList = null,
         Func<IPAddress, string?>? getCountryCode = null,
         Func<bool>? isGeoReady = null,
-        Func<string, CancellationToken, Task<IPAddress?>>? resolveHost = null)
+        Func<string, CancellationToken, Task<IPAddress?>>? resolveHost = null,
+        Func<string, bool>? isProxyFallbackActive = null)
     {
         _config = config;
-        _probeDirectDomainSuffixes = new HashSet<string>(
-            _config.Route.ProbeDirectDomains
-                .Select(static value => value.Trim().TrimEnd('.').ToLowerInvariant())
-                .Where(static value => value.Length > 0),
-            StringComparer.OrdinalIgnoreCase);
+        _probeDirectDomainSuffixes = BuildDomainSuffixSet(_config.Route.ProbeDirectDomains);
+        _proxyDomainSuffixes = BuildDomainSuffixSet(_config.Route.ProxyDomains);
+        _directDomainSuffixes = BuildDomainSuffixSet(_config.Route.DirectDomains);
         _isInGfwList = isInGfwList ?? (_ => false);
         _getCountryCode = getCountryCode ?? (_ => null);
         _isGeoReady = isGeoReady ?? (() => getCountryCode != null);
         _resolveHost = resolveHost ?? ResolveHostAsync;
+        _isProxyFallbackActive = isProxyFallbackActive ?? (_ => false);
     }
 
     public Task<RouteDecision> DecideForDomainAsync(string host, CancellationToken ct) =>
@@ -81,9 +89,24 @@ public sealed class RouteDecisionService
             return RouteDecision.Direct("ProbeDomain", domain, null);
         }
 
+        if (IsProxyDomain(domain))
+        {
+            return RouteDecision.Proxy("ProxyDomain", domain, null);
+        }
+
         if (_config.Route.EnableGfwList && _isInGfwList(domain))
         {
             return RouteDecision.Proxy("GFW", domain, null);
+        }
+
+        if (IsDirectDomain(domain))
+        {
+            return RouteDecision.Direct("DirectDomain", domain, null);
+        }
+
+        if (_isProxyFallbackActive(domain))
+        {
+            return RouteDecision.Proxy("DirectFailedFallback", domain, null);
         }
 
         if (TryGetStickyDecision(domain, out var sticky))
@@ -114,6 +137,11 @@ public sealed class RouteDecisionService
 
         if (domain != null)
         {
+            if (IsProxyDomain(domain))
+            {
+                return RouteDecision.Proxy("ProxyDomain", domain, destinationIp);
+            }
+
             if (_config.Route.EnableGfwList && _isInGfwList(domain))
             {
                 var gfwDecision = RouteDecision.Proxy("GFW", domain, destinationIp);
@@ -123,6 +151,16 @@ public sealed class RouteDecisionService
                 }
 
                 return gfwDecision;
+            }
+
+            if (IsDirectDomain(domain))
+            {
+                return RouteDecision.Direct("DirectDomain", domain, destinationIp);
+            }
+
+            if (_isProxyFallbackActive(domain))
+            {
+                return RouteDecision.Proxy("DirectFailedFallback", domain, destinationIp);
             }
         }
 
@@ -167,7 +205,7 @@ public sealed class RouteDecisionService
                     var resolvedDecision = resolvedShouldProxy
                         ? RouteDecision.Proxy($"Geo:{resolvedCountry}", domain, resolvedIp)
                         : RouteDecision.Direct($"Geo:{resolvedCountry}", domain, resolvedIp);
-                    if (canUseStickyDecision)
+                    if (ShouldCacheStickyDecision(canUseStickyDecision, resolvedDecision))
                     {
                         CacheStickyDecision(domain, resolvedDecision);
                     }
@@ -180,7 +218,7 @@ public sealed class RouteDecisionService
             var geoDecision = shouldProxy
                 ? RouteDecision.Proxy(country == null ? "GeoUnknown" : $"Geo:{country}", domain, geoIp)
                 : RouteDecision.Direct(country == null ? "GeoUnknown" : $"Geo:{country}", domain, geoIp);
-            if (canUseStickyDecision)
+            if (ShouldCacheStickyDecision(canUseStickyDecision, geoDecision))
             {
                 CacheStickyDecision(domain, geoDecision);
             }
@@ -189,7 +227,7 @@ public sealed class RouteDecisionService
         }
 
         var defaultDecision = RouteDecision.Proxy("Default", domain, destinationIp);
-        if (canUseStickyDecision)
+        if (ShouldCacheStickyDecision(canUseStickyDecision, defaultDecision))
         {
             CacheStickyDecision(domain, defaultDecision);
         }
@@ -198,9 +236,25 @@ public sealed class RouteDecisionService
     }
 
     private bool IsProbeDomain(string domain) =>
-        _probeDirectDomainSuffixes.Any(suffix =>
+        IsDomainInSuffixSet(domain, _probeDirectDomainSuffixes);
+
+    private bool IsProxyDomain(string domain) =>
+        IsDomainInSuffixSet(domain, _proxyDomainSuffixes);
+
+    private bool IsDirectDomain(string domain) =>
+        IsDomainInSuffixSet(domain, _directDomainSuffixes);
+
+    private static bool IsDomainInSuffixSet(string domain, IEnumerable<string> suffixes) =>
+        suffixes.Any(suffix =>
             domain.Equals(suffix, StringComparison.OrdinalIgnoreCase) ||
             domain.EndsWith('.' + suffix, StringComparison.OrdinalIgnoreCase));
+
+    private static HashSet<string> BuildDomainSuffixSet(IEnumerable<string> values) =>
+        new(
+            values
+                .Select(static value => value.Trim().TrimEnd('.').ToLowerInvariant())
+                .Where(static value => value.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
 
     private bool TryGetStickyDecision(string domain, out RouteDecision decision)
     {
@@ -235,6 +289,11 @@ public sealed class RouteDecisionService
             decision.EvaluatedIp,
             DateTime.UtcNow.Add(StickyDecisionTtl));
     }
+
+    private static bool ShouldCacheStickyDecision(bool canUseStickyDecision, RouteDecision decision) =>
+        canUseStickyDecision &&
+        !decision.Reason.Equals("GeoUnknown", StringComparison.OrdinalIgnoreCase) &&
+        !decision.Reason.Equals("Default", StringComparison.OrdinalIgnoreCase);
 
     private async Task<IPAddress?> ResolveHostWithCacheAsync(string domain, CancellationToken ct)
     {

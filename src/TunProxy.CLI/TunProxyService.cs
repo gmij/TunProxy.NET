@@ -47,6 +47,7 @@ public class TunProxyService : IProxyService
     private readonly PendingRelayStateCleaner _pendingRelayStateCleaner = new();
     private readonly TunRuntimeStateStore _runtimeStateStore = new();
     private readonly FakeIpPool? _fakeIpPool;
+    private readonly DomainFailureTracker _domainFailureTracker = new();
     private readonly UdpDirectRelay _udpDirectRelay = new();
     private readonly TunMtuResolver _tunMtuResolver = new();
     private string? _lastTcpConnectFailure;
@@ -57,7 +58,7 @@ public class TunProxyService : IProxyService
     private const int PacketQueueCapacity = 4096;
     private const int MaxInitialPayloadBufferBytes = 64 * 1024;
     private static readonly TimeSpan ClientWindowPollInterval = TimeSpan.FromMilliseconds(1);
-    private static readonly TimeSpan FakeIpResolveWaitTimeout = TimeSpan.FromMilliseconds(450);
+    private static readonly TimeSpan FakeIpResolveWaitTimeout = TimeSpan.FromMilliseconds(1500);
     private static readonly TimeSpan FakeIpResolvePollInterval = TimeSpan.FromMilliseconds(25);
     private static readonly TimeSpan PendingRelayStateIdleTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OutboundReadyWaitTimeout = TimeSpan.FromSeconds(30);
@@ -77,7 +78,11 @@ public class TunProxyService : IProxyService
             () => Interlocked.Decrement(ref _downloadingCount),
             () => _proxyReady.Task);
 
-        _routeDecision = new RouteDecisionService(config, _geoIpService, _gfwListService);
+        _routeDecision = new RouteDecisionService(
+            config,
+            _geoIpService,
+            _gfwListService,
+            isProxyFallbackActive: _domainFailureTracker.IsProxyFallbackActive);
         _routeService = RouteServiceFactory.Create(config.Tun);
         _directBypassRoutes = new DirectBypassRouteManager(_routeService);
         _directBypassRouteScheduler = new DirectBypassRouteScheduler(
@@ -331,6 +336,7 @@ public class TunProxyService : IProxyService
             _dnsStore?.CleanupExpired();
             _udpDirectRelay.CleanupExpired(UdpDirectRelay.DefaultIdleTimeout);
             _fakeIpPool?.CleanupExpired(TimeSpan.FromMinutes(30));
+            _domainFailureTracker.CleanupExpired();
             return Task.CompletedTask;
         }, ct);
     }
@@ -567,12 +573,14 @@ public class TunProxyService : IProxyService
                                 ? resolvedRealIp
                                 : null;
 
-                            // Avoid DecideForTunAsync (resolveHost:true) in FakeIP mode because it
-                            // calls Dns.GetHostAddressesAsync internally, which emits a UDP packet
-                            // back through the TUN device and risks a cross-worker stall.
+                            // Avoid resolver-backed decisions in FakeIP mode when the real address
+                            // is still unavailable. System DNS can return the same 198.18/16 fake
+                            // address and poison the route as GeoUnknown before DoH catches up.
                             finalDecision = effectiveDestIp != null
                                 ? await _routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct)
-                                : await _routeDecision.DecideForDomainAsync(domainHint ?? string.Empty, ct);
+                                : domainHint != null
+                                    ? _routeDecision.TryDecideWithoutIp(domainHint) ?? RouteDecision.Proxy("Default", domainHint, null)
+                                    : RouteDecision.Proxy("Default", null, null);
                         }
                     }
                     else
@@ -826,6 +834,10 @@ public class TunProxyService : IProxyService
                 _ipCache?.ClearProxyBlocked(destIP);
                 _lastTcpConnectFailure = null;
                 _lastTcpConnectFailureUtc = null;
+                if (routeLabel == "DIRECT")
+                {
+                    _domainFailureTracker.RecordDirectSuccess(dnsCacheHost ?? connectHost);
+                }
 
                 if (!_relayStates.ContainsKey(connKey))
                 {
@@ -1001,8 +1013,40 @@ public class TunProxyService : IProxyService
             _ipCache!.RecordConnectFailed(destIP);
         }
 
+        if (routeLabel == "DIRECT")
+        {
+            RecordDirectDomainFailure(dnsCacheHost ?? connectHost, failure);
+        }
+
         _dnsStore?.RemoveCachedAddress(dnsCacheHost, destIP);
         HandleConnectionFail(connKey, device, packet);
+    }
+
+    private void RecordDirectDomainFailure(string? domain, TunConnectionFailure failure)
+    {
+        var result = _domainFailureTracker.RecordDirectFailure(domain, failure.Reason);
+        if (result.Domain == null)
+        {
+            return;
+        }
+
+        if (result.ActivatedProxyFallback)
+        {
+            Log.Warning(
+                "[ROUTE] {Domain} direct failures reached {Count}/{Threshold}; proxy fallback active until {FallbackUntilUtc:o}",
+                result.Domain,
+                result.DirectFailureCount,
+                result.DirectFailureThreshold,
+                result.ProxyFallbackUntilUtc);
+            return;
+        }
+
+        Log.Information(
+            "[ROUTE] {Domain} direct failure {Count}/{Threshold} ({Reason})",
+            result.Domain,
+            result.DirectFailureCount,
+            result.DirectFailureThreshold,
+            failure.Reason);
     }
 
     private void HandleConnectionFail(string connKey, ITunDevice device, IPPacket packet)
@@ -1326,7 +1370,7 @@ public class TunProxyService : IProxyService
 
     private async Task<IPAddress?> WaitForResolvedAddressAsync(string hostname, CancellationToken ct)
     {
-        var resolved = _dnsStore?.GetMostRecentAddressForHostname(hostname);
+        var resolved = _dnsStore?.GetMostRecentAddressForHostname(hostname, IsUsableRealAddress);
         if (resolved != null)
         {
             return resolved;
@@ -1337,7 +1381,7 @@ public class TunProxyService : IProxyService
         {
             ct.ThrowIfCancellationRequested();
             await Task.Delay(FakeIpResolvePollInterval, ct);
-            resolved = _dnsStore?.GetMostRecentAddressForHostname(hostname);
+            resolved = _dnsStore?.GetMostRecentAddressForHostname(hostname, IsUsableRealAddress);
             if (resolved != null)
             {
                 return resolved;
@@ -1346,6 +1390,9 @@ public class TunProxyService : IProxyService
 
         return null;
     }
+
+    private bool IsUsableRealAddress(IPAddress address) =>
+        _fakeIpPool == null || !FakeIpPool.IsFakeIp(address);
 
     private void SelectOutboundBindAddress()
     {

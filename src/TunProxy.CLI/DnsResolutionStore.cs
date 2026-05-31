@@ -346,7 +346,9 @@ public class DnsResolutionStore
             .FirstOrDefault();
     }
 
-    public IPAddress? GetMostRecentAddressForHostname(string hostname)
+    public IPAddress? GetMostRecentAddressForHostname(
+        string hostname,
+        Func<IPAddress, bool>? addressPredicate = null)
     {
         var normalized = NormalizeDnsName(hostname);
         if (normalized == null)
@@ -355,23 +357,28 @@ public class DnsResolutionStore
         }
 
         var now = DateTime.UtcNow;
-        var observedMatch = _observedHostnames
-            .Where(static entry => !string.IsNullOrWhiteSpace(entry.Key))
-            .Where(entry =>
-                entry.Value.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) &&
-                IsObservedHostnameUsable(entry.Value, now) &&
-                IPAddress.TryParse(entry.Key, out var address) &&
-                address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-            .Select(entry => new
-            {
-                Address = IPAddress.Parse(entry.Key),
-                LastSeenUtc = entry.Value.LastSeenUtc
-            })
-            .OrderByDescending(static entry => entry.LastSeenUtc)
-            .FirstOrDefault();
-        if (observedMatch != null)
+        IPAddress? bestObservedAddress = null;
+        var bestObservedLastSeenUtc = DateTime.MinValue;
+        foreach (var (ip, entry) in _observedHostnames)
         {
-            return observedMatch.Address;
+            if (string.IsNullOrWhiteSpace(ip) ||
+                !entry.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
+                !IsObservedHostnameUsable(entry, now) ||
+                !IPAddress.TryParse(ip, out var address) ||
+                address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork ||
+                addressPredicate?.Invoke(address) == false ||
+                entry.LastSeenUtc <= bestObservedLastSeenUtc)
+            {
+                continue;
+            }
+
+            bestObservedAddress = address;
+            bestObservedLastSeenUtc = entry.LastSeenUtc;
+        }
+
+        if (bestObservedAddress != null)
+        {
+            return bestObservedAddress;
         }
 
         if (!TryCreateDnsCacheKey(normalized, 1, 1, out var key) ||
@@ -384,6 +391,7 @@ public class DnsResolutionStore
             .Where(answer => IsDnsCacheAnswerUsable(answer, now) && answer.Data.Length == 4)
             .OrderByDescending(static answer => answer.LastActiveUtc)
             .Select(static answer => new IPAddress(answer.Data))
+            .Where(address => addressPredicate?.Invoke(address) != false)
             .FirstOrDefault();
     }
 

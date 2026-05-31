@@ -31,14 +31,13 @@ public class TunProxyRouteDecisionTests
     }
 
     [Fact]
-    public async Task ManualDomainLists_AreIgnoredBySmartRouting()
+    public async Task ManualProxyDomain_WinsInSmartRouting()
     {
         var config = new AppConfig
         {
             Route =
             {
                 ProxyDomains = ["example.com"],
-                DirectDomains = ["example.com"],
                 EnableGeo = true
             }
         };
@@ -49,8 +48,30 @@ public class TunProxyRouteDecisionTests
 
         var decision = await service.DecideForDomainAsync("www.example.com", CancellationToken.None);
 
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("ProxyDomain", decision.Reason);
+    }
+
+    [Fact]
+    public async Task ManualDirectDomain_WinsBeforeGeoInSmartRouting()
+    {
+        var config = new AppConfig
+        {
+            Route =
+            {
+                DirectDomains = ["example.com"],
+                EnableGeo = true
+            }
+        };
+        var service = new RouteDecisionService(
+            config,
+            getCountryCode: _ => "US",
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("203.0.113.1")));
+
+        var decision = await service.DecideForDomainAsync("www.example.com", CancellationToken.None);
+
         Assert.False(decision.ShouldProxy);
-        Assert.Equal("Geo:CN", decision.Reason);
+        Assert.Equal("DirectDomain", decision.Reason);
     }
 
     [Fact]
@@ -59,6 +80,17 @@ public class TunProxyRouteDecisionTests
         var service = new RouteDecisionService(new AppConfig { Route = { EnableGeo = true } });
 
         var decision = await service.DecideForTunAsync(null, IPAddress.Parse("192.168.66.1"), CancellationToken.None);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("PrivateIP", decision.Reason);
+    }
+
+    [Fact]
+    public async Task ThisNetworkIp_UsesDirectRoute()
+    {
+        var service = new RouteDecisionService(new AppConfig { Route = { EnableGeo = true } });
+
+        var decision = await service.DecideForTunAsync(null, IPAddress.Parse("0.0.0.1"), CancellationToken.None);
 
         Assert.False(decision.ShouldProxy);
         Assert.Equal("PrivateIP", decision.Reason);
@@ -319,6 +351,59 @@ public class TunProxyRouteDecisionTests
 
         Assert.False(decision.ShouldProxy);
         Assert.Equal("Geo:CN", decision.Reason);
+    }
+
+    [Fact]
+    public async Task FakeIp_GeoUnknownDecision_IsNotCachedAsSticky()
+    {
+        var config = new AppConfig { Route = { EnableGeo = true } };
+        var service = new RouteDecisionService(
+            config,
+            getCountryCode: _ => null,
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("198.18.0.42")));
+
+        var decision = await service.DecideForDomainAsync("cdn.example.cn", CancellationToken.None);
+
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("GeoUnknown", decision.Reason);
+        Assert.Null(service.TryDecideWithoutIp("cdn.example.cn"));
+    }
+
+    [Fact]
+    public async Task ActiveDirectFailureFallback_ProxiesBeforeGeo()
+    {
+        var config = new AppConfig { Route = { EnableGeo = true } };
+        var service = new RouteDecisionService(
+            config,
+            getCountryCode: _ => "CN",
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("203.0.113.1")),
+            isProxyFallbackActive: domain => domain == "flaky.example");
+
+        var decision = await service.DecideForDomainAsync("flaky.example", CancellationToken.None);
+
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("DirectFailedFallback", decision.Reason);
+    }
+
+    [Fact]
+    public void DirectDomain_OverridesActiveDirectFailureFallback()
+    {
+        var config = new AppConfig
+        {
+            Route =
+            {
+                DirectDomains = ["flaky.example"]
+            }
+        };
+        var service = new RouteDecisionService(
+            config,
+            isProxyFallbackActive: domain => domain == "flaky.example");
+
+        var decision = service.TryDecideWithoutIp("flaky.example");
+
+        Assert.NotNull(decision);
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("DirectDomain", decision.Reason);
     }
 
     [Fact]

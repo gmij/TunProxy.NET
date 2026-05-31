@@ -16,8 +16,19 @@ public class DnsProxyService
     private const string FakeIpDnsSource = "DNS-FakeIP";
     private const string FakeIpInitialRoute = "UNKNOWN";
     private const string FakeIpLastMethod = "fakeip";
+    private const string DefaultDomesticDns = "119.29.29.29";
     private static readonly TimeSpan HttpConnectRejectWarningWindow = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan DohSuccessInfoWindow = TimeSpan.FromMinutes(2);
+    private static readonly HashSet<string> DomesticDnsServers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "223.5.5.5",
+        "223.6.6.6",
+        "119.29.29.29",
+        "182.254.116.116",
+        "114.114.114.114",
+        "114.114.115.115",
+        "180.76.76.76"
+    };
 
     private readonly string _proxyHost;
     private readonly int _proxyPort;
@@ -120,6 +131,12 @@ public class DnsProxyService
             // FakeIP mode: intercept A-record queries and return a synthetic fake address.
             if (_fakeIpPool != null && dnsPacket.Questions[0].Type == 1 /* A record */)
             {
+                if (ShouldBypassFakeIpForDomain(domain))
+                {
+                    await HandleFakeIpBypassQueryAsync(device, requestPacket, dnsPacket, domain, traceId, ct);
+                    return;
+                }
+
                 await HandleFakeIpQueryAsync(device, requestPacket, dnsPacket, domain, ct);
                 return;
             }
@@ -135,9 +152,10 @@ public class DnsProxyService
                 return;
             }
 
-            var dnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
+            var requestedDnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
                 ? _upstreamDns
                 : requestPacket.Header.DestinationAddress.ToString();
+            var dnsServer = SelectRoutingDnsServer(domain, requestedDnsServer);
 
             var dnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(
                 requestPacket.Payload,
@@ -199,7 +217,7 @@ public class DnsProxyService
         string traceId,
         CancellationToken ct)
     {
-        var key = domain.Trim().ToLowerInvariant();
+        var key = $"{domain.Trim().ToLowerInvariant()}|{dnsServer.Trim()}";
         var task = _dnsResolveInflight.GetOrAdd(
             key,
             _ => ResolveDnsThroughUpstreamAsync(dnsQueryPayload, domain, dnsServer, traceId, ct));
@@ -223,14 +241,14 @@ public class DnsProxyService
     {
         if (ShouldBypassTcpProxyDns())
         {
-            return await QueryDnsOverHttpsAsync(dnsQueryPayload, domain, traceId, ct);
+            return await QueryDnsOverHttpsAsync(dnsQueryPayload, domain, traceId, ct, ResolveDohEndpoint(dnsServer));
         }
 
         var dnsResponse = await QueryDnsViaProxyAsync(dnsQueryPayload, domain, dnsServer, traceId, ct);
         if (dnsResponse == null || dnsResponse.Length == 0)
         {
             Log.Warning("[DNS:{Trace}] TCP DNS failed for {Domain}; trying DoH fallback", traceId, domain);
-            dnsResponse = await QueryDnsOverHttpsAsync(dnsQueryPayload, domain, traceId, ct);
+            dnsResponse = await QueryDnsOverHttpsAsync(dnsQueryPayload, domain, traceId, ct, ResolveDohEndpoint(dnsServer));
         }
 
         return dnsResponse;
@@ -252,6 +270,45 @@ public class DnsProxyService
     ///         decisions (GeoIP, GFW) can be updated with the actual remote IP.</item>
     /// </list>
     /// </summary>
+    private async Task HandleFakeIpBypassQueryAsync(
+        ITunDevice device,
+        IPPacket requestPacket,
+        DnsPacket query,
+        string domain,
+        string traceId,
+        CancellationToken ct)
+    {
+        var requestedDnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
+            ? _upstreamDns
+            : requestPacket.Header.DestinationAddress.ToString();
+        var dnsServer = SelectRoutingDnsServer(domain, requestedDnsServer);
+        var dnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(
+            requestPacket.Payload,
+            domain,
+            dnsServer,
+            traceId,
+            ct);
+
+        if (dnsResponse == null || dnsResponse.Length == 0)
+        {
+            Log.Warning("[DNS:{Trace}] {Domain} FakeIP bypass query failed", traceId, domain);
+            return;
+        }
+
+        var dnsRespPacket = DnsPacket.Parse(dnsResponse);
+        if (dnsRespPacket != null)
+        {
+            _resolutionStore.StoreDnsResponseInCache(dnsRespPacket);
+            await RecordResolvedAddressesAsync(dnsRespPacket, domain, traceId, ct);
+        }
+
+        _lastMethod = "fakeip-bypass";
+        _lastSuccessUtc = DateTime.UtcNow;
+        _lastError = null;
+        Log.Debug("[DNS:{Trace}] {Domain} bypassed FakeIP", traceId, domain);
+        TunWriter.WriteUdpResponse(device, requestPacket, dnsResponse);
+    }
+
     private async Task HandleFakeIpQueryAsync(
         ITunDevice device,
         IPPacket requestPacket,
@@ -296,7 +353,8 @@ public class DnsProxyService
                 try
                 {
                     var queryPayload = BuildAQueryPayload(domain);
-                    var realDnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(queryPayload, domain, _upstreamDns, traceId, ct);
+                    var dnsServer = SelectRoutingDnsServer(domain, _upstreamDns);
+                    var realDnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(queryPayload, domain, dnsServer, traceId, ct);
                     if (realDnsResponse != null && realDnsResponse.Length > 0)
                     {
                         var realPacket = DnsPacket.Parse(realDnsResponse);
@@ -573,15 +631,21 @@ public class DnsProxyService
         }
     }
 
-    internal async Task<byte[]?> QueryDnsOverHttpsAsync(byte[] dnsQueryPayload, string domain, string traceId, CancellationToken ct)
+    internal async Task<byte[]?> QueryDnsOverHttpsAsync(
+        byte[] dnsQueryPayload,
+        string domain,
+        string traceId,
+        CancellationToken ct,
+        string? dohEndpoint = null)
     {
         var stopwatch = Stopwatch.StartNew();
         Interlocked.Increment(ref _dohQueries);
         _lastMethod = "doh";
+        var endpoint = dohEndpoint ?? _dohEndpoint;
         try
         {
             using var client = ProxyHttpClientFactory.Create(_proxyConfig, TimeSpan.FromSeconds(15));
-            using var request = new HttpRequestMessage(HttpMethod.Post, _dohEndpoint)
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
             {
                 Content = new ByteArrayContent(dnsQueryPayload)
             };
@@ -615,12 +679,62 @@ public class DnsProxyService
         }
     }
 
+    internal string SelectRoutingDnsServer(string domain, string requestedDnsServer) =>
+        SelectRoutingDnsServer(
+            _upstreamDns,
+            requestedDnsServer,
+            _routeDecision?.TryDecideWithoutIp(domain));
+
+    internal static string SelectRoutingDnsServer(
+        string upstreamDns,
+        string requestedDnsServer,
+        RouteDecision? domainDecision)
+    {
+        if (ShouldUseProxySideResolver(domainDecision))
+        {
+            return upstreamDns;
+        }
+
+        if (IsDomesticDnsServer(requestedDnsServer))
+        {
+            return requestedDnsServer;
+        }
+
+        if (IsDomesticDnsServer(upstreamDns))
+        {
+            return upstreamDns;
+        }
+
+        return DefaultDomesticDns;
+    }
+
+    private static bool ShouldUseProxySideResolver(RouteDecision? domainDecision)
+    {
+        if (domainDecision is not { ShouldProxy: true })
+        {
+            return false;
+        }
+
+        return domainDecision.Reason.Equals("GFW", StringComparison.OrdinalIgnoreCase) ||
+               domainDecision.Reason.Equals("Global", StringComparison.OrdinalIgnoreCase) ||
+               domainDecision.Reason.Equals("ProxyDomain", StringComparison.OrdinalIgnoreCase) ||
+               domainDecision.Reason.Equals("DirectFailedFallback", StringComparison.OrdinalIgnoreCase) ||
+               domainDecision.Reason.Contains(":GFW", StringComparison.OrdinalIgnoreCase) ||
+               domainDecision.Reason.Contains(":Global", StringComparison.OrdinalIgnoreCase) ||
+               domainDecision.Reason.Contains(":ProxyDomain", StringComparison.OrdinalIgnoreCase) ||
+               domainDecision.Reason.Contains(":DirectFailedFallback", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDomesticDnsServer(string dnsServer) =>
+        DomesticDnsServers.Contains(dnsServer.Trim());
+
     private static string ResolveDohEndpoint(string upstreamDns)
     {
         return upstreamDns switch
         {
             "223.5.5.5" or "223.6.6.6" => "https://dns.alidns.com/dns-query",
             "119.29.29.29" or "182.254.116.116" => "https://doh.pub/dns-query",
+            "114.114.114.114" or "114.114.115.115" or "180.76.76.76" => "https://dns.alidns.com/dns-query",
             "1.1.1.1" or "1.0.0.1" => "https://cloudflare-dns.com/dns-query",
             _ => "https://dns.google/dns-query"
         };
@@ -650,6 +764,19 @@ public class DnsProxyService
         return _probeDirectDomainSuffixes.Any(suffix =>
             normalized.Equals(suffix, StringComparison.OrdinalIgnoreCase) ||
             normalized.EndsWith('.' + suffix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    internal static bool ShouldBypassFakeIpForDomain(string domain)
+    {
+        var normalized = domain.Trim().TrimEnd('.');
+        if (normalized.Length == 0)
+        {
+            return false;
+        }
+
+        return normalized
+            .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(static label => label.Equals("localhost", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<bool> HandleProbeDomainQueryAsync(

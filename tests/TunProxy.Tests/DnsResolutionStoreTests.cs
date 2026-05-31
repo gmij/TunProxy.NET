@@ -125,6 +125,27 @@ public class DnsResolutionStoreTests
         Assert.Equal(IPAddress.Parse("5.6.7.8"), address);
     }
 
+    [Fact]
+    public void GetMostRecentAddressForHostname_AppliesAddressPredicateToObservedAndDnsCache()
+    {
+        var store = new DnsResolutionStore();
+        var now = DateTime.UtcNow;
+        var fakeIp = IPAddress.Parse("198.18.0.42");
+        var realIp = IPAddress.Parse("203.0.113.42");
+        var query = BuildDnsQuery("example.com", 0x1111);
+        var response = DnsPacket.Parse(BuildDnsResponse(query, 600, realIp.GetAddressBytes()))!;
+
+        store.StoreDnsResponseInCache(response, now.AddSeconds(-5));
+        store.RecordObservedHostname(realIp.ToString(), "example.com", nowUtc: now.AddSeconds(-4));
+        store.RecordObservedHostname(fakeIp.ToString(), "example.com", nowUtc: now);
+
+        var address = store.GetMostRecentAddressForHostname(
+            "example.com",
+            candidate => !FakeIpPool.IsFakeIp(candidate));
+
+        Assert.Equal(realIp, address);
+    }
+
     private static byte[] BuildDnsQuery(string domain, ushort transactionId)
     {
         return new DnsPacket

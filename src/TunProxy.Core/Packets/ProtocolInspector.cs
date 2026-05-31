@@ -107,13 +107,14 @@ public static class ProtocolInspector
     }
 
     /// <summary>
-    /// Returns true for RFC1918, loopback, and link-local IPv4 addresses.
+    /// Returns true for RFC1918, loopback, link-local, and this-network IPv4 addresses.
     /// </summary>
     public static bool IsPrivateIp(System.Net.IPAddress ip)
     {
         if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
         var b = ip.GetAddressBytes();
-        return b[0] == 127                               // 127.0.0.0/8 loopback
+        return b[0] == 0                                 // 0.0.0.0/8 this network
+            || b[0] == 127                               // 127.0.0.0/8 loopback
             || b[0] == 10                                // 10.0.0.0/8
             || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) // 172.16.0.0/12
             || (b[0] == 192 && b[1] == 168)              // 192.168.0.0/16

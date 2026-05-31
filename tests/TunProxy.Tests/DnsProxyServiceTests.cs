@@ -113,6 +113,101 @@ public class DnsProxyServiceTests
         Assert.Equal(0, store.CacheEntryCount);
     }
 
+    [Theory]
+    [InlineData("localhost")]
+    [InlineData("localhost.ptlogin2.qq.com")]
+    [InlineData("_4301._https.localhost.ptlogin2.qq.com")]
+    public void ShouldBypassFakeIpForDomain_BypassesLocalhostLabel(string domain)
+    {
+        Assert.True(DnsProxyService.ShouldBypassFakeIpForDomain(domain));
+    }
+
+    [Theory]
+    [InlineData("local.host.example")]
+    [InlineData("notlocalhost.example")]
+    [InlineData("mail.qq.com")]
+    public void ShouldBypassFakeIpForDomain_DoesNotBypassOtherDomains(string domain)
+    {
+        Assert.False(DnsProxyService.ShouldBypassFakeIpForDomain(domain));
+    }
+
+    [Fact]
+    public void SelectRoutingDnsServer_NonConclusiveDomainWithForeignDns_UsesDomesticResolver()
+    {
+        var dnsServer = DnsProxyService.SelectRoutingDnsServer(
+            "8.8.8.8",
+            "8.8.8.8",
+            domainDecision: null);
+
+        Assert.Equal("119.29.29.29", dnsServer);
+    }
+
+    [Fact]
+    public void SelectRoutingDnsServer_GfwDomain_UsesConfiguredUpstreamResolver()
+    {
+        var dnsServer = DnsProxyService.SelectRoutingDnsServer(
+            "8.8.8.8",
+            "119.29.29.29",
+            RouteDecision.Proxy("GFW", "blocked.example", null));
+
+        Assert.Equal("8.8.8.8", dnsServer);
+    }
+
+    [Fact]
+    public void SelectRoutingDnsServer_GlobalMode_UsesConfiguredUpstreamResolver()
+    {
+        var dnsServer = DnsProxyService.SelectRoutingDnsServer(
+            "1.1.1.1",
+            "119.29.29.29",
+            RouteDecision.Proxy("Global", "example.com", null));
+
+        Assert.Equal("1.1.1.1", dnsServer);
+    }
+
+    [Fact]
+    public void SelectRoutingDnsServer_DirectFailedFallback_UsesConfiguredUpstreamResolver()
+    {
+        var dnsServer = DnsProxyService.SelectRoutingDnsServer(
+            "8.8.8.8",
+            "119.29.29.29",
+            RouteDecision.Proxy("DirectFailedFallback", "flaky.example", null));
+
+        Assert.Equal("8.8.8.8", dnsServer);
+    }
+
+    [Fact]
+    public void SelectRoutingDnsServer_ManualProxyDomain_UsesConfiguredUpstreamResolver()
+    {
+        var dnsServer = DnsProxyService.SelectRoutingDnsServer(
+            "1.1.1.1",
+            "223.5.5.5",
+            RouteDecision.Proxy("ProxyDomain", "proxy.example", null));
+
+        Assert.Equal("1.1.1.1", dnsServer);
+    }
+
+    [Fact]
+    public void SelectRoutingDnsServer_DirectDomain_PreservesDomesticRequestedResolver()
+    {
+        var dnsServer = DnsProxyService.SelectRoutingDnsServer(
+            "8.8.8.8",
+            "223.5.5.5",
+            RouteDecision.Direct("ProbeDomain", "probe.example", null));
+
+        Assert.Equal("223.5.5.5", dnsServer);
+    }
+
+    [Fact]
+    public void SelectRoutingDnsServer_NonConclusiveDomain_PreservesDomesticUpstreamResolver()
+    {
+        var dnsServer = DnsProxyService.SelectRoutingDnsServer(
+            "223.6.6.6",
+            "8.8.8.8",
+            domainDecision: null);
+
+        Assert.Equal("223.6.6.6", dnsServer);
+    }
+
     [Fact]
     public async Task QueryDnsViaProxyAsync_HttpProxyWithAuth_SendsAuthorizationHeader()
     {

@@ -121,10 +121,10 @@
 
       var metricCards = Vue.computed(function () {
         return [
-          { label: C.t('Page.Status.BytesSent'), value: C.fmtBytes(metrics.value.totalBytesSent), sub: C.t('Page.Status.BytesSent'), icon: '↑' },
-          { label: C.t('Page.Status.BytesReceived'), value: C.fmtBytes(metrics.value.totalBytesReceived), sub: C.t('Page.Status.BytesReceived'), icon: '↓' },
-          { label: C.t('Page.Status.TotalConnections'), value: metrics.value.totalConnections || 0, sub: C.t('Page.Status.TotalConnections'), icon: '↔' },
-          { label: C.t('Page.Status.FailedConnections'), value: metrics.value.failedConnections || 0, sub: (metrics.value.failedConnections || 0) > 0 ? C.t('Page.Status.ConnectIssue.Title') : C.t('Shared.None'), icon: '!' }
+          { label: C.t('Page.Status.BytesSent'), value: C.fmtBytes(metrics.value.totalBytesSent), sub: null, icon: '↑' },
+          { label: C.t('Page.Status.BytesReceived'), value: C.fmtBytes(metrics.value.totalBytesReceived), sub: null, icon: '↓' },
+          { label: C.t('Page.Status.TotalConnections'), value: metrics.value.totalConnections || 0, sub: null, icon: '↔' },
+          { label: C.t('Page.Status.FailedConnections'), value: metrics.value.failedConnections || 0, sub: (metrics.value.failedConnections || 0) > 0 ? C.t('Page.Status.ConnectIssue.Title') : null, icon: '!' }
         ];
       });
 
@@ -184,6 +184,35 @@
           viewBox: '0 0 ' + width + ' ' + height
         };
       });
+
+      var hoverInfo = Vue.ref(null);
+      var chartRef = Vue.ref(null);
+
+      function handleChartMove(event) {
+        var samples = trafficSamples.value;
+        if (samples.length < 2 || !chartRef.value) { hoverInfo.value = null; return; }
+        var rect = chartRef.value.getBoundingClientRect();
+        var relX = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+        var padding = 12;
+        var step = (1000 - padding * 2) / (samples.length - 1);
+        var index = Math.max(0, Math.min(samples.length - 1, Math.round((relX * 1000 - padding) / step)));
+        var sample = samples[index];
+        var secondsAgo = (samples.length - 1 - index) * sampleIntervalSeconds;
+        var d = new Date(Date.now() - secondsAgo * 1000);
+        var timeStr = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+        hoverInfo.value = {
+          px: event.clientX - rect.left,
+          relX: relX,
+          svgX: (padding + index * step).toFixed(2),
+          timeStr: timeStr,
+          sent: C.fmtBytes(sample.sent),
+          recv: C.fmtBytes(sample.recv)
+        };
+      }
+
+      function handleChartLeave() {
+        hoverInfo.value = null;
+      }
 
       function recordTrafficSample(payload) {
         var current = {
@@ -267,6 +296,10 @@
         serviceMessage: serviceMessage,
         status: status,
         trafficSamples: trafficSamples,
+        hoverInfo: hoverInfo,
+        chartRef: chartRef,
+        handleChartMove: handleChartMove,
+        handleChartLeave: handleChartLeave,
         C: C
       };
     },
@@ -334,7 +367,7 @@
                       <div class="tp-card-line">
                         <div class="tp-card-meta">
                           <div class="tp-metric-label"><span>{{ card.label }}</span><span class="tp-metric-icon">{{ card.icon }}</span></div>
-                          <div class="tp-muted">{{ card.sub }}</div>
+                          <div v-if="card.sub" class="tp-muted">{{ card.sub }}</div>
                         </div>
                         <div class="tp-card-value tp-metric-value">{{ card.value }}</div>
                       </div>
@@ -342,13 +375,19 @@
                   </div>
                   <div class="tp-chart">
                     <div class="tp-section-head" style="margin-bottom: 6px"><div class="tp-section-title">最近 30 分钟流量曲线</div><div class="tp-muted">每 {{ sampleIntervalSeconds }} 秒采样，蓝色发送，青色接收 · {{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</div></div>
-                    <div class="tp-line-chart">
+                    <div class="tp-line-chart" ref="chartRef" style="position:relative;cursor:crosshair" @mousemove="handleChartMove" @mouseleave="handleChartLeave">
                       <svg preserveAspectRatio="none" :viewBox="trafficLineChart.viewBox" role="img" aria-label="Traffic line chart">
                         <path class="tp-line-grid" d="M12 208 L988 208"></path>
                         <path class="tp-line-grid" d="M12 12 L12 208"></path>
                         <path class="tp-line-sent" :d="trafficLineChart.sentPath"></path>
                         <path class="tp-line-recv" :d="trafficLineChart.recvPath"></path>
+                        <line v-if="hoverInfo" :x1="hoverInfo.svgX" y1="12" :x2="hoverInfo.svgX" y2="208" class="tp-line-crosshair"></line>
                       </svg>
+                      <div v-if="hoverInfo" class="tp-chart-tooltip" :style="{ left: (hoverInfo.relX > 0.75 ? hoverInfo.px - 10 : hoverInfo.px + 10) + 'px', transform: hoverInfo.relX > 0.75 ? 'translateX(-100%)' : 'none' }">
+                        <div class="tp-chart-tooltip-time">{{ hoverInfo.timeStr }}</div>
+                        <div><span style="color:#60a5fa">↑</span> {{ hoverInfo.sent }}</div>
+                        <div><span style="color:#2dd4bf">↓</span> {{ hoverInfo.recv }}</div>
+                      </div>
                     </div>
                   </div>
                 </section>

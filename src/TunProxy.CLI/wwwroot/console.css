@@ -186,7 +186,7 @@ body {
 
 .tp-section-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
@@ -485,7 +485,6 @@ body {
 }
 
 .tp-metric-card {
-  min-height: 126px;
 }
 
 .tp-metric-card.ant-card,
@@ -533,6 +532,10 @@ body {
   font-weight: 780;
 }
 
+.tp-count-value {
+  text-align: right;
+}
+
 .tp-chart {
   margin-top: 16px;
   border: 1px solid #e5eaf1;
@@ -571,6 +574,34 @@ body {
 
 .tp-line-sent {
   stroke: #2563eb;
+}
+
+.tp-line-crosshair {
+  stroke: #94a3b8;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
+.tp-chart-tooltip {
+  position: absolute;
+  top: 6px;
+  background: rgba(15, 23, 42, .88);
+  color: #f1f5f9;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.65;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 10;
+  min-width: 100px;
+}
+
+.tp-chart-tooltip-time {
+  color: #94a3b8;
+  font-size: 11px;
+  margin-bottom: 2px;
 }
 
 .tp-line-recv {
@@ -646,6 +677,12 @@ body {
   place-items: center;
   font-weight: 750;
   font-size: 13px;
+}
+
+.tp-step-title + .tp-muted,
+.tp-section-title + .tp-muted,
+.tp-title-inline + .tp-muted {
+  margin-top: 6px;
 }
 
 .tp-notice {
@@ -967,8 +1004,10 @@ body {
 }
 
 .tp-log-count-card {
-  padding: 14px;
-  display: grid;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 

@@ -33,6 +33,8 @@ gfwlist.txt
 dist/**
 
 .codexbuild/
-.claude/
+.claude/*
+!.claude/agents/
+!.claude/agents/*.md
 .codextest/
 .codextmp/

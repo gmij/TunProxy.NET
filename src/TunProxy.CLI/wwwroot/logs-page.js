@@ -173,7 +173,7 @@
             <div class="tp-log-body">
               <div ref="terminalRef" class="tp-terminal tp-scrollbar">
                 <div class="tp-terminal-head"><span>tunproxy-.log</span><span>max 1000 lines · filter {{ filterText || t('Page.Logs.FilterAll') }}</span></div>
-                <div v-if="visibleLines.length === 0" class="tp-empty-state" style="background: transparent; border-color: #253044">
+                <div v-if="visibleLines.length === 0" class="tp-empty-state">
                   <div class="tp-section-title">{{ C.htmlText(t('Page.Logs.EmptyHtml')) }}</div>
                 </div>
                 <p v-for="line in visibleLines" :key="line.id" class="tp-log-line">

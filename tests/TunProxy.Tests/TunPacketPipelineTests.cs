@@ -6,7 +6,7 @@ namespace TunProxy.Tests;
 public class TunPacketPipelineTests
 {
     [Fact]
-    public void Start_UsesSingleWorkerForTcpStateOrdering()
+    public void Start_UsesPartitionedQueuesForConcurrency()
     {
         using var cts = new CancellationTokenSource();
         var pipeline = TunPacketPipeline.Start(
@@ -18,6 +18,9 @@ public class TunPacketPipelineTests
 
         pipeline.Complete();
 
-        Assert.Equal(1, pipeline.WorkerCount);
+        // Each TCP connection is hashed to a fixed partition (which has 1 internal worker)
+        // so per-connection packet order is preserved while connections run in parallel.
+        var expected = Math.Clamp(Environment.ProcessorCount, 2, 8);
+        Assert.Equal(expected, pipeline.WorkerCount);
     }
 }

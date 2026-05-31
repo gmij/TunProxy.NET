@@ -11,15 +11,46 @@
       var lastUpdate = Vue.ref('-');
       var timer = null;
 
+      // Group raw records by hostname; each group becomes one display row.
+      var groupedRecords = Vue.computed(function () {
+        var map = {};
+        records.value.forEach(function (r) {
+          var key = (r.hostname || r.ipAddress || '').toLowerCase();
+          if (!map[key]) {
+            map[key] = {
+              hostname: r.hostname,
+              route: r.route,
+              reason: r.reason,
+              seenCount: 0,
+              lastActiveUtc: r.lastActiveUtc,
+              isDnsCached: false,
+              isPrivateIp: r.isPrivateIp,
+              _records: []
+            };
+          }
+          var g = map[key];
+          g._records.push(r);
+          g.seenCount += (r.seenCount || 0);
+          if (r.isDnsCached) g.isDnsCached = true;
+          if (!g.lastActiveUtc || new Date(r.lastActiveUtc) > new Date(g.lastActiveUtc)) {
+            g.lastActiveUtc = r.lastActiveUtc;
+            g.route = r.route;
+            g.reason = r.reason;
+          }
+        });
+        return Object.values(map);
+      });
+
       var filteredRecords = Vue.computed(function () {
         var text = query.value.toLowerCase();
-        var entries = records.value.slice();
+        var entries = groupedRecords.value.slice();
         if (text) {
-          entries = entries.filter(function (record) {
-            return String(record.ipAddress || '').toLowerCase().indexOf(text) >= 0 ||
-              String(record.hostname || '').toLowerCase().indexOf(text) >= 0 ||
-              String(record.route || '').toLowerCase().indexOf(text) >= 0 ||
-              String(record.reason || '').toLowerCase().indexOf(text) >= 0;
+          entries = entries.filter(function (g) {
+            var ips = g._records.map(function (r) { return r.ipAddress || ''; }).join(' ');
+            return ips.toLowerCase().indexOf(text) >= 0 ||
+              String(g.hostname || '').toLowerCase().indexOf(text) >= 0 ||
+              String(g.route || '').toLowerCase().indexOf(text) >= 0 ||
+              String(g.reason || '').toLowerCase().indexOf(text) >= 0;
           });
         }
         return entries;
@@ -36,27 +67,25 @@
           },
           {
             title: C.t('Page.Dns.IpAddress'),
-            key: 'ipAddress',
-            dataIndex: 'ipAddress',
-            sorter: function (a, b) { return String(a.ipAddress || '').localeCompare(String(b.ipAddress || '')); }
+            key: 'ipAddresses'
           },
           {
             title: C.t('Page.Dns.SeenCount'),
             key: 'seenCount',
             dataIndex: 'seenCount',
-            width: 100,
+            width: 80,
             sorter: function (a, b) { return Number(a.seenCount || 0) - Number(b.seenCount || 0); }
           },
           {
             title: C.t('Page.Dns.Route'),
             key: 'route',
-            width: 200
+            width: 180
           },
           {
             title: C.t('Page.Dns.Reason'),
             key: 'reason',
             dataIndex: 'reason',
-            width: 120
+            width: 110
           },
           {
             title: C.t('Page.Dns.LastActive'),
@@ -76,11 +105,11 @@
       });
 
       var summary = Vue.computed(function () {
-        var proxy = records.value.filter(function (record) { return record.route === 'PROXY'; }).length;
-        var direct = records.value.filter(function (record) { return record.route === 'DIRECT'; }).length;
-        var cached = records.value.filter(function (record) { return record.isDnsCached; }).length;
+        var proxy = groupedRecords.value.filter(function (g) { return g.route === 'PROXY'; }).length;
+        var direct = groupedRecords.value.filter(function (g) { return g.route === 'DIRECT'; }).length;
+        var cached = groupedRecords.value.filter(function (g) { return g.isDnsCached; }).length;
         return [
-          { label: C.t('Page.Dns.Heading'), value: records.value.length, sub: records.value.length ? C.t('Page.Dns.Heading') : C.t('Page.Dns.Empty') },
+          { label: C.t('Page.Dns.Heading'), value: groupedRecords.value.length, sub: groupedRecords.value.length ? C.t('Page.Dns.Heading') : C.t('Page.Dns.Empty') },
           { label: C.t('Page.Dns.RouteProxy'), value: proxy, sub: 'GFW / Geo / Default' },
           { label: C.t('Page.Dns.RouteDirect'), value: direct, sub: C.t('Page.Dns.LegendDirect') },
           { label: 'DNS cache', value: cached, sub: C.t('Page.Dns.ClearSearch') }
@@ -120,11 +149,16 @@
           });
       }
 
-      function clearDnsCache(record) {
-        if (!record || !record.ipAddress) return;
-        var url = '/api/dns-cache?ip=' + encodeURIComponent(record.ipAddress);
-        if (record.hostname) url += '&domain=' + encodeURIComponent(record.hostname);
-        window.TunProxyApi.delete(url).then(loadData);
+      function clearDnsCache(group) {
+        if (!group || !group._records) return;
+        var cached = group._records.filter(function (r) { return r.isDnsCached && r.ipAddress; });
+        if (cached.length === 0) return;
+        var deletes = cached.map(function (r) {
+          var url = '/api/dns-cache?ip=' + encodeURIComponent(r.ipAddress);
+          if (r.hostname) url += '&domain=' + encodeURIComponent(r.hostname);
+          return window.TunProxyApi.delete(url);
+        });
+        Promise.all(deletes).then(loadData);
       }
 
       Vue.onMounted(function () {
@@ -141,6 +175,7 @@
         clearDnsCache: clearDnsCache,
         columns: columns,
         filteredRecords: filteredRecords,
+        groupedRecords: groupedRecords,
         emptyMessage: emptyMessage,
         isTunMode: isTunMode,
         lastUpdate: lastUpdate,
@@ -206,20 +241,23 @@
                 :loading="loading"
                 :pagination="false"
                 size="small"
-                :row-key="(r) => r.ipAddress + '_' + r.hostname"
+                :row-key="(g) => g.hostname || g._records[0].ipAddress"
                 :scroll="{ x: 920 }"
               >
                 <template #bodyCell="{ column, record }">
                   <template v-if="column.key === 'hostname'">
                     <strong>{{ record.hostname || '-' }}</strong>
                   </template>
-                  <template v-else-if="column.key === 'ipAddress'">
-                    <span class="tp-code">{{ record.ipAddress }}</span>
+                  <template v-else-if="column.key === 'ipAddresses'">
+                    <span style="display:flex;flex-wrap:wrap;gap:3px">
+                      <a-tag v-for="r in record._records" :key="r.ipAddress"
+                             :color="r.ipAddress.startsWith('198.18.') ? undefined : r.isDnsCached ? 'blue' : 'geekblue'"
+                             style="margin:0;font-family:monospace;font-size:11px">{{ r.ipAddress }}</a-tag>
+                    </span>
                   </template>
                   <template v-else-if="column.key === 'route'">
                     <span class="tp-toolbar" style="justify-content:flex-start;gap:4px">
                       <a-tag :color="routeColor(record)">{{ routeLabel(record) }}</a-tag>
-                      <a-tag v-if="record.isDnsCached" color="blue">DNS cache</a-tag>
                       <a-tag v-if="record.isPrivateIp">{{ t('Page.Dns.PrivateIp') }}</a-tag>
                     </span>
                   </template>
@@ -256,7 +294,7 @@
               <div class="tp-section-title">DNS</div>
               <tp-kv-list :items="[
                 { label: t('Page.Config.SystemProxyMode'), value: isTunMode ? t('Page.Config.SystemProxyMode.Tun') : t('Mode.Proxy') },
-                { label: 'Records', value: records.length },
+                { label: 'Records', value: groupedRecords.length + ' domains / ' + records.length + ' IPs' },
                 { label: t('Shared.RefreshAt').split('|')[0].replace('{0}', '10'), value: lastUpdate }
               ]"></tp-kv-list>
             </section>

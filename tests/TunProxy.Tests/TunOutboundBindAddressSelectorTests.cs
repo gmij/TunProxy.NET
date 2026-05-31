@@ -44,7 +44,8 @@ public class TunOutboundBindAddressSelectorTests
         var routeAddress = IPAddress.Parse("10.144.20.231");
         var selector = new TunOutboundBindAddressSelector(
             (_, _) => throw new InvalidOperationException("probe should not run when route lookup succeeds"),
-            _ => throw new InvalidOperationException("gateway lookup should not run when route lookup succeeds"));
+            _ => throw new InvalidOperationException("gateway lookup should not run when route lookup succeeds"),
+            _ => null);  // no subnet match — forces the route-service path
 
         var result = selector.Select(
             new ProxyConfig { Host = "10.144.20.222", Port = 7890 },

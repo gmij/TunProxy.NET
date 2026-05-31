@@ -1,3 +1,4 @@
+using System.Net;
 using TunProxy.CLI;
 using TunProxy.Core.Dns;
 
@@ -49,7 +50,7 @@ public class DnsResolutionStoreTests
         var store = new DnsResolutionStore();
         var now = DateTime.UtcNow;
 
-        store.RecordObservedHostname("1.2.3.4", "example.com", "DNS", "PROXY", "GFW", now);
+        store.RecordObservedHostname("1.2.3.4", "example.com", "DNS", "PROXY", "GFW", nowUtc: now);
 
         Assert.Empty(store.GetResolutionSnapshot(now.AddMinutes(10).AddSeconds(1)));
 
@@ -84,12 +85,44 @@ public class DnsResolutionStoreTests
         var response = DnsPacket.Parse(BuildDnsResponse(queryBytes, 60, [1, 2, 3, 4]))!;
 
         store.StoreDnsResponseInCache(response, now);
-        store.RecordObservedHostname("1.2.3.4", "example.com", "DNS", "PROXY", "GFW", now);
+        store.RecordObservedHostname("1.2.3.4", "example.com", "DNS", "PROXY", "GFW", nowUtc: now);
 
         store.CleanupExpired(now.AddMinutes(10).AddSeconds(1));
 
         Assert.Equal(0, store.CacheEntryCount);
         Assert.Empty(store.GetResolutionSnapshot(now));
+    }
+
+    [Fact]
+    public void GetMostRecentAddressForHostname_PrefersObservedHostname()
+    {
+        var store = new DnsResolutionStore();
+        var now = DateTime.UtcNow;
+
+        store.RecordObservedHostname("1.2.3.4", "example.com", nowUtc: now.AddSeconds(-5));
+        store.RecordObservedHostname("5.6.7.8", "example.com", nowUtc: now);
+
+        var address = store.GetMostRecentAddressForHostname("example.com");
+
+        Assert.Equal(IPAddress.Parse("5.6.7.8"), address);
+    }
+
+    [Fact]
+    public void GetMostRecentAddressForHostname_FallsBackToDnsCache()
+    {
+        var store = new DnsResolutionStore();
+        var now = DateTime.UtcNow;
+        var firstQuery = BuildDnsQuery("example.com", 0x1111);
+        var firstResponse = DnsPacket.Parse(BuildDnsResponse(firstQuery, 600, [1, 2, 3, 4]))!;
+        var secondQuery = BuildDnsQuery("example.com", 0x2222);
+        var secondResponse = DnsPacket.Parse(BuildDnsResponse(secondQuery, 600, [5, 6, 7, 8]))!;
+
+        store.StoreDnsResponseInCache(firstResponse, now.AddSeconds(-10));
+        store.StoreDnsResponseInCache(secondResponse, now);
+
+        var address = store.GetMostRecentAddressForHostname("example.com");
+
+        Assert.Equal(IPAddress.Parse("5.6.7.8"), address);
     }
 
     private static byte[] BuildDnsQuery(string domain, ushort transactionId)

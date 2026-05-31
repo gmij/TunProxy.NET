@@ -149,6 +149,73 @@ public class TunProxyRouteDecisionTests
     }
 
     [Fact]
+    public async Task ConfiguredProbeDomain_AlwaysUsesDirectRoute()
+    {
+        var config = new AppConfig
+        {
+            Route =
+            {
+                ProbeDirectDomains = ["probe.example"]
+            }
+        };
+        var service = new RouteDecisionService(config);
+
+        var decision = await service.DecideForDomainAsync("www.probe.example", CancellationToken.None);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("ProbeDomain", decision.Reason);
+    }
+
+    [Fact]
+    public async Task RemovedHardcodedProbeDomains_AreNotSpecialWithoutConfig()
+    {
+        var service = new RouteDecisionService(
+            new AppConfig { Route = { EnableGeo = true } },
+            getCountryCode: _ => "US",
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("93.184.216.34")));
+
+        var decision = await service.DecideForDomainAsync("msftconnecttest.com", CancellationToken.None);
+
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("Geo:US", decision.Reason);
+    }
+
+    [Fact]
+    public async Task StickyDecision_DoesNotOverrideKnownDestinationGeo()
+    {
+        var config = new AppConfig { Route = { EnableGeo = true } };
+        var service = new RouteDecisionService(
+            config,
+            getCountryCode: ip =>
+            {
+                if (ip.Equals(IPAddress.Parse("43.129.138.148")))
+                {
+                    return "SG";
+                }
+
+                if (ip.Equals(IPAddress.Parse("180.153.201.124")))
+                {
+                    return "CN";
+                }
+
+                return null;
+            },
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("43.129.138.148")));
+
+        var stickySeed = await service.DecideForTunAsync("dns.weixin.qq.com.cn", destinationIp: null, CancellationToken.None);
+        Assert.True(stickySeed.ShouldProxy);
+        Assert.Equal("Geo:SG", stickySeed.Reason);
+
+        var observedCn = await service.DecideForObservedAddressAsync(
+            "dns.weixin.qq.com.cn",
+            IPAddress.Parse("180.153.201.124"),
+            CancellationToken.None);
+
+        Assert.False(observedCn.ShouldProxy);
+        Assert.Equal("Geo:CN", observedCn.Reason);
+    }
+
+    [Fact]
     public async Task TunDomainHint_ResolvedPrivateIpUsesDirectRoute()
     {
         var service = new RouteDecisionService(

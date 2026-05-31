@@ -92,12 +92,38 @@
     return function () {
       var culture = Vue.ref(normalizeCulture(window.TunProxyI18n.culture));
       var activePage = Vue.ref(pageId);
-      var pages = window.TunProxyNav.pages;
-      var mobileOptions = pages.map(function (page) {
-        return {
-          label: t(page.key),
-          value: page.id
-        };
+      var pages = Vue.ref(window.TunProxyNav.pages.slice());
+
+      function updateVisiblePages(mode) {
+        var allPages = window.TunProxyNav.pages.slice();
+        if (mode !== 'tun') {
+          pages.value = allPages.filter(function (page) { return page.id !== 'dns'; });
+          return;
+        }
+        pages.value = allPages;
+      }
+
+      var mobileOptions = Vue.computed(function () {
+        return pages.value.map(function (page) {
+          return {
+            label: t(page.key),
+            value: page.id
+          };
+        });
+      });
+
+      function loadModeForNavigation() {
+        return window.TunProxyApi.getJson('/api/status')
+          .then(function (status) {
+            updateVisiblePages(status && status.mode ? status.mode : 'proxy');
+          })
+          .catch(function () {
+            pages.value = window.TunProxyNav.pages.slice();
+          });
+      }
+
+      Vue.onMounted(function () {
+        loadModeForNavigation();
       });
 
       function setCulture(value) {
@@ -157,7 +183,7 @@
         return { C: window.TunProxyConsole };
       },
       template: `
-        <div class="tp-shell">
+        <div :class="['tp-shell', 'tp-shell-' + activePage]">
           <aside class="tp-sidebar">
             <div class="tp-brand">
               <div class="tp-brand-mark">T</div>

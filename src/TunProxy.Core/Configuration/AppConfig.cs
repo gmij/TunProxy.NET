@@ -184,6 +184,7 @@ public class RouteConfig
     public string Mode { get; set; } = "smart";
     public List<string> ProxyDomains { get; set; } = new();
     public List<string> DirectDomains { get; set; } = new();
+    public List<string> ProbeDirectDomains { get; set; } = new();
     public bool EnableGeo { get; set; } = true;
     public List<string> GeoProxy { get; set; } = new();
     public List<string> GeoDirect { get; set; } = new();
@@ -202,6 +203,7 @@ public class RouteConfig
         Mode = other.Mode;
         ProxyDomains = [.. other.ProxyDomains];
         DirectDomains = [.. other.DirectDomains];
+        ProbeDirectDomains = [.. other.ProbeDirectDomains];
         EnableGeo = other.EnableGeo;
         GeoProxy = [.. other.GeoProxy];
         GeoDirect = [.. other.GeoDirect];

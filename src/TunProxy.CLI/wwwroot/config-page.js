@@ -87,17 +87,6 @@
         return hasProxyEndpoint.value && hasChanges.value && !checking.value && !preparing.value && !saving.value;
       });
 
-      var saveStatusText = Vue.computed(function () {
-        if (!hasProxyEndpoint.value) return C.t('Page.Config.SaveStatus.EndpointRequired');
-        if (saving.value) return C.t('Page.Config.SaveStatus.Saving');
-        if (hasChanges.value) return C.t('Page.Config.SaveStatus.Ready');
-        return C.t('Page.Config.SaveStatus.NoChanges');
-      });
-
-      var saveStatusType = Vue.computed(function () {
-        return hasChanges.value ? 'success' : 'default';
-      });
-
       var modeOptions = Vue.computed(function () {
         return [
           { value: 'pac', title: C.t('Page.Config.SystemProxyMode.Pac'), desc: 'PAC' },
@@ -390,8 +379,6 @@
         resourceRows: resourceRows,
         restartMessage: restartMessage,
         saveConfig: saveConfig,
-        saveStatusText: saveStatusText,
-        saveStatusType: saveStatusType,
         saving: saving,
         summary: summary,
         C: C
@@ -408,7 +395,6 @@
         :title="t('Page.Config.Title')"
         @change-culture="setCulture">
         <template #actions>
-          <a-tag :color="saveStatusType">{{ saveStatusText }}</a-tag>
           <a-button type="primary" :disabled="!canSave" :loading="saving" @click="saveConfig">{{ t('Page.Config.SaveRestart') }}</a-button>
         </template>
           <a-alert v-if="restartMessage" type="warning" :message="restartMessage" show-icon style="margin-bottom: 14px"></a-alert>
@@ -447,14 +433,21 @@
                   <div><div class="tp-step-title"><span class="tp-step-number">3</span><span>{{ t('Page.Config.StepProxyMode') }}</span></div><div class="tp-muted">{{ t('Page.Config.StepProxyModeHint') }}</div></div>
                 </div>
                 <div class="tp-section-title">{{ t('Page.Config.SystemProxyMode') }}</div>
-                <div class="tp-muted" style="margin-bottom: 10px">{{ t('Page.Config.StepProxyModeHint') }}</div>
+                <label class="tp-field tp-local-port-field" style="margin-top: 10px">
+                  <span class="tp-field-label">{{ t('Page.Config.LocalProxyPort') }}</span>
+                  <a-input-number
+                    v-model:value="form.localPort"
+                    style="width: 190px"
+                    :min="1"
+                    :max="65535"
+                    :disabled="!(form.systemProxyMode === 'pac' || form.systemProxyMode === 'global')"></a-input-number>
+                </label>
                 <div class="tp-mode-list" role="radiogroup">
                   <button v-for="option in modeOptions" :key="option.value" type="button" class="tp-mode-option tp-mode-choice" :class="{ active: form.systemProxyMode === option.value }" role="radio" :aria-checked="form.systemProxyMode === option.value" @click="form.systemProxyMode = option.value">
                     <span><strong>{{ option.title }}</strong><span class="tp-muted">{{ option.desc }}</span></span>
                     <span v-if="form.systemProxyMode === option.value" class="tp-current-dot" :title="t('Page.Config.CurrentMode')" aria-hidden="true"></span>
                   </button>
                 </div>
-                <label v-if="form.systemProxyMode === 'pac' || form.systemProxyMode === 'global'" class="tp-field" style="margin-top: 12px"><span class="tp-field-label">{{ t('Page.Config.LocalProxyPort') }}</span><a-input-number v-model:value="form.localPort" style="width:160px" :min="1" :max="65535"></a-input-number></label>
               </section>
 
             </div>
@@ -491,7 +484,7 @@
                 <div class="tp-section-title">{{ t('Page.Config.Title') }}</div>
                 <div v-for="item in summary" :key="item.label" class="tp-kv-row"><span class="tp-muted">{{ item.label }}</span><strong>{{ item.value }}</strong></div>
               </section>
-              <section class="tp-section">
+              <section v-if="form.systemProxyMode === 'pac'" class="tp-section">
                 <div class="tp-section-title">{{ t('Page.Config.PacHeading') }}</div>
                 <p class="tp-muted">{{ C.htmlText(t('Page.Config.PacDescriptionHtml')) }}</p>
                 <div class="tp-helper-box tp-code">{{ pacUrl }}</div>

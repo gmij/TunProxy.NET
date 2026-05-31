@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http;
 using TunProxy.Core.Configuration;
 using TunProxy.Core.Localization;
@@ -12,10 +13,10 @@ public static class ApiEndpoints
         app.UseEmbeddedWebConsole();
 
         app.MapGet("/api/status", (IProxyService svc) =>
-            Results.Json(svc.GetStatus(), AppJsonContext.Default.ServiceStatus));
+            JsonResponse(svc.GetStatus(), AppJsonContext.Default.ServiceStatus));
 
         app.MapGet("/api/config", (AppConfig cfg) =>
-            Results.Json(cfg, AppJsonContext.Default.AppConfig));
+            JsonResponse(cfg, AppJsonContext.Default.AppConfig));
 
         app.MapPost("/api/upstream-proxy/check", async (HttpContext ctx, AppConfig cfg, CancellationToken ct) =>
         {
@@ -27,7 +28,7 @@ public static class ApiEndpoints
                     ct);
 
                 proxy ??= cfg.Proxy;
-                return Results.Json(
+                return JsonResponse(
                     await UpstreamProxyHealthChecker.CheckAsync(proxy, ct),
                     AppJsonContext.Default.UpstreamProxyStatus);
             }
@@ -38,7 +39,7 @@ public static class ApiEndpoints
         });
 
         app.MapGet("/api/rule-resources/status", async (AppConfig cfg, RuleResourceService ruleResources) =>
-            Results.Json(
+            JsonResponse(
                 await ruleResources.GetStatusAsync(cfg),
                 AppJsonContext.Default.RuleResourcesStatus));
 
@@ -46,7 +47,7 @@ public static class ApiEndpoints
         {
             var requestedCulture = ctx.Request.Query["culture"].FirstOrDefault();
             var catalog = LocalizedText.GetFrontendCatalog(requestedCulture);
-            return Results.Json(catalog, AppJsonContext.Default.DictionaryStringString);
+            return JsonResponse(catalog, AppJsonContext.Default.DictionaryStringString);
         });
 
         app.MapPost("/api/config", async (
@@ -91,7 +92,7 @@ public static class ApiEndpoints
                 var result = await ruleResources.PrepareEnabledAsync(effectiveConfig, svc, ct);
 
                 return result.AllReady
-                    ? Results.Json(result.StatusByResource, AppJsonContext.Default.DictionaryStringString)
+                    ? JsonResponse(result.StatusByResource, AppJsonContext.Default.DictionaryStringString)
                     : Results.Problem("One or more enabled rule resources failed to download or load.");
             }
             catch (JsonException ex)
@@ -114,7 +115,7 @@ public static class ApiEndpoints
                 var result = await ruleResources.DownloadAsync(effectiveConfig, resource, svc, ct);
 
                 return result.Succeeded && result.Status != null
-                    ? Results.Json(result.Status, AppJsonContext.Default.RuleResourcesStatus)
+                    ? JsonResponse(result.Status, AppJsonContext.Default.RuleResourcesStatus)
                     : Results.Problem("Rule resource download or validation failed.");
             }
             catch (JsonException ex)
@@ -129,7 +130,7 @@ public static class ApiEndpoints
                 ? new List<DnsRouteRecord>(await tunService.GetDnsRouteRecordsAsync(ct))
                 : [];
 
-            return Results.Json(records, AppJsonContext.Default.ListDnsRouteRecord);
+            return JsonResponse(records, AppJsonContext.Default.ListDnsRouteRecord);
         });
 
         app.MapDelete("/api/dns-cache", (IProxyService svc, HttpContext ctx) =>
@@ -158,7 +159,7 @@ public static class ApiEndpoints
                 return Results.BadRequest("TUN diagnostics are only available in TUN mode.");
             }
 
-            return Results.Json(
+            return JsonResponse(
                 tunService.GetDiagnostics(),
                 AppJsonContext.Default.TunDiagnosticsSnapshot);
         });
@@ -166,7 +167,7 @@ public static class ApiEndpoints
         app.MapGet("/api/logs", (HttpContext ctx) =>
         {
             long.TryParse(ctx.Request.Query["after"].FirstOrDefault(), out var after);
-            return Results.Json(
+            return JsonResponse(
                 MemoryLogSink.Instance.GetEntriesAfter(after),
                 AppJsonContext.Default.LogEntryArray);
         });
@@ -194,7 +195,7 @@ public static class ApiEndpoints
             var pacUrl = $"http://127.0.0.1:{ctx.Connection.LocalPort}/proxy.pac";
             var manager = SystemProxyManagerFactory.Create(cfg);
             manager.SetPacUrl(pacUrl);
-            return Results.Json(
+            return JsonResponse(
                 new Dictionary<string, string> { ["url"] = pacUrl },
                 AppJsonContext.Default.DictionaryStringString);
         });
@@ -233,7 +234,7 @@ public static class ApiEndpoints
         app.MapPost("/api/restart", (RestartCoordinator restart, AppConfig cfg) =>
         {
             restart.RequestRestart(cfg);
-            return Results.Json(
+            return JsonResponse(
                 new Dictionary<string, string> { ["status"] = "restarting" },
                 AppJsonContext.Default.DictionaryStringString);
         });
@@ -241,7 +242,7 @@ public static class ApiEndpoints
         app.MapPost("/api/service/restart", (RestartCoordinator restart, AppConfig cfg) =>
         {
             restart.RequestRestart(cfg);
-            return Results.Json(
+            return JsonResponse(
                 new Dictionary<string, string> { ["status"] = "restarting" },
                 AppJsonContext.Default.DictionaryStringString);
         });
@@ -250,12 +251,18 @@ public static class ApiEndpoints
         {
             restart.RequestStop();
 
-            return Results.Json(
+            return JsonResponse(
                 new Dictionary<string, string> { ["status"] = "stopping" },
                 AppJsonContext.Default.DictionaryStringString);
         });
 
         return app;
+    }
+
+    private static IResult JsonResponse<T>(T value, JsonTypeInfo<T> typeInfo)
+    {
+        var payload = JsonSerializer.Serialize(value, typeInfo);
+        return Results.Text(payload, "application/json; charset=utf-8");
     }
 
     private static async Task<AppConfig> ReadEffectiveConfigAsync(HttpContext ctx, AppConfig cfg, CancellationToken ct)

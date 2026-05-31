@@ -48,6 +48,7 @@ public class AppConfigTests
                 Mode = "blacklist",
                 ProxyDomains = ["proxy.example"],
                 DirectDomains = ["direct.example"],
+                ProbeDirectDomains = ["probe.example"],
                 EnableGeo = true,
                 GeoProxy = ["JP"],
                 GeoDirect = ["CN"],
@@ -86,6 +87,7 @@ public class AppConfigTests
         Assert.Equal("blacklist", target.Route.Mode);
         Assert.Equal(["proxy.example"], target.Route.ProxyDomains);
         Assert.Equal(["direct.example"], target.Route.DirectDomains);
+        Assert.Equal(["probe.example"], target.Route.ProbeDirectDomains);
         Assert.True(target.Route.EnableGeo);
         Assert.Equal(["JP"], target.Route.GeoProxy);
         Assert.Equal(["CN"], target.Route.GeoDirect);
@@ -110,6 +112,7 @@ public class AppConfigTests
             {
                 ProxyDomains = ["proxy.example"],
                 DirectDomains = ["direct.example"],
+                ProbeDirectDomains = ["probe.example"],
                 GeoProxy = ["US"],
                 GeoDirect = ["CN"],
                 TunRouteApps = ["app.exe"]
@@ -119,12 +122,14 @@ public class AppConfigTests
         target.ApplyFrom(incoming);
         incoming.Route.ProxyDomains.Add("later.example");
         incoming.Route.DirectDomains.Add("later.direct");
+        incoming.Route.ProbeDirectDomains.Add("later.probe");
         incoming.Route.GeoProxy.Add("JP");
         incoming.Route.GeoDirect.Add("HK");
         incoming.Route.TunRouteApps.Add("later.exe");
 
         Assert.Equal(["proxy.example"], target.Route.ProxyDomains);
         Assert.Equal(["direct.example"], target.Route.DirectDomains);
+        Assert.Equal(["probe.example"], target.Route.ProbeDirectDomains);
         Assert.Equal(["US"], target.Route.GeoProxy);
         Assert.Equal(["CN"], target.Route.GeoDirect);
         Assert.Equal(["app.exe"], target.Route.TunRouteApps);

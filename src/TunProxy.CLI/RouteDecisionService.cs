@@ -8,12 +8,16 @@ namespace TunProxy.CLI;
 
 public sealed class RouteDecisionService
 {
+    private static readonly TimeSpan StickyDecisionTtl = TimeSpan.FromSeconds(45);
+
     private readonly AppConfig _config;
+    private readonly HashSet<string> _probeDirectDomainSuffixes;
     private readonly Func<string, bool> _isInGfwList;
     private readonly Func<IPAddress, string?> _getCountryCode;
     private readonly Func<bool> _isGeoReady;
     private readonly Func<string, CancellationToken, Task<IPAddress?>> _resolveHost;
     private readonly ConcurrentDictionary<string, HostResolutionCacheEntry> _hostResolutionCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, StickyRouteDecisionEntry> _stickyRouteDecisions = new(StringComparer.OrdinalIgnoreCase);
 
     public RouteDecisionService(AppConfig config, GeoIpService? geoIpService, GfwListService? gfwListService)
         : this(
@@ -33,6 +37,11 @@ public sealed class RouteDecisionService
         Func<string, CancellationToken, Task<IPAddress?>>? resolveHost = null)
     {
         _config = config;
+        _probeDirectDomainSuffixes = new HashSet<string>(
+            _config.Route.ProbeDirectDomains
+                .Select(static value => value.Trim().TrimEnd('.').ToLowerInvariant())
+                .Where(static value => value.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
         _isInGfwList = isInGfwList ?? (_ => false);
         _getCountryCode = getCountryCode ?? (_ => null);
         _isGeoReady = isGeoReady ?? (() => getCountryCode != null);
@@ -61,11 +70,23 @@ public sealed class RouteDecisionService
         CancellationToken ct)
     {
         var domain = NormalizeDomain(host);
+        var canUseStickyDecision = domain != null && destinationIp == null;
+        if (domain != null && IsProbeDomain(domain))
+        {
+            return RouteDecision.Direct("ProbeDomain", domain, destinationIp);
+        }
+
         if (domain != null)
         {
             if (_config.Route.EnableGfwList && _isInGfwList(domain))
             {
-                return RouteDecision.Proxy("GFW", domain, destinationIp);
+                var gfwDecision = RouteDecision.Proxy("GFW", domain, destinationIp);
+                if (canUseStickyDecision)
+                {
+                    CacheStickyDecision(domain, gfwDecision);
+                }
+
+                return gfwDecision;
             }
         }
 
@@ -82,6 +103,11 @@ public sealed class RouteDecisionService
             {
                 return RouteDecision.Direct("ResolvedPrivateIP", domain, resolvedIp);
             }
+        }
+
+        if (canUseStickyDecision && TryGetStickyDecision(domain!, out var stickyDecision))
+        {
+            return stickyDecision;
         }
 
         if (IsGlobalRouteMode())
@@ -102,19 +128,76 @@ public sealed class RouteDecisionService
                 if (resolvedCountry != null)
                 {
                     var resolvedShouldProxy = ShouldProxyByGeo(resolvedCountry, _config.Route.GeoProxy, _config.Route.GeoDirect);
-                    return resolvedShouldProxy
+                    var resolvedDecision = resolvedShouldProxy
                         ? RouteDecision.Proxy($"Geo:{resolvedCountry}", domain, resolvedIp)
                         : RouteDecision.Direct($"Geo:{resolvedCountry}", domain, resolvedIp);
+                    if (canUseStickyDecision)
+                    {
+                        CacheStickyDecision(domain, resolvedDecision);
+                    }
+
+                    return resolvedDecision;
                 }
             }
 
             var shouldProxy = ShouldProxyByGeo(country, _config.Route.GeoProxy, _config.Route.GeoDirect);
-            return shouldProxy
+            var geoDecision = shouldProxy
                 ? RouteDecision.Proxy(country == null ? "GeoUnknown" : $"Geo:{country}", domain, geoIp)
                 : RouteDecision.Direct(country == null ? "GeoUnknown" : $"Geo:{country}", domain, geoIp);
+            if (canUseStickyDecision)
+            {
+                CacheStickyDecision(domain, geoDecision);
+            }
+
+            return geoDecision;
         }
 
-        return RouteDecision.Proxy("Default", domain, destinationIp);
+        var defaultDecision = RouteDecision.Proxy("Default", domain, destinationIp);
+        if (canUseStickyDecision)
+        {
+            CacheStickyDecision(domain, defaultDecision);
+        }
+
+        return defaultDecision;
+    }
+
+    private bool IsProbeDomain(string domain) =>
+        _probeDirectDomainSuffixes.Any(suffix =>
+            domain.Equals(suffix, StringComparison.OrdinalIgnoreCase) ||
+            domain.EndsWith('.' + suffix, StringComparison.OrdinalIgnoreCase));
+
+    private bool TryGetStickyDecision(string domain, out RouteDecision decision)
+    {
+        decision = default!;
+        if (!_stickyRouteDecisions.TryGetValue(domain, out var cached))
+        {
+            return false;
+        }
+
+        if (cached.ExpiresUtc <= DateTime.UtcNow)
+        {
+            _stickyRouteDecisions.TryRemove(domain, out _);
+            return false;
+        }
+
+        decision = cached.ShouldProxy
+            ? RouteDecision.Proxy($"Sticky:{cached.Reason}", domain, cached.EvaluatedIp)
+            : RouteDecision.Direct($"Sticky:{cached.Reason}", domain, cached.EvaluatedIp);
+        return true;
+    }
+
+    private void CacheStickyDecision(string? domain, RouteDecision decision)
+    {
+        if (domain == null)
+        {
+            return;
+        }
+
+        _stickyRouteDecisions[domain] = new StickyRouteDecisionEntry(
+            decision.ShouldProxy,
+            decision.Reason,
+            decision.EvaluatedIp,
+            DateTime.UtcNow.Add(StickyDecisionTtl));
     }
 
     private async Task<IPAddress?> ResolveHostWithCacheAsync(string domain, CancellationToken ct)
@@ -209,6 +292,8 @@ public sealed class RouteDecisionService
 }
 
 internal sealed record HostResolutionCacheEntry(IPAddress? Address, DateTime ExpiresUtc);
+
+internal sealed record StickyRouteDecisionEntry(bool ShouldProxy, string Reason, IPAddress? EvaluatedIp, DateTime ExpiresUtc);
 
 public sealed record RouteDecision(
     bool ShouldProxy,

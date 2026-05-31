@@ -273,6 +273,7 @@ public class DnsResolutionStore
         string source = "Observed",
         string? route = null,
         string? reason = null,
+        string? correlationId = null,
         DateTime? nowUtc = null)
     {
         if (string.IsNullOrWhiteSpace(ip) || string.IsNullOrWhiteSpace(hostname))
@@ -304,7 +305,7 @@ public class DnsResolutionStore
 
         if (previous == null)
         {
-            LogDnsMapping(normalized, ip, source, normalizedRoute, normalizedReason, previousHostname: null);
+            LogDnsMapping(normalized, ip, source, normalizedRoute, normalizedReason, previousHostname: null, correlationId);
         }
         else if (!previous.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
                  !previous.Route.Equals(normalizedRoute, StringComparison.OrdinalIgnoreCase) ||
@@ -316,7 +317,8 @@ public class DnsResolutionStore
                 source,
                 normalizedRoute,
                 normalizedReason,
-                previous.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) ? null : previous.Hostname);
+                previous.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) ? null : previous.Hostname,
+                correlationId);
         }
     }
 
@@ -341,6 +343,47 @@ public class DnsResolutionStore
                 .Select(answer => new { item.Key.Domain, answer.LastActiveUtc }))
             .OrderByDescending(item => item.LastActiveUtc)
             .Select(item => item.Domain)
+            .FirstOrDefault();
+    }
+
+    public IPAddress? GetMostRecentAddressForHostname(string hostname)
+    {
+        var normalized = NormalizeDnsName(hostname);
+        if (normalized == null)
+        {
+            return null;
+        }
+
+        var now = DateTime.UtcNow;
+        var observedMatch = _observedHostnames
+            .Where(static entry => !string.IsNullOrWhiteSpace(entry.Key))
+            .Where(entry =>
+                entry.Value.Hostname.Equals(normalized, StringComparison.OrdinalIgnoreCase) &&
+                IsObservedHostnameUsable(entry.Value, now) &&
+                IPAddress.TryParse(entry.Key, out var address) &&
+                address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            .Select(entry => new
+            {
+                Address = IPAddress.Parse(entry.Key),
+                LastSeenUtc = entry.Value.LastSeenUtc
+            })
+            .OrderByDescending(static entry => entry.LastSeenUtc)
+            .FirstOrDefault();
+        if (observedMatch != null)
+        {
+            return observedMatch.Address;
+        }
+
+        if (!TryCreateDnsCacheKey(normalized, 1, 1, out var key) ||
+            !_dnsCache.TryGetValue(key, out var cacheEntry))
+        {
+            return null;
+        }
+
+        return cacheEntry.Answers
+            .Where(answer => IsDnsCacheAnswerUsable(answer, now) && answer.Data.Length == 4)
+            .OrderByDescending(static answer => answer.LastActiveUtc)
+            .Select(static answer => new IPAddress(answer.Data))
             .FirstOrDefault();
     }
 
@@ -577,12 +620,15 @@ public class DnsResolutionStore
         string source,
         string? route,
         string? reason,
-        string? previousHostname)
+        string? previousHostname,
+        string? correlationId)
     {
+        var trace = string.IsNullOrWhiteSpace(correlationId) ? "-" : correlationId;
         if (previousHostname == null)
         {
             Log.Information(
-                "[DNS ] {Hostname} -> {IP} -> {Route}/{Reason} ({Source})",
+                "[DNS:{Trace}] {Hostname} -> {IP} -> {Route}/{Reason} ({Source})",
+                trace,
                 hostname,
                 ip,
                 route,
@@ -592,7 +638,8 @@ public class DnsResolutionStore
         }
 
         Log.Information(
-            "[DNS ] {Hostname} -> {IP} -> {Route}/{Reason} ({Source}; was {PreviousHostname})",
+            "[DNS:{Trace}] {Hostname} -> {IP} -> {Route}/{Reason} ({Source}; was {PreviousHostname})",
+            trace,
             hostname,
             ip,
             route,

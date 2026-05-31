@@ -168,21 +168,22 @@
           <a-button @click="query = ''">{{ t('Page.Dns.ClearSearch') }}</a-button>
         </template>
 
-        <a-alert v-if="!isTunMode && !loading" type="info" show-icon style="margin-bottom: 14px">
-          <template #message>{{ t('Page.Dns.Title') }}</template>
-          <template #description>{{ C.htmlText(t('Page.Dns.ProxyModeNoticeHtml')) }}</template>
-        </a-alert>
+        <div class="tp-dns-layout">
+          <a-alert v-if="!isTunMode && !loading" type="info" show-icon>
+            <template #message>{{ t('Page.Dns.Title') }}</template>
+            <template #description>{{ C.htmlText(t('Page.Dns.ProxyModeNoticeHtml')) }}</template>
+          </a-alert>
 
-        <div class="tp-four-grid" style="margin-bottom: 16px">
-          <div v-for="item in summary" :key="item.label" class="tp-summary-card">
-            <div class="tp-muted">{{ item.label }}</div>
-            <div class="tp-summary-value">{{ item.value }}</div>
-            <div class="tp-muted">{{ item.sub }}</div>
+          <div v-if="isTunMode" class="tp-four-grid">
+            <div v-for="item in summary" :key="item.label" class="tp-summary-card">
+              <div class="tp-muted">{{ item.label }}</div>
+              <div class="tp-summary-value">{{ item.value }}</div>
+              <div class="tp-muted">{{ item.sub }}</div>
+            </div>
           </div>
-        </div>
 
-        <div class="tp-page-grid">
-          <section class="tp-section">
+          <div v-if="isTunMode" class="tp-page-grid">
+          <section class="tp-section tp-dns-main">
             <div class="tp-section-head">
               <div><div class="tp-section-title">{{ t('Page.Dns.Heading') }}</div><div class="tp-muted">{{ C.format('Shared.RefreshAt', 10, lastUpdate) }}</div></div>
               <a-tag color="blue">{{ isTunMode ? t('Page.Config.SystemProxyMode.Tun') : t('Mode.Proxy') }}</a-tag>
@@ -194,46 +195,48 @@
               <span class="tp-legend-item"><a-tag color="warning">{{ t('Page.Dns.RouteProxy') }}</a-tag>{{ t('Page.Dns.LegendDefault') }}</span>
             </div>
 
-            <a-table
-              :data-source="filteredRecords"
-              :columns="columns"
-              :loading="loading"
-              :pagination="false"
-              size="small"
-              :row-key="(r) => r.ipAddress + '_' + r.hostname"
-              :scroll="{ x: 920 }"
-            >
-              <template #bodyCell="{ column, record }">
-                <template v-if="column.key === 'hostname'">
-                  <strong>{{ record.hostname || '-' }}</strong>
+            <div class="tp-dns-table-scroll tp-scrollbar">
+              <a-table
+                :data-source="filteredRecords"
+                :columns="columns"
+                :loading="loading"
+                :pagination="false"
+                size="small"
+                :row-key="(r) => r.ipAddress + '_' + r.hostname"
+                :scroll="{ x: 920 }"
+              >
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'hostname'">
+                    <strong>{{ record.hostname || '-' }}</strong>
+                  </template>
+                  <template v-else-if="column.key === 'ipAddress'">
+                    <span class="tp-code">{{ record.ipAddress }}</span>
+                  </template>
+                  <template v-else-if="column.key === 'route'">
+                    <span class="tp-toolbar" style="justify-content:flex-start;gap:4px">
+                      <a-tag :color="routeColor(record)">{{ routeLabel(record) }}</a-tag>
+                      <a-tag v-if="record.isDnsCached" color="blue">DNS cache</a-tag>
+                      <a-tag v-if="record.isPrivateIp">{{ t('Page.Dns.PrivateIp') }}</a-tag>
+                    </span>
+                  </template>
+                  <template v-else-if="column.key === 'reason'">
+                    <span class="tp-code">{{ record.reason || '-' }}</span>
+                  </template>
+                  <template v-else-if="column.key === 'lastActiveUtc'">
+                    <span class="tp-code">{{ C.dateTime(record.lastActiveUtc) }}</span>
+                  </template>
+                  <template v-else-if="column.key === 'action'">
+                    <a-button v-if="record.isDnsCached" danger size="small" @click="clearDnsCache(record)">Clear</a-button>
+                  </template>
                 </template>
-                <template v-else-if="column.key === 'ipAddress'">
-                  <span class="tp-code">{{ record.ipAddress }}</span>
+                <template #emptyText>
+                  <div class="tp-empty-state">
+                    <div class="tp-section-title">{{ t('Page.Dns.Empty') }}</div>
+                    <div class="tp-muted">{{ emptyMessage }}</div>
+                  </div>
                 </template>
-                <template v-else-if="column.key === 'route'">
-                  <span class="tp-toolbar" style="justify-content:flex-start;gap:4px">
-                    <a-tag :color="routeColor(record)">{{ routeLabel(record) }}</a-tag>
-                    <a-tag v-if="record.isDnsCached" color="blue">DNS cache</a-tag>
-                    <a-tag v-if="record.isPrivateIp">{{ t('Page.Dns.PrivateIp') }}</a-tag>
-                  </span>
-                </template>
-                <template v-else-if="column.key === 'reason'">
-                  <span class="tp-code">{{ record.reason || '-' }}</span>
-                </template>
-                <template v-else-if="column.key === 'lastActiveUtc'">
-                  <span class="tp-code">{{ C.dateTime(record.lastActiveUtc) }}</span>
-                </template>
-                <template v-else-if="column.key === 'action'">
-                  <a-button v-if="record.isDnsCached" danger size="small" @click="clearDnsCache(record)">Clear</a-button>
-                </template>
-              </template>
-              <template #emptyText>
-                <div class="tp-empty-state">
-                  <div class="tp-section-title">{{ t('Page.Dns.Empty') }}</div>
-                  <div class="tp-muted">{{ emptyMessage }}</div>
-                </div>
-              </template>
-            </a-table>
+              </a-table>
+            </div>
           </section>
 
           <aside>
@@ -258,6 +261,12 @@
               <div class="tp-muted" style="font-size:12px;line-height:1.6">{{ t('Page.Dns.DoHNoticeBody') }}</div>
             </section>
           </aside>
+          </div>
+
+          <section v-else-if="!loading" class="tp-section">
+            <div class="tp-section-title">{{ t('Page.Dns.Heading') }}</div>
+            <div class="tp-muted" style="margin-top: 8px">{{ C.htmlText(t('Page.Dns.ProxyModeNoticeHtml')) }}</div>
+          </section>
         </div>
       </tp-shell>
     `

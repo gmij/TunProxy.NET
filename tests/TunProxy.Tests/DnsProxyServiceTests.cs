@@ -132,7 +132,7 @@ public class DnsProxyServiceTests
             proxyUsername: "user",
             proxyPassword: "pass");
 
-        var response = await service.QueryDnsViaProxyAsync(originalQuery, "example.com", "8.8.8.8", cts.Token);
+        var response = await service.QueryDnsViaProxyAsync(originalQuery, "example.com", "8.8.8.8", "test-trace", cts.Token);
 
         Assert.NotNull(response);
         Assert.Contains(
@@ -170,7 +170,7 @@ public class DnsProxyServiceTests
             proxyUsername: "user",
             proxyPassword: "pass");
 
-        var response = await service.QueryDnsViaProxyAsync(originalQuery, "example.com", "8.8.8.8", cts.Token);
+        var response = await service.QueryDnsViaProxyAsync(originalQuery, "example.com", "8.8.8.8", "test-trace", cts.Token);
 
         Assert.NotNull(response);
         Assert.Equal(new byte[] { 0x05, 0x02, 0x00, 0x02 }, greeting);

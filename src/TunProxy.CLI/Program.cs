@@ -135,8 +135,6 @@ public class Program
             builder.Services.AddSingleton<RuleResourceService>();
             builder.Services.AddSingleton(sp =>
                 new RestartCoordinator(sp.GetRequiredService<IHostApplicationLifetime>()));
-            builder.Services.ConfigureHttpJsonOptions(options =>
-                options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
 
             if (tunMode)
             {

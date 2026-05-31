@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Collections.Concurrent;
 using Serilog;
 using TunProxy.Core.Connections;
 using TunProxy.Core.Configuration;
@@ -15,6 +16,8 @@ public class DnsProxyService
     private const string FakeIpDnsSource = "DNS-FakeIP";
     private const string FakeIpInitialRoute = "UNKNOWN";
     private const string FakeIpLastMethod = "fakeip";
+    private static readonly TimeSpan HttpConnectRejectWarningWindow = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan DohSuccessInfoWindow = TimeSpan.FromMinutes(2);
 
     private readonly string _proxyHost;
     private readonly int _proxyPort;
@@ -27,6 +30,8 @@ public class DnsProxyService
     private readonly RouteDecisionService? _routeDecision;
     private readonly Func<IPAddress, RouteDecision, CancellationToken, Task>? _onDirectRouteCandidate;
     private readonly FakeIpPool? _fakeIpPool;
+    private readonly HashSet<string> _probeDirectDomainSuffixes;
+    private readonly string _dohEndpoint;
     private long _tcpQueries;
     private long _tcpSuccesses;
     private long _tcpFailures;
@@ -40,6 +45,11 @@ public class DnsProxyService
     private DateTime? _lastSuccessUtc;
     private DateTime? _lastFailureUtc;
     private volatile bool _httpConnectTo53Rejected;
+    private DateTime _lastHttpConnectRejectWarningUtc = DateTime.MinValue;
+    private long _suppressedHttpConnectRejectWarnings;
+    private readonly ConcurrentDictionary<string, Task<byte[]?>> _dnsResolveInflight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Task> _fakeIpBackgroundResolveInflight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _lastDohSuccessInfoByDomain = new(StringComparer.OrdinalIgnoreCase);
 
     public DnsProxyService(
         string proxyHost,
@@ -51,6 +61,7 @@ public class DnsProxyService
         string? proxyPassword = null,
         RouteDecisionService? routeDecision = null,
         Func<IPAddress, RouteDecision, CancellationToken, Task>? onDirectRouteCandidate = null,
+        IEnumerable<string>? probeDirectDomains = null,
         FakeIpPool? fakeIpPool = null)
     {
         _proxyHost = proxyHost;
@@ -63,6 +74,12 @@ public class DnsProxyService
         _routeDecision = routeDecision;
         _onDirectRouteCandidate = onDirectRouteCandidate;
         _fakeIpPool = fakeIpPool;
+        _dohEndpoint = ResolveDohEndpoint(upstreamDns);
+        _probeDirectDomainSuffixes = new HashSet<string>(
+            (probeDirectDomains ?? [])
+                .Select(static value => value.Trim().TrimEnd('.').ToLowerInvariant())
+                .Where(static value => value.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
         _proxyConfig = new ProxyConfig
         {
             Host = proxyHost,
@@ -71,6 +88,8 @@ public class DnsProxyService
             Username = proxyUsername,
             Password = proxyPassword
         };
+
+        Log.Information("[DNS ] DoH fallback endpoint selected: {Endpoint} (upstream DNS: {UpstreamDns})", _dohEndpoint, upstreamDns);
     }
 
     public async Task ProcessDnsQueryAsync(ITunDevice device, IPPacket requestPacket, CancellationToken ct)
@@ -85,9 +104,18 @@ public class DnsProxyService
             }
 
             var domain = dnsPacket.Questions[0].Name;
+            var traceId = BuildTraceId(dnsPacket.TransactionId);
             _lastDomain = domain;
             _lastQueryUtc = DateTime.UtcNow;
-            Log.Debug("[DNS ] Query: {Domain}", domain);
+            Log.Debug("[DNS:{Trace}] Query: {Domain}", traceId, domain);
+
+            if (IsProbeDomain(domain))
+            {
+                if (await HandleProbeDomainQueryAsync(device, requestPacket, dnsPacket, domain, traceId, ct))
+                {
+                    return;
+                }
+            }
 
             // FakeIP mode: intercept A-record queries and return a synthetic fake address.
             if (_fakeIpPool != null && dnsPacket.Questions[0].Type == 1 /* A record */)
@@ -101,8 +129,8 @@ public class DnsProxyService
                 _lastMethod = "cache";
                 _lastSuccessUtc = DateTime.UtcNow;
                 _lastError = null;
-                Log.Debug("[DNS ] Cache hit for {Domain}", domain);
-                await RecordResolvedAddressesAsync(cachedResponse, domain, ct);
+                Log.Debug("[DNS:{Trace}] Cache hit for {Domain}", traceId, domain);
+                await RecordResolvedAddressesAsync(cachedResponse, domain, traceId, ct);
                 TunWriter.WriteUdpResponse(device, requestPacket, cachedResponse);
                 return;
             }
@@ -111,16 +139,16 @@ public class DnsProxyService
                 ? _upstreamDns
                 : requestPacket.Header.DestinationAddress.ToString();
 
-            var dnsResponse = await QueryDnsViaProxyAsync(requestPacket.Payload, domain, dnsServer, ct);
-            if (dnsResponse == null || dnsResponse.Length == 0)
-            {
-                Log.Warning("[DNS ] TCP DNS failed for {Domain}; trying DoH fallback", domain);
-                dnsResponse = await QueryDnsOverHttpsAsync(requestPacket.Payload, domain, ct);
-            }
+            var dnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(
+                requestPacket.Payload,
+                domain,
+                dnsServer,
+                traceId,
+                ct);
 
             if (dnsResponse == null || dnsResponse.Length == 0)
             {
-                Log.Warning("[DNS ] {Domain} query failed", domain);
+                Log.Warning("[DNS:{Trace}] {Domain} query failed", traceId, domain);
                 return;
             }
 
@@ -130,7 +158,7 @@ public class DnsProxyService
                 if (dnsRespPacket != null)
                 {
                     _resolutionStore.StoreDnsResponseInCache(dnsRespPacket);
-                    await RecordResolvedAddressesAsync(dnsRespPacket, domain, ct);
+                    await RecordResolvedAddressesAsync(dnsRespPacket, domain, traceId, ct);
                 }
             }
             catch
@@ -164,6 +192,53 @@ public class DnsProxyService
         LastFailureUtc = _lastFailureUtc
     };
 
+    private async Task<byte[]?> ResolveDnsThroughUpstreamWithSingleflightAsync(
+        byte[] dnsQueryPayload,
+        string domain,
+        string dnsServer,
+        string traceId,
+        CancellationToken ct)
+    {
+        var key = domain.Trim().ToLowerInvariant();
+        var task = _dnsResolveInflight.GetOrAdd(
+            key,
+            _ => ResolveDnsThroughUpstreamAsync(dnsQueryPayload, domain, dnsServer, traceId, ct));
+
+        try
+        {
+            return await task;
+        }
+        finally
+        {
+            _dnsResolveInflight.TryRemove(key, out _);
+        }
+    }
+
+    private async Task<byte[]?> ResolveDnsThroughUpstreamAsync(
+        byte[] dnsQueryPayload,
+        string domain,
+        string dnsServer,
+        string traceId,
+        CancellationToken ct)
+    {
+        if (ShouldBypassTcpProxyDns())
+        {
+            return await QueryDnsOverHttpsAsync(dnsQueryPayload, domain, traceId, ct);
+        }
+
+        var dnsResponse = await QueryDnsViaProxyAsync(dnsQueryPayload, domain, dnsServer, traceId, ct);
+        if (dnsResponse == null || dnsResponse.Length == 0)
+        {
+            Log.Warning("[DNS:{Trace}] TCP DNS failed for {Domain}; trying DoH fallback", traceId, domain);
+            dnsResponse = await QueryDnsOverHttpsAsync(dnsQueryPayload, domain, traceId, ct);
+        }
+
+        return dnsResponse;
+    }
+
+    private bool ShouldBypassTcpProxyDns() =>
+        _proxyType == ProxyType.Http && _httpConnectTo53Rejected;
+
     // ── FakeIP helpers ────────────────────────────────────────────────────────
 
     /// <summary>
@@ -186,6 +261,7 @@ public class DnsProxyService
     {
         var fakeIp = _fakeIpPool!.AllocateOrGet(domain);
         var fakeIpStr = fakeIp.ToString();
+        var traceId = BuildTraceId(query.TransactionId);
 
         Log.Debug("[DNS ] FakeIP {FakeIP} allocated for {Domain}", fakeIpStr, domain);
         _lastMethod = FakeIpLastMethod;
@@ -193,7 +269,13 @@ public class DnsProxyService
         _lastError = null;
 
         // Register fake IP → domain so TCP/UDP path can find the hostname.
-        _resolutionStore.RecordObservedHostname(fakeIpStr, domain, FakeIpDnsSource, FakeIpInitialRoute, FakeIpLastMethod);
+        _resolutionStore.RecordObservedHostname(
+            fakeIpStr,
+            domain,
+            FakeIpDnsSource,
+            FakeIpInitialRoute,
+            FakeIpLastMethod,
+            traceId);
 
         // Return the synthetic response immediately – no upstream round-trip needed.
         var fakeResponse = BuildFakeIpDnsResponse(query, domain, fakeIp);
@@ -201,37 +283,41 @@ public class DnsProxyService
 
         // Background: resolve the real IP via the upstream proxy for routing-decision quality.
         // We deliberately do NOT await so the client gets an instant response.
-        _ = Task.Run(async () =>
-        {
-            try
+        _ = StartFakeIpBackgroundResolutionAsync(domain, traceId, ct);
+    }
+
+    private Task StartFakeIpBackgroundResolutionAsync(string domain, string traceId, CancellationToken ct)
+    {
+        var key = domain.Trim().ToLowerInvariant();
+        return _fakeIpBackgroundResolveInflight.GetOrAdd(
+            key,
+            _key => Task.Run(async () =>
             {
-                var realDnsResponse = await QueryDnsViaProxyAsync(
-                    requestPacket.Payload, domain, _upstreamDns, ct);
-
-                if (realDnsResponse == null || realDnsResponse.Length == 0)
+                try
                 {
-                    realDnsResponse = await QueryDnsOverHttpsAsync(requestPacket.Payload, domain, ct);
-                }
-
-                if (realDnsResponse != null && realDnsResponse.Length > 0)
-                {
-                    var realPacket = DnsPacket.Parse(realDnsResponse);
-                    if (realPacket != null)
+                    var queryPayload = BuildAQueryPayload(domain);
+                    var realDnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(queryPayload, domain, _upstreamDns, traceId, ct);
+                    if (realDnsResponse != null && realDnsResponse.Length > 0)
                     {
-                        // Record real IPs with proper routing decisions but do NOT cache
-                        // them as DNS responses (clients must keep using the fake IPs).
-                        await RecordResolvedAddressesAsync(realPacket, domain, ct);
+                        var realPacket = DnsPacket.Parse(realDnsResponse);
+                        if (realPacket != null)
+                        {
+                            await RecordResolvedAddressesAsync(realPacket, domain, traceId, ct);
+                        }
                     }
                 }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "[DNS ] FakeIP background real-DNS resolution failed for {Domain}", domain);
-            }
-        }, ct);
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[DNS:{Trace}] FakeIP background real-DNS resolution failed for {Domain}", traceId, domain);
+                }
+                finally
+                {
+                    _fakeIpBackgroundResolveInflight.TryRemove(key, out var _);
+                }
+            }, ct));
     }
 
     /// <summary>
@@ -262,16 +348,16 @@ public class DnsProxyService
         return response.Build();
     }
 
-    private async Task RecordResolvedAddressesAsync(byte[] dnsResponse, string domain, CancellationToken ct)
+    private async Task RecordResolvedAddressesAsync(byte[] dnsResponse, string domain, string traceId, CancellationToken ct)
     {
         var dnsRespPacket = DnsPacket.Parse(dnsResponse);
         if (dnsRespPacket != null)
         {
-            await RecordResolvedAddressesAsync(dnsRespPacket, domain, ct);
+            await RecordResolvedAddressesAsync(dnsRespPacket, domain, traceId, ct);
         }
     }
 
-    private async Task RecordResolvedAddressesAsync(DnsPacket dnsRespPacket, string domain, CancellationToken ct)
+    private async Task RecordResolvedAddressesAsync(DnsPacket dnsRespPacket, string domain, string traceId, CancellationToken ct)
     {
         var resolvedIps = new List<string>();
         foreach (var answer in dnsRespPacket.Answers)
@@ -291,7 +377,8 @@ public class DnsProxyService
                 domain,
                 "DNS",
                 decision == null ? "UNKNOWN" : decision.ShouldProxy ? "PROXY" : "DIRECT",
-                decision?.Reason);
+                decision?.Reason,
+                traceId);
             if (decision is { ShouldProxy: false } && _onDirectRouteCandidate != null)
             {
                 _ = _onDirectRouteCandidate(ipAddress, decision, ct);
@@ -306,7 +393,7 @@ public class DnsProxyService
         }
     }
 
-    internal Task<byte[]?> QueryDnsViaProxyAsync(string domain, string dnsServer, CancellationToken ct)
+    internal Task<byte[]?> QueryDnsViaProxyAsync(string domain, string dnsServer, string traceId, CancellationToken ct)
     {
         var dnsQuery = new DnsPacket
         {
@@ -318,17 +405,17 @@ public class DnsProxyService
             }
         };
 
-        return QueryDnsViaProxyAsync(dnsQuery.Build(), domain, dnsServer, ct);
+        return QueryDnsViaProxyAsync(dnsQuery.Build(), domain, dnsServer, traceId, ct);
     }
 
-    internal async Task<byte[]?> QueryDnsViaProxyAsync(byte[] dnsQueryPayload, string domain, string dnsServer, CancellationToken ct)
+    internal async Task<byte[]?> QueryDnsViaProxyAsync(byte[] dnsQueryPayload, string domain, string dnsServer, string traceId, CancellationToken ct)
     {
         System.Net.Sockets.TcpClient? client = null;
         var stopwatch = Stopwatch.StartNew();
         Interlocked.Increment(ref _tcpQueries);
         _lastMethod = "tcp-proxy";
 
-        if (_proxyType == ProxyType.Http && _httpConnectTo53Rejected)
+        if (ShouldBypassTcpProxyDns())
         {
             // Some HTTP proxies explicitly deny CONNECT to destination port 53.
             // After the first definitive policy rejection, skip repeated CONNECT attempts
@@ -379,7 +466,7 @@ public class DnsProxyService
                                 _httpConnectTo53Rejected = true;
                             }
 
-                            Log.Warning("HTTP proxy rejected DNS CONNECT: {Status}", statusLine);
+                            LogHttpConnectRejected(statusLine);
                             return null;
                         }
 
@@ -486,7 +573,7 @@ public class DnsProxyService
         }
     }
 
-    internal async Task<byte[]?> QueryDnsOverHttpsAsync(byte[] dnsQueryPayload, string domain, CancellationToken ct)
+    internal async Task<byte[]?> QueryDnsOverHttpsAsync(byte[] dnsQueryPayload, string domain, string traceId, CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
         Interlocked.Increment(ref _dohQueries);
@@ -494,7 +581,7 @@ public class DnsProxyService
         try
         {
             using var client = ProxyHttpClientFactory.Create(_proxyConfig, TimeSpan.FromSeconds(15));
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://dns.google/dns-query")
+            using var request = new HttpRequestMessage(HttpMethod.Post, _dohEndpoint)
             {
                 Content = new ByteArrayContent(dnsQueryPayload)
             };
@@ -515,9 +602,7 @@ public class DnsProxyService
             var data = await response.Content.ReadAsByteArrayAsync(ct);
             Interlocked.Increment(ref _dohSuccesses);
             _lastSuccessUtc = DateTime.UtcNow;
-            Log.Information("[DNS ] DoH fallback succeeded for {Domain} in {ElapsedMs} ms",
-                domain,
-                stopwatch.ElapsedMilliseconds);
+            LogDohFallbackSuccess(domain, traceId, stopwatch.ElapsedMilliseconds);
             return data;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -528,5 +613,146 @@ public class DnsProxyService
             Log.Warning(ex, "[DNS ] DoH fallback failed for {Domain}", domain);
             return null;
         }
+    }
+
+    private static string ResolveDohEndpoint(string upstreamDns)
+    {
+        return upstreamDns switch
+        {
+            "223.5.5.5" or "223.6.6.6" => "https://dns.alidns.com/dns-query",
+            "119.29.29.29" or "182.254.116.116" => "https://doh.pub/dns-query",
+            "1.1.1.1" or "1.0.0.1" => "https://cloudflare-dns.com/dns-query",
+            _ => "https://dns.google/dns-query"
+        };
+    }
+
+    private static string BuildTraceId(ushort transactionId) =>
+        $"{transactionId:x4}-{DateTime.UtcNow:HHmmssfff}";
+
+    private static byte[] BuildAQueryPayload(string domain)
+    {
+        var packet = new DnsPacket
+        {
+            TransactionId = (ushort)Random.Shared.Next(0, 65536),
+            Flags = new DnsFlags(0x0100),
+            Questions =
+            [
+                new DnsQuestion { Name = domain, Type = 1, Class = 1 }
+            ]
+        };
+
+        return packet.Build();
+    }
+
+    private bool IsProbeDomain(string domain)
+    {
+        var normalized = domain.Trim().TrimEnd('.');
+        return _probeDirectDomainSuffixes.Any(suffix =>
+            normalized.Equals(suffix, StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith('.' + suffix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<bool> HandleProbeDomainQueryAsync(
+        ITunDevice device,
+        IPPacket requestPacket,
+        DnsPacket query,
+        string domain,
+        string traceId,
+        CancellationToken ct)
+    {
+        if (query.Questions[0].Type != 1)
+        {
+            return false;
+        }
+
+        var addresses = await ResolveProbeDomainAddressesAsync(domain, ct);
+        if (addresses.Count == 0)
+        {
+            return false;
+        }
+
+        var response = BuildDirectDnsResponse(query, domain, addresses);
+        var responsePacket = DnsPacket.Parse(response);
+        if (responsePacket != null)
+        {
+            _resolutionStore.StoreDnsResponseInCache(responsePacket);
+            await RecordResolvedAddressesAsync(responsePacket, domain, traceId, ct);
+        }
+
+        _lastMethod = "probe-direct";
+        _lastSuccessUtc = DateTime.UtcNow;
+        _lastError = null;
+        TunWriter.WriteUdpResponse(device, requestPacket, response);
+        return true;
+    }
+
+    private static async Task<List<IPAddress>> ResolveProbeDomainAddressesAsync(string domain, CancellationToken ct)
+    {
+        try
+        {
+            var addresses = await Dns.GetHostAddressesAsync(domain, ct);
+            return addresses
+                .Where(address => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                .Distinct()
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static byte[] BuildDirectDnsResponse(DnsPacket query, string domain, IReadOnlyList<IPAddress> addresses)
+    {
+        var flags = (ushort)(0x8000 | 0x0080 | (query.Flags.Value & 0x0100));
+        var response = new DnsPacket
+        {
+            TransactionId = query.TransactionId,
+            Flags = new DnsFlags(flags),
+            Questions = [new DnsQuestion { Name = domain, Type = 1, Class = 1 }],
+            Answers = addresses.Select(address => new DnsAnswer
+            {
+                Name = domain,
+                Type = 1,
+                Class = 1,
+                TTL = 60,
+                Data = address.GetAddressBytes()
+            }).ToList()
+        };
+
+        return response.Build();
+    }
+
+    private void LogHttpConnectRejected(string status)
+    {
+        var now = DateTime.UtcNow;
+        if (now - _lastHttpConnectRejectWarningUtc >= HttpConnectRejectWarningWindow)
+        {
+            var suppressed = Interlocked.Exchange(ref _suppressedHttpConnectRejectWarnings, 0);
+            _lastHttpConnectRejectWarningUtc = now;
+            Log.Warning(
+                "HTTP proxy rejected DNS CONNECT: {Status}. Suppressed={Suppressed} in last {WindowSeconds}s",
+                status,
+                suppressed,
+                (int)HttpConnectRejectWarningWindow.TotalSeconds);
+            return;
+        }
+
+        Interlocked.Increment(ref _suppressedHttpConnectRejectWarnings);
+    }
+
+    private void LogDohFallbackSuccess(string domain, string traceId, long elapsedMs)
+    {
+        var key = domain.Trim().ToLowerInvariant();
+        var now = DateTime.UtcNow;
+        var lastLogUtc = _lastDohSuccessInfoByDomain.GetOrAdd(key, DateTime.MinValue);
+        if (now - lastLogUtc >= DohSuccessInfoWindow)
+        {
+            _lastDohSuccessInfoByDomain[key] = now;
+            Log.Information("[DNS:{Trace}] DoH fallback succeeded for {Domain} in {ElapsedMs} ms", traceId, domain, elapsedMs);
+            return;
+        }
+
+        Log.Debug("[DNS:{Trace}] DoH fallback succeeded for {Domain} in {ElapsedMs} ms", traceId, domain, elapsedMs);
     }
 }

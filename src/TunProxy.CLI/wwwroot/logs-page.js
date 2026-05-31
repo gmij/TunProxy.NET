@@ -161,7 +161,7 @@
         </template>
 
         <div class="tp-log-layout">
-          <section class="tp-section">
+          <section class="tp-section tp-log-main">
             <div class="tp-log-toolbar">
               <a-segmented v-model:value="filterText" :options="filterOptions"></a-segmented>
               <div class="tp-toolbar">
@@ -170,41 +170,43 @@
               </div>
             </div>
 
-            <div ref="terminalRef" class="tp-terminal">
-              <div class="tp-terminal-head"><span>tunproxy-.log</span><span>max 1000 lines · filter {{ filterText || t('Page.Logs.FilterAll') }}</span></div>
-              <div v-if="visibleLines.length === 0" class="tp-empty-state" style="background: transparent; border-color: #253044">
-                <div class="tp-section-title">{{ C.htmlText(t('Page.Logs.EmptyHtml')) }}</div>
+            <div class="tp-log-body">
+              <div ref="terminalRef" class="tp-terminal tp-scrollbar">
+                <div class="tp-terminal-head"><span>tunproxy-.log</span><span>max 1000 lines · filter {{ filterText || t('Page.Logs.FilterAll') }}</span></div>
+                <div v-if="visibleLines.length === 0" class="tp-empty-state" style="background: transparent; border-color: #253044">
+                  <div class="tp-section-title">{{ C.htmlText(t('Page.Logs.EmptyHtml')) }}</div>
+                </div>
+                <p v-for="line in visibleLines" :key="line.id" class="tp-log-line">
+                  <span class="tp-log-time">{{ line.time }}</span>
+                  <span :class="'tp-log-' + line.level"> [{{ line.level }}]</span>
+                  <span> {{ line.message }}</span>
+                  <span v-if="line.ex" class="tp-log-ex">{{ line.ex }}</span>
+                </p>
               </div>
-              <p v-for="line in visibleLines" :key="line.id" class="tp-log-line">
-                <span class="tp-log-time">{{ line.time }}</span>
-                <span :class="'tp-log-' + line.level"> [{{ line.level }}]</span>
-                <span> {{ line.message }}</span>
-                <span v-if="line.ex" class="tp-log-ex">{{ line.ex }}</span>
-              </p>
+
+              <aside class="tp-log-side tp-scrollbar">
+                <section class="tp-section">
+                  <div class="tp-section-title">{{ t('Page.Logs.Title') }}</div>
+                  <div class="tp-two-grid" style="grid-template-columns:1fr 1fr;margin-top:12px">
+                    <div v-for="card in countCards" :key="card.label" class="tp-log-count-card">
+                      <span class="tp-muted">{{ card.label }}</span>
+                      <span class="tp-count-value" :style="{ color: card.color || '#18202f' }">{{ card.value }}</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="tp-section">
+                  <div class="tp-section-title">{{ t('Page.Status.Heading') }}</div>
+                  <tp-kv-list :items="[
+                    { label: t('Page.Status.Badge.Running'), value: t('Page.Status.Badge.Running') },
+                    { label: t('Page.Logs.FilterAll'), value: counts.all },
+                    { label: t('Page.Logs.FilterWarnings'), value: counts.warnings },
+                    { label: t('Page.Logs.FilterErrors'), value: counts.errors }
+                  ]"></tp-kv-list>
+                </section>
+              </aside>
             </div>
           </section>
-
-          <aside>
-            <section class="tp-section">
-              <div class="tp-section-title">{{ t('Page.Logs.Title') }}</div>
-              <div class="tp-two-grid" style="grid-template-columns:1fr 1fr;margin-top:12px">
-                <div v-for="card in countCards" :key="card.label" class="tp-log-count-card">
-                  <span class="tp-muted">{{ card.label }}</span>
-                  <span class="tp-count-value" :style="{ color: card.color || '#18202f' }">{{ card.value }}</span>
-                </div>
-              </div>
-            </section>
-
-            <section class="tp-section">
-              <div class="tp-section-title">{{ t('Page.Status.Heading') }}</div>
-              <tp-kv-list :items="[
-                { label: t('Page.Status.Badge.Running'), value: t('Page.Status.Badge.Running') },
-                { label: t('Page.Logs.FilterAll'), value: counts.all },
-                { label: t('Page.Logs.FilterWarnings'), value: counts.warnings },
-                { label: t('Page.Logs.FilterErrors'), value: counts.errors }
-              ]"></tp-kv-list>
-            </section>
-          </aside>
         </div>
 
         <a-float-button class="tp-fab" @click="scrollToBottom" :tooltip="t('Page.Logs.ScrollToLatest')"></a-float-button>

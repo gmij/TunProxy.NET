@@ -215,6 +215,10 @@ body {
   align-items: start;
 }
 
+.tp-page-grid.tp-page-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .tp-two-grid,
 .tp-three-grid,
 .tp-four-grid {
@@ -302,15 +306,8 @@ body {
   line-height: 1;
 }
 
-.tp-status-band {
-  background: var(--tp-surface);
-  border: 1px solid var(--tp-line);
-  border-radius: 8px;
-  padding: 18px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(320px, .85fr);
-  gap: 18px;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, .05);
+.tp-status-header {
+  padding: 12px 14px;
 }
 
 .tp-status-primary {
@@ -365,8 +362,48 @@ body {
 }
 
 .tp-status-title {
-  font-size: 19px;
+  font-size: 22px;
   font-weight: 760;
+}
+
+.tp-status-overview-grid .tp-overview-card {
+  min-height: 84px;
+  padding: 12px;
+}
+
+.tp-overview-value {
+  font-size: 20px;
+  line-height: 1.15;
+  font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-card-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.tp-card-meta {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.tp-card-label {
+  color: var(--tp-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.tp-card-value {
+  text-align: right;
+  justify-self: end;
+  font-variant-numeric: tabular-nums;
 }
 
 .tp-endpoint {
@@ -410,9 +447,9 @@ body {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  padding: 14px;
+  padding: 16px;
   display: grid;
-  gap: 12px;
+  gap: 14px;
   align-content: start;
   min-width: 0;
 }
@@ -438,9 +475,8 @@ body {
 .tp-metric-card {
   padding: 14px;
   min-height: 126px;
-  display: grid;
-  align-content: space-between;
-  gap: 12px;
+  display: flex;
+  align-items: center;
 }
 
 .tp-metric-label {
@@ -467,7 +503,7 @@ body {
 .tp-metric-value,
 .tp-summary-value,
 .tp-count-value {
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.1;
   font-weight: 780;
 }
@@ -478,6 +514,42 @@ body {
   border-radius: 8px;
   padding: 14px;
   background: #fff;
+}
+
+.tp-line-chart {
+  height: 180px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fafcff 0%, #f3f7fd 100%);
+  padding: 8px;
+}
+
+.tp-line-chart svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.tp-line-grid {
+  fill: none;
+  stroke: #d8e1ec;
+  stroke-width: 1;
+}
+
+.tp-line-sent,
+.tp-line-recv {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tp-line-sent {
+  stroke: #2563eb;
+}
+
+.tp-line-recv {
+  stroke: #0891b2;
 }
 
 .tp-bars {
@@ -572,6 +644,10 @@ body {
 .tp-mode-list {
   display: grid;
   gap: 10px;
+}
+
+.tp-local-port-field {
+  margin-bottom: 12px;
 }
 
 .tp-mode-choice {
@@ -684,11 +760,92 @@ body {
   background: #ecfeff;
 }
 
+.tp-dns-main {
+  padding-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.tp-dns-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #e6edf5;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fcfdff 0%, #f7faff 100%);
+}
+
+.tp-shell.tp-shell-dns {
+  min-height: 100vh;
+  height: 100vh;
+}
+
+.tp-shell.tp-shell-dns .tp-main {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.tp-dns-layout {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tp-dns-layout > .tp-page-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.tp-dns-layout > .tp-page-grid > aside {
+  min-height: 0;
+  overflow: auto;
+}
+
+.tp-dns-table-scroll .ant-table-wrapper,
+.tp-dns-table-scroll .ant-table-container {
+  height: 100%;
+}
+
+.tp-dns-table-scroll .ant-table {
+  background: transparent;
+}
+
+.tp-dns-table-scroll .ant-table-cell {
+  background: transparent !important;
+}
+
 .tp-log-layout {
+  display: block;
+}
+
+.tp-log-main {
+  padding-bottom: 18px;
+  height: calc(100vh - 132px);
+  display: flex;
+  flex-direction: column;
+}
+
+.tp-log-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 18px;
-  align-items: start;
+  gap: 16px;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.tp-log-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .tp-log-toolbar {
@@ -705,12 +862,48 @@ body {
   color: #d0d5dd;
   border-radius: 8px;
   border: 1px solid #253044;
-  min-height: calc(100vh - 278px);
+  min-height: 0;
+  height: 100%;
   padding: 14px;
   font-family: Consolas, "Cascadia Code", monospace;
   font-size: 12.5px;
   line-height: 1.65;
   overflow-y: auto;
+}
+
+.tp-scrollbar {
+}
+
+.tp-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.tp-scrollbar::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, #eef3f9 0%, #e5edf6 100%);
+  border-radius: 999px;
+}
+
+.tp-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #9ab0c6 0%, #7e97af 100%);
+  border-radius: 999px;
+  border: 2px solid #e7eff8;
+}
+
+.tp-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #879eb6 0%, #6f88a1 100%);
+}
+
+.tp-terminal.tp-scrollbar {
+}
+
+.tp-terminal.tp-scrollbar::-webkit-scrollbar-track {
+  background: #162030;
+}
+
+.tp-terminal.tp-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #8fa3bf 0%, #7088a6 100%);
+  border-color: #1a2738;
 }
 
 .tp-terminal-head {
@@ -801,10 +994,33 @@ body {
     display: flex;
   }
 
-  .tp-status-band,
+  .tp-status-overview-grid,
   .tp-page-grid,
-  .tp-log-layout {
+  .tp-log-body {
     grid-template-columns: 1fr;
+  }
+
+  .tp-dns-main {
+    height: auto;
+  }
+
+  .tp-dns-table-scroll {
+    max-height: 62vh;
+  }
+
+  .tp-shell.tp-shell-dns,
+  .tp-shell.tp-shell-dns .tp-main,
+  .tp-dns-layout {
+    height: auto;
+    overflow: visible;
+  }
+
+  .tp-log-main {
+    height: auto;
+  }
+
+  .tp-log-side {
+    overflow: visible;
   }
 }
 
@@ -817,6 +1033,16 @@ body {
   .tp-section-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .tp-card-line {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .tp-card-value {
+    justify-self: start;
+    text-align: left;
   }
 
   .tp-toolbar {

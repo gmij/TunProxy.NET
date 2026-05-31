@@ -12,6 +12,8 @@
   C.mountPage({
     pageId: 'status',
     setup: function () {
+      var trafficStoreKey = 'tunproxy.status.trafficSamples.v1';
+      var totalsStoreKey = 'tunproxy.status.previousTotals.v1';
       var status = Vue.ref(null);
       var loading = Vue.ref(true);
       var serviceBusy = Vue.ref(false);
@@ -21,6 +23,46 @@
       var previousTotals = Vue.ref(null);
       var trafficSamples = Vue.ref([]);
       var timer = null;
+      var sampleIntervalSeconds = 5;
+      var trafficWindowSeconds = 30 * 60;
+      var maxTrafficSamples = Math.floor(trafficWindowSeconds / sampleIntervalSeconds);
+
+      function loadTrafficState() {
+        try {
+          var storedSamples = JSON.parse(localStorage.getItem(trafficStoreKey) || '[]');
+          if (Array.isArray(storedSamples)) {
+            trafficSamples.value = storedSamples
+              .map(function (item) {
+                return {
+                  sent: Math.max(0, Number(item.sent || 0)),
+                  recv: Math.max(0, Number(item.recv || 0))
+                };
+              })
+              .slice(-maxTrafficSamples);
+          }
+
+          var storedTotals = JSON.parse(localStorage.getItem(totalsStoreKey) || 'null');
+          if (storedTotals && typeof storedTotals.sent === 'number' && typeof storedTotals.recv === 'number') {
+            previousTotals.value = {
+              sent: Math.max(0, Number(storedTotals.sent || 0)),
+              recv: Math.max(0, Number(storedTotals.recv || 0))
+            };
+          }
+        }
+        catch {
+          trafficSamples.value = [];
+          previousTotals.value = null;
+        }
+      }
+
+      function persistTrafficState() {
+        try {
+          localStorage.setItem(trafficStoreKey, JSON.stringify(trafficSamples.value.slice(-maxTrafficSamples)));
+          localStorage.setItem(totalsStoreKey, JSON.stringify(previousTotals.value));
+        }
+        catch {
+        }
+      }
 
       var metrics = Vue.computed(function () {
         return status.value && status.value.metrics ? status.value.metrics : {};
@@ -36,9 +78,45 @@
           { color: isRunning.value ? 'success' : 'default', text: isRunning.value ? C.t('Page.Status.Badge.Running') : C.t('Page.Status.Badge.Stopped') },
           { color: status.value.mode === 'tun' ? 'blue' : 'cyan', text: C.modeLabel(status.value.mode) }
         ];
-        if (status.value.mode === 'tun' && status.value.fakeIpMode) tags.push({ color: 'default', text: 'FakeIP' });
         if (status.value.isDownloading) tags.push({ color: 'warning', text: C.t('Page.Status.Badge.Downloading') });
         return tags;
+      });
+
+      var overviewCards = Vue.computed(function () {
+        if (!status.value) return [];
+        var connectIssueText = connectIssue.value ? connectIssue.value.reason : C.t('Shared.None');
+        return [
+          {
+            label: C.t('Page.Status.ProxyServer'),
+            value: status.value.proxyHost + ':' + status.value.proxyPort,
+            sub: C.t('Page.Config.ProxyType') + ': ' + (status.value.proxyType || '-')
+          },
+          {
+            label: C.t('Page.Status.ActiveConnections'),
+            value: status.value.activeConnections,
+            sub: C.t('Page.Status.TotalConnections') + ': ' + (metrics.value.totalConnections || 0)
+          },
+          {
+            label: C.t('Page.Status.Uptime'),
+            value: C.fmtUptime(metrics.value.uptimeSeconds),
+            sub: C.t('Shared.RefreshAt').split('|')[0].replace('{0}', '5') + ' · ' + lastUpdate.value
+          },
+          {
+            label: C.t('Page.Config.SystemProxyMode'),
+            value: status.value.mode === 'tun' ? C.t('Page.Config.SystemProxyMode.Tun') : C.t('Mode.Proxy'),
+            sub: 'FakeIP: ' + (status.value.fakeIpMode ? 'On' : 'Off')
+          },
+          {
+            label: C.t('Page.Status.ConnectIssue.Title'),
+            value: connectIssueText,
+            sub: C.t('Page.Status.FailedConnections') + ': ' + (metrics.value.failedConnections || 0)
+          },
+          {
+            label: C.t('Page.Status.BytesSent'),
+            value: C.fmtRate(metrics.value.bytesPerSecond, 'B/s'),
+            sub: 'Packet rate: ' + C.fmtRate(metrics.value.packetsPerSecond, 'pkt/s')
+          }
+        ];
       });
 
       var metricCards = Vue.computed(function () {
@@ -76,24 +154,35 @@
         };
       });
 
-      var bars = Vue.computed(function () {
-        var values = [];
-        trafficSamples.value.forEach(function (sample) {
-          values.push({ type: 'sent', value: sample.sent });
-          values.push({ type: 'recv', value: sample.recv });
-        });
-        while (values.length < 14) {
-          values.unshift({ type: values.length % 2 === 0 ? 'sent' : 'recv', value: 0 });
+      var trafficLineChart = Vue.computed(function () {
+        var width = 1000;
+        var height = 220;
+        var padding = 12;
+        var samples = trafficSamples.value;
+        var max = Math.max.apply(null, samples.map(function (item) {
+          return Math.max(Number(item.sent || 0), Number(item.recv || 0));
+        }).concat([1]));
+
+        function buildPath(key) {
+          if (!samples.length) {
+            return '';
+          }
+
+          var step = samples.length > 1 ? (width - padding * 2) / (samples.length - 1) : 0;
+          return samples.map(function (sample, index) {
+            var value = Number(sample[key] || 0);
+            var x = padding + index * step;
+            var y = height - padding - (value / max) * (height - padding * 2);
+            return (index === 0 ? 'M' : 'L') + x.toFixed(2) + ' ' + y.toFixed(2);
+          }).join(' ');
         }
-        values = values.slice(-14);
-        var max = Math.max.apply(null, values.map(function (item) { return item.value; }).concat([1]));
-        return values.map(function (item) {
-          return {
-            height: item.value > 0 ? Math.max(8, item.value / max * 100) : 3,
-            type: item.type,
-            value: item.value
-          };
-        });
+
+        return {
+          max: max,
+          recvPath: buildPath('recv'),
+          sentPath: buildPath('sent'),
+          viewBox: '0 0 ' + width + ' ' + height
+        };
       });
 
       function recordTrafficSample(payload) {
@@ -105,12 +194,14 @@
         previousTotals.value = current;
         if (!previous) {
           trafficSamples.value = [{ sent: 0, recv: 0 }];
+          persistTrafficState();
           return;
         }
         trafficSamples.value = trafficSamples.value.concat({
           sent: Math.max(0, current.sent - previous.sent),
           recv: Math.max(0, current.recv - previous.recv)
-        }).slice(-7);
+        }).slice(-maxTrafficSamples);
+        persistTrafficState();
       }
 
       function refreshStatus() {
@@ -148,6 +239,7 @@
       }
 
       Vue.onMounted(function () {
+        loadTrafficState();
         refreshStatus();
         timer = window.setInterval(refreshStatus, 5000);
       });
@@ -157,7 +249,9 @@
       });
 
       return {
-        bars: bars,
+        trafficLineChart: trafficLineChart,
+        sampleIntervalSeconds: sampleIntervalSeconds,
+        trafficWindowSeconds: trafficWindowSeconds,
         connectIssue: connectIssue,
         controlService: controlService,
         diagnostics: diagnostics,
@@ -167,6 +261,7 @@
         metricCards: metricCards,
         metrics: metrics,
         modeTags: modeTags,
+        overviewCards: overviewCards,
         serviceAlertType: serviceAlertType,
         serviceBusy: serviceBusy,
         serviceMessage: serviceMessage,
@@ -202,38 +297,32 @@
           </a-alert>
 
           <a-spin :spinning="loading">
-            <section class="tp-status-band">
+            <section class="tp-section tp-status-header">
               <div class="tp-status-primary">
                 <div class="tp-pulse" :class="{ stopped: !isRunning }"></div>
                 <div>
                   <div class="tp-status-title-row">
-                    <div class="tp-status-title">{{ isRunning ? t('Page.Status.Badge.Running') : t('Page.Status.Badge.Stopped') }}</div>
+                    <div class="tp-status-title">{{ t('Page.Status.Heading') }}</div>
                     <a-tag v-for="tag in modeTags" :key="tag.text" :color="tag.color">{{ tag.text }}</a-tag>
                   </div>
-                  <div class="tp-tag-row">
-                    <a-tag color="blue">{{ status ? status.proxyType : '-' }} {{ t('Page.Config.ProxyServer') }}</a-tag>
-                    <a-tag color="cyan">{{ status && status.mode === 'tun' ? '透明接管 TCP' : t('Mode.Proxy') }}</a-tag>
-                    <a-tag color="success">{{ t('Page.Status.TunDiagnostics') }}</a-tag>
-                  </div>
-                  <div class="tp-endpoint">
-                    <div class="tp-info-tile"><div class="tp-info-label">{{ t('Page.Status.ProxyServer') }}</div><div class="tp-info-value">{{ status ? status.proxyHost + ':' + status.proxyPort : '-' }}</div></div>
-                    <div class="tp-info-tile"><div class="tp-info-label">{{ t('Page.Status.ActiveConnections') }}</div><div class="tp-info-value">{{ status ? status.activeConnections : '-' }}</div></div>
-                    <div class="tp-info-tile"><div class="tp-info-label">{{ t('Page.Status.Uptime') }}</div><div class="tp-info-value">{{ C.fmtUptime(metrics.uptimeSeconds) }}</div></div>
-                  </div>
+                  <div class="tp-muted">{{ status && status.mode === 'tun' ? 'TUN 透明接管流量，按规则自动分流。' : t('Mode.Proxy') }}</div>
                 </div>
               </div>
-              <aside class="tp-refresh-box">
-                <div class="tp-section-head"><span class="tp-muted">{{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</span><a-badge status="processing" :text="lastUpdate"></a-badge></div>
-                <div class="tp-health-list">
-                  <div class="tp-health-item"><span class="tp-muted">{{ t('Page.Status.ConnectIssue.Title') }}</span><strong>{{ connectIssue ? connectIssue.reason : t('Shared.None') }}</strong></div>
-                  <div class="tp-health-item"><span class="tp-muted">{{ t('Page.Status.BytesSent') }}</span><strong>{{ C.fmtRate(metrics.bytesPerSecond, 'B/s') }}</strong></div>
-                  <div class="tp-health-item"><span class="tp-muted">Packet rate</span><strong>{{ C.fmtRate(metrics.packetsPerSecond, 'pkt/s') }}</strong></div>
-                  <div class="tp-health-item"><span class="tp-muted">{{ t('Page.Status.FailedConnections') }}</span><strong>{{ metrics.failedConnections || 0 }}</strong></div>
-                </div>
-              </aside>
             </section>
 
-            <div class="tp-page-grid" style="margin-top: 18px">
+            <div class="tp-four-grid tp-status-overview-grid" style="margin-top: 12px">
+              <div v-for="card in overviewCards" :key="card.label" class="tp-metric-card tp-overview-card">
+                <div class="tp-card-line">
+                  <div class="tp-card-meta">
+                    <div class="tp-card-label">{{ card.label }}</div>
+                    <div class="tp-muted">{{ card.sub }}</div>
+                  </div>
+                  <div class="tp-card-value tp-overview-value">{{ card.value }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="tp-page-grid" :class="{ 'tp-page-grid-single': !(status && status.mode === 'tun') }" style="margin-top: 18px">
               <div>
                 <section class="tp-section">
                   <div class="tp-section-head">
@@ -242,19 +331,27 @@
                   </div>
                   <div class="tp-four-grid">
                     <div v-for="card in metricCards" :key="card.label" class="tp-metric-card">
-                      <div class="tp-metric-label"><span>{{ card.label }}</span><span class="tp-metric-icon">{{ card.icon }}</span></div>
-                      <div><div class="tp-metric-value">{{ card.value }}</div><div class="tp-muted">{{ card.sub }}</div></div>
+                      <div class="tp-card-line">
+                        <div class="tp-card-meta">
+                          <div class="tp-metric-label"><span>{{ card.label }}</span><span class="tp-metric-icon">{{ card.icon }}</span></div>
+                          <div class="tp-muted">{{ card.sub }}</div>
+                        </div>
+                        <div class="tp-card-value tp-metric-value">{{ card.value }}</div>
+                      </div>
                     </div>
                   </div>
                   <div class="tp-chart">
-                    <div class="tp-section-head" style="margin-bottom: 6px"><div class="tp-section-title">最近 7 次刷新流量变化</div><div class="tp-muted">蓝色发送，青色接收 · {{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</div></div>
-                    <div class="tp-bars"><div v-for="(bar, index) in bars" :key="index" class="tp-bar" :class="{ recv: bar.type === 'recv' }" :title="C.fmtBytes(bar.value)" :style="{ height: bar.height + '%' }"></div></div>
+                    <div class="tp-section-head" style="margin-bottom: 6px"><div class="tp-section-title">最近 30 分钟流量曲线</div><div class="tp-muted">每 {{ sampleIntervalSeconds }} 秒采样，蓝色发送，青色接收 · {{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</div></div>
+                    <div class="tp-line-chart">
+                      <svg preserveAspectRatio="none" :viewBox="trafficLineChart.viewBox" role="img" aria-label="Traffic line chart">
+                        <path class="tp-line-grid" d="M12 208 L988 208"></path>
+                        <path class="tp-line-grid" d="M12 12 L12 208"></path>
+                        <path class="tp-line-sent" :d="trafficLineChart.sentPath"></path>
+                        <path class="tp-line-recv" :d="trafficLineChart.recvPath"></path>
+                      </svg>
+                    </div>
                   </div>
                 </section>
-                <div class="tp-two-grid" style="margin-top: 12px">
-                  <div class="tp-mini-panel" style="padding: 12px"><div class="tp-muted">{{ t('Page.Status.DirectRouted') }}</div><div class="tp-section-title">{{ metrics.directRoutedPackets || 0 }}</div><div class="tp-muted">{{ t('Page.Status.PortFiltered') }} {{ metrics.portFilteredPackets || 0 }}</div></div>
-                  <div class="tp-mini-panel" style="padding: 12px"><div class="tp-muted">DNS</div><div class="tp-section-title">{{ metrics.dnsQueries || 0 }} / {{ metrics.failedDnsQueries || 0 }}</div><div class="tp-muted">FakeIP {{ status && status.fakeIpMode ? 'On' : 'Off' }}</div></div>
-                </div>
               </div>
               <section class="tp-section" v-if="status && status.mode === 'tun'">
                 <div class="tp-section-head"><div><div class="tp-section-title">{{ t('Page.Status.TunDiagnostics') }}</div><div class="tp-muted">Wintun</div></div><a-tag color="success">正常</a-tag></div>

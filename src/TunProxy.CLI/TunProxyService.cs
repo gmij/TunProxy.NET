@@ -57,6 +57,8 @@ public class TunProxyService : IProxyService
     private const int PacketQueueCapacity = 4096;
     private const int MaxInitialPayloadBufferBytes = 64 * 1024;
     private static readonly TimeSpan ClientWindowPollInterval = TimeSpan.FromMilliseconds(1);
+    private static readonly TimeSpan FakeIpResolveWaitTimeout = TimeSpan.FromMilliseconds(450);
+    private static readonly TimeSpan FakeIpResolvePollInterval = TimeSpan.FromMilliseconds(25);
     private static readonly TimeSpan PendingRelayStateIdleTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OutboundReadyWaitTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OutboundReadyPollInterval = TimeSpan.FromSeconds(1);
@@ -103,6 +105,7 @@ public class TunProxyService : IProxyService
             // In FakeIP mode bypass-route candidates are not added because traffic always
             // arrives at the fake IP (never at the real IP directly).
             onDirectRouteCandidate: _fakeIpPool != null ? null : _directBypassRouteScheduler.ScheduleAsync,
+            probeDirectDomains: config.Route.ProbeDirectDomains,
             fakeIpPool: _fakeIpPool);
     }
 
@@ -531,12 +534,20 @@ public class TunProxyService : IProxyService
                         cachedHostname);
 
                     // For fake-IP destinations the destination address is a virtual placeholder
-                    // from the 198.18.0.0/16 pool.  Pass null so that geo / private-IP checks
-                    // are based on the domain name (or the real IP resolved from it) rather
-                    // than the fake address, which has no geographic meaning.
-                    var effectiveDestIp = (_fakeIpPool != null && FakeIpPool.IsFakeIp(packet.Header.DestinationAddress))
-                        ? null
-                        : (IPAddress?)packet.Header.DestinationAddress;
+                    // from the 198.18.0.0/16 pool. Prefer the most recent real resolved IP for
+                    // the domain when available; otherwise pass null so route selection falls
+                    // back to domain-based resolution instead of using the fake address.
+                    IPAddress? effectiveDestIp;
+                    if (_fakeIpPool != null && FakeIpPool.IsFakeIp(packet.Header.DestinationAddress))
+                    {
+                        effectiveDestIp = target.DomainHint == null
+                            ? null
+                            : await WaitForResolvedAddressAsync(target.DomainHint, ct);
+                    }
+                    else
+                    {
+                        effectiveDestIp = packet.Header.DestinationAddress;
+                    }
 
                     var finalDecision = await _routeDecision.DecideForTunAsync(
                         target.DomainHint,
@@ -1281,6 +1292,29 @@ public class TunProxyService : IProxyService
         }
 
         return _dnsStore?.GetCachedHostname(ip.ToString());
+    }
+
+    private async Task<IPAddress?> WaitForResolvedAddressAsync(string hostname, CancellationToken ct)
+    {
+        var resolved = _dnsStore?.GetMostRecentAddressForHostname(hostname);
+        if (resolved != null)
+        {
+            return resolved;
+        }
+
+        var deadline = DateTime.UtcNow.Add(FakeIpResolveWaitTimeout);
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(FakeIpResolvePollInterval, ct);
+            resolved = _dnsStore?.GetMostRecentAddressForHostname(hostname);
+            if (resolved != null)
+            {
+                return resolved;
+            }
+        }
+
+        return null;
     }
 
     private void SelectOutboundBindAddress()

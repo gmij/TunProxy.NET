@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 TunProxy.NET has three primary surfaces:
 

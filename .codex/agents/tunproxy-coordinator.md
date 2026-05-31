@@ -1,4 +1,4 @@
-# TunProxy 协调 Agent
+﻿# TunProxy 协调 Agent
 
 阅读并遵守 `docs/constitution.md` 和 `docs/agents/main-flow.md`。
 

@@ -1,4 +1,4 @@
-# TunProxy.NET 项目宪章
+﻿# TunProxy.NET 项目宪章
 
 ## 1. 产品使命
 

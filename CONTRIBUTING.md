@@ -1,4 +1,4 @@
-# Contributing
+﻿# Contributing
 
 Thanks for helping make TunProxy.NET easier to run, review, and maintain.
 

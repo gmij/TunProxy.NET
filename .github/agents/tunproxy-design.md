@@ -1,4 +1,4 @@
----
+﻿---
 name: tunproxy-design
 description: 设计 TunProxy.NET 的运行时、API、配置、UI 和测试边界。
 ---

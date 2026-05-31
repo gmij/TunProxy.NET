@@ -1,4 +1,4 @@
-# TunProxy 测试 Agent
+﻿# TunProxy 测试 Agent
 
 阅读并遵守 `docs/constitution.md` 和 `docs/agents/test-agent.md`。
 

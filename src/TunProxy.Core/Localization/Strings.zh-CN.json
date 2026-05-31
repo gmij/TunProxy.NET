@@ -1,0 +1,291 @@
+{
+  "Api": {
+    "InvalidConfigJson": "无效的配置 JSON。",
+    "WindowsOnly": "仅支持 Windows。"
+  },
+  "Mode": {
+    "Proxy": "本地代理",
+    "Tun": "TUN"
+  },
+  "Nav": {
+    "Config": "配置",
+    "Dns": "DNS",
+    "Language": "语言",
+    "Logs": "日志",
+    "Status": "状态"
+  },
+  "Page": {
+    "Config": {
+      "ActionFailed": "操作失败。",
+      "AlertRestarting": "服务正在重启，{0} 秒后自动刷新页面...",
+      "AlertSavedHtml": "配置已保存。<strong>重启服务后生效。</strong>",
+      "ConfigPath": "配置文件路径：<code>tunproxy.json</code>",
+      "CopyAddress": "复制地址",
+      "CurrentMode": "当前模式：",
+      "DirectDomains": "直连域名（每行一个）",
+      "EnableGeo": "启用 GeoIP 路由",
+      "EnableGfw": "启用 GFWList 路由",
+      "RuleResource": {
+        "Disabled": "未启用",
+        "Download": "下载",
+        "Downloading": "下载中...",
+        "Missing": "缺失/无效",
+        "Preparing": "正在重启前准备 GEO/GFW 资源...",
+        "Ready": "有效",
+        "Retry": "重试",
+        "AlreadyLatest": "路由资源已经是最新。",
+        "Refreshed": "路由资源刷新完成。"
+      },
+      "LocalProxyPort": "本地代理端口",
+      "ModeHintProxyHtml": "<strong>本地代理模式</strong>监听本机端口，并可自动设置系统代理，无需管理员权限。<br>可在状态页重启或停止当前服务。",
+      "ModeHintTunHtml": "<strong>TUN 模式</strong>通过虚拟网卡透明接管 TCP 流量。默认启用 FakeIP DNS —— DNS 代理返回虚拟地址，以便在获知真实 IP 之前即可进行基于域名的路由决策。<br>可在状态页重启或停止当前服务。",
+      "ModeUnknown": "未知（服务未运行）",
+      "PacCleared": "PAC 已清除。",
+      "PacDescriptionHtml": "PAC（Proxy Auto-Config）会根据域名规则自动决定走代理还是直连。启用 GFWList 后，相关域名会自动合并进 PAC。",
+      "PacHeading": "PAC 自动代理",
+      "PacSet": "已设置：{0}",
+      "PacSetFailed": "设置 PAC 失败，仅支持 Windows。",
+      "PreviewPac": "预览 PAC",
+      "ProxyDomains": "代理域名（每行一个）",
+      "ProxyHost": "代理地址",
+      "ProxyPassword": "密码（可选）",
+      "ProxyCheck": "检测上游代理",
+      "ProxyStatus": {
+        "Unknown": "未检测",
+        "Hint": "可选：通过当前上游代理访问 Google、GitHub、YouTube。",
+        "Checking": "检测中...",
+        "Available": "可用",
+        "AvailableHint": "检测通过。保存并重启后生效。",
+        "Unavailable": "不可用",
+        "UnavailableHint": "检测失败。只要代理端点可用于保存或下载资源，仍可以继续。",
+        "TargetOk": "{0} ms 内返回 200",
+        "TargetFailed": "请求失败",
+        "CheckFailed": "代理检测失败：{0}",
+        "CheckCompleted": "上游代理检测已完成。",
+        "RequiredBeforeSave": "请先填写上游代理地址和端口，再保存或下载路由资源。"
+      },
+      "ProxyPort": "端口",
+      "ProxyServer": "上游代理",
+      "ProxyType": "类型",
+      "ProxyUsername": "用户名（可选）",
+      "Route": {
+        "Blacklist": "黑名单",
+        "Global": "全局代理",
+        "Whitelist": "白名单"
+      },
+      "RouteMode": "路由模式",
+      "RoutingRules": "路由规则",
+      "RoutingLocked": "上游代理检测通过前，路由规则暂不可配置。",
+      "SmartRoutingDescription": "智能路由只会使用已勾选且文件存在、有效的规则；优先匹配 GFWList，再通过 GeoIP 判断。",
+      "DnsCacheHint": "DNS 缓存记录可在 DNS 页面查看和清理。",
+      "Save": "保存配置",
+      "SaveRestart": "保存并重启",
+      "SaveStatus": {
+        "EndpointRequired": "填写上游代理地址和端口后可保存。",
+        "NoChanges": "当前没有需要保存的配置更改。",
+        "Ready": "配置更改可以保存。",
+        "Saving": "保存中..."
+      },
+      "SaveFailed": "保存配置失败：{0}",
+      "SetSystemProxy": "自动设置系统代理",
+      "SystemProxyMode": {
+        "$value": "系统代理方式",
+        "Pac": "PAC 自动代理",
+        "Global": "全局代理",
+        "Tun": "TUN",
+        "TunDescription": "TUN + FakeIP",
+        "Manual": "全局代理",
+        "None": "不修改系统代理"
+      },
+      "StepUpstream": "上游代理",
+      "StepUpstreamHint": "先填写代理端点。连接测试只是辅助，不会阻止保存和资源下载。",
+      "StepRoutingResources": "路由资源",
+      "StepRoutingResourcesHint": "先下载 GFWList 和 GeoIP 资源，再使用依赖它们的智能路由模式。",
+      "StepProxyMode": "代理方式",
+      "StepProxyModeHint": "最后选择 TunProxy 接管流量的方式，然后保存并重启生效。",
+      "ApplyPac": "设为系统 PAC",
+      "ClearPac": "清除系统 PAC",
+      "Title": "配置"
+    },
+    "Dns": {
+      "ClearSearch": "清除",
+      "Empty": "暂无记录。服务运行后会随流量自动填充。",
+      "Heading": "DNS 解析记录",
+      "IpAddress": "IP 地址",
+      "ProxyModeNoticeHtml": "<strong>本地代理模式</strong>不需要 DNS 拦截，浏览器会直接把域名交给上游代理。此页面仅在 <strong>TUN 模式</strong>下有数据。",
+      "ResolvedDomain": "解析域名",
+      "SeenCount": "命中次数",
+      "Route": "路由",
+      "Reason": "原因",
+      "LastActive": "最近活跃",
+      "RouteDirect": "直连",
+      "RouteProxy": "代理",
+      "RouteUnknown": "未知",
+      "PrivateIp": "私网",
+      "DnsCache": "DNS 缓存",
+      "EmptyApi": "接口当前返回 0 条记录。产生新的 DNS/TUN 流量后会自动刷新。",
+      "ClearCache": "清除",
+      "RouteStepCache": "DNS 缓存",
+      "RouteStepDirect": "直连路由",
+      "RouteStepProxy": "代理路由",
+      "Records": "记录",
+      "RecordsSummary": "{0} 个域名 / {1} 个 IP",
+      "LegendDirect": "私网 IP、解析为私网、直连域名或直连 Geo",
+      "LegendGfw": "命中 GFW 列表",
+      "LegendGeo": "命中 GeoIP",
+      "LegendDefault": "默认规则或 GeoIP 未知",
+      "SearchPlaceholder": "搜索 IP 或域名...",
+      "Title": "DNS",
+      "DoHNoticeTitle": "关于 DNS 记录不完整",
+      "DoHNoticeBody": "Chrome / Edge 默认开启「安全 DNS（DoH）」，DNS 查询通过 HTTPS 发送，不经过 TUN 的 UDP 53 端口拦截，因此这类查询不会出现在此记录中。如需完整记录，请在浏览器安全设置中关闭「使用安全 DNS」。"
+    },
+    "Logs": {
+      "Clear": "清空",
+      "EmptyHtml": "暂无日志。服务启动后会自动出现。<br>TUN 模式：[CONN] 显示 TCP 路由决策，[DNS] 显示 DNS 解析结果。<br>本地代理模式：[CONN] 显示 CONNECT 和 HTTP 请求的路由决策。",
+      "FilterAll": "全部",
+      "FilterConnections": "连接",
+      "FilterDns": "DNS",
+      "FilterErrors": "错误",
+      "FilterPlaceholder": "过滤关键词...",
+      "FilterWarnings": "警告",
+      "Heading": "实时日志",
+      "Pause": "暂停",
+      "Reconnecting": "连接失败，正在重试...",
+      "Resume": "继续",
+      "ScrollToLatest": "滚到最新",
+      "Title": "日志",
+      "UpdatedAt": "最后更新：{0}",
+      "Waiting": "等待日志...",
+      "TerminalMeta": "最多 {0} 行 | 过滤 {1}"
+    },
+    "Status": {
+      "ActiveConnections": "活跃连接",
+      "Badge": {
+        "Downloading": "规则下载中",
+        "Loading": "加载中",
+        "Running": "运行中",
+        "Stopped": "已停止",
+        "Unreachable": "无法连接"
+      },
+      "ServiceRestart": "重启",
+      "ServiceStop": "停止",
+      "ServiceRestarting": "已请求重启服务，页面稍后会重新连接。",
+      "ServiceStopping": "已请求停止服务，Web 控制台将暂时不可用。",
+      "ServiceActionFailed": "服务操作失败：{0}",
+      "ServiceUnavailableHint": "服务当前不可访问。请从系统服务或命令行启动服务，然后刷新此页面。",
+      "ModeTunDescription": "TUN 透明接管流量，按规则自动分流。",
+      "BytesReceived": "接收",
+      "BytesSent": "发送",
+      "FakeIp": "FakeIP",
+      "PacketRate": "包速率",
+      "RollingWindow": "5 秒滚动",
+      "TrafficChartTitle": "最近 30 分钟流量曲线",
+      "TrafficChartDescription": "每 {0} 秒采样，蓝色发送，青色接收",
+      "Wintun": "Wintun",
+      "DirectRouted": "直连路由",
+      "DnsFailures": "DNS 失败",
+      "TunSendAllocationRetryAttempts": "Wintun 发送重试",
+      "TunSendAllocationDrops": "Wintun 发送丢包",
+      "DnsQueries": "DNS 查询",
+      "FailedConnections": "失败连接",
+      "Heading": "服务状态",
+      "ParseFailures": "畸形包",
+      "Ipv6Packets": "忽略的 IPv6 包",
+      "PortFiltered": "端口过滤（非 80/443）",
+      "ProxyServer": "代理服务器",
+      "RawPackets": "接收原始包",
+      "Title": "状态",
+      "TotalConnections": "总连接",
+      "Traffic": "流量统计",
+      "TunDiagnostics": "TUN 诊断",
+      "Uptime": "运行时间",
+      "ConnectIssue": {
+        "Title": "最近连接异常",
+        "OccurredAt": "发生时间：{0}",
+        "Reason": {
+          "ProxyDenied": "上游代理临时拒绝了 CONNECT 请求（例如 HTTP 503）。",
+          "ConnectFailed": "连接上游代理失败。",
+          "DnsFailed": "DNS 链路存在阶段性失败。",
+          "Generic": "发生了连接错误。"
+        },
+        "Hint": {
+          "ProxyDenied": "TunProxy 现已改为短时冷却后自动重试。若问题持续，请到配置页执行代理可用性检查，并核对端点与凭据。",
+          "ConnectFailed": "请检查代理端点是否可达，以及本机防火墙/网络策略是否阻断了外连。",
+          "DnsFailed": "请检查上游 DNS 连通性。若 DoH 回退成功，该提示会在后续连接成功后自动消失。",
+          "Generic": "请结合上方错误详情，在配置页核对代理参数。"
+        }
+      }
+    }
+  },
+  "Shared": {
+    "Loading": "加载中...",
+    "On": "开启",
+    "Off": "关闭",
+    "Healthy": "正常",
+    "None": "无",
+    "RefreshAt": "每 {0} 秒自动刷新 | 上次更新：{1}",
+    "Unknown": "未知"
+  },
+  "Tray": {
+    "Caption": {
+      "ConfirmUninstall": "确认卸载",
+      "Error": "错误",
+      "Info": "提示",
+      "InstallComplete": "安装完成",
+      "RepairFailed": "修复失败",
+      "RepairSuccess": "修复成功"
+    },
+    "FileMissing": "找不到服务程序：\n{0}",
+    "FixTun": {
+      "ApiError": "修复接口返回错误：{0}",
+      "CannotConnectApi": "无法连接服务 API：{0}\n\n请确认服务正在运行。",
+      "Menu": "修复：切换到 TUN 模式（配置已被覆盖）",
+      "SuccessMessage": "已写回 TUN 配置，服务即将自动重启。"
+    },
+    "Install": {
+      "Failed": "安装失败：{0}",
+      "PrerequisiteFailed": "无法启用 TUN 系统服务：已启用的 GEO/GFW 资源缺失或无效。请先打开配置页下载缺失资源，再重试。",
+      "Menu": "安装为系统服务",
+      "MenuInstalled": "已安装为系统服务",
+      "SuccessMessage": "服务安装成功，已自动启用 TUN 模式并启动服务。"
+    },
+    "Menu": {
+      "Exit": "退出",
+      "OpenConsole": "打开控制台",
+      "StartService": "启动服务",
+      "StopService": "停止服务"
+    },
+    "Mode": {
+      "Proxy": "本地代理",
+      "Tun": "TUN"
+    },
+    "NoRunningCli": "未发现运行中的 TunProxy CLI 进程。",
+    "OpenBrowserFailed": "无法打开浏览器：{0}",
+    "Start": {
+      "Failed": "启动失败：{0}"
+    },
+    "StartupFailed": "TunProxy 启动失败",
+    "Status": {
+      "Downloading": "规则下载中...",
+      "Error": "服务异常",
+      "ResponseParseFailed": "响应解析失败",
+      "Restarting": "正在重启服务...",
+      "RunningState": "运行中",
+      "RunningSummary": "运行中（{0}）| {1} 个连接",
+      "ServiceInstalledStopped": "服务已安装，未启动",
+      "ServiceNoResponse": "服务已安装，无响应",
+      "ServiceNotStarted": "服务未启动",
+      "StoppedState": "已停止",
+      "Unknown": "未知"
+    },
+    "Stop": {
+      "Failed": "停止失败：{0}"
+    },
+    "Tooltip": "TunProxy - {0}",
+    "Uninstall": {
+      "ConfirmMessage": "确定要卸载 TunProxy 系统服务吗？\n卸载后会自动切回本地代理模式。",
+      "Failed": "卸载失败：{0}",
+      "Menu": "卸载系统服务"
+    }
+  }
+}

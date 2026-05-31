@@ -1,4 +1,4 @@
-# Third-party Notices
+﻿# Third-party Notices
 
 This file records dependencies that should be reviewed before public releases. It is not a substitute for a project license.
 

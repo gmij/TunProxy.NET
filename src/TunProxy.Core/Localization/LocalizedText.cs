@@ -1,12 +1,14 @@
 using System.Globalization;
-using System.Resources;
+using System.Reflection;
+using System.Text.Json;
 
 namespace TunProxy.Core.Localization;
 
 public static class LocalizedText
 {
-    private static readonly ResourceManager ResourceManager =
-        new("TunProxy.Core.Localization.Strings", typeof(LocalizedText).Assembly);
+    private const string DefaultCultureName = "en";
+    private static readonly Lazy<IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>> Catalogs =
+        new(LoadCatalogs);
 
     public static readonly string[] SupportedCultures = ["en", "zh-CN"];
 
@@ -206,12 +208,12 @@ public static class LocalizedText
     {
         if (string.IsNullOrWhiteSpace(cultureName))
         {
-            return "en";
+            return DefaultCultureName;
         }
 
         return cultureName.StartsWith("zh", StringComparison.OrdinalIgnoreCase)
             ? "zh-CN"
-            : "en";
+            : DefaultCultureName;
     }
 
     public static CultureInfo ResolveCulture(string? cultureName)
@@ -222,8 +224,8 @@ public static class LocalizedText
 
     public static string Get(string key, string? cultureName = null)
     {
-        var culture = ResolveCulture(cultureName);
-        return ResourceManager.GetString(key, culture) ?? key;
+        var cultureNameOrDefault = NormalizeCultureName(cultureName);
+        return ResolveString(key, cultureNameOrDefault);
     }
 
     public static string GetCurrent(string key)
@@ -234,7 +236,7 @@ public static class LocalizedText
     public static string Format(string key, string? cultureName, params object[] args)
     {
         var culture = ResolveCulture(cultureName);
-        var template = ResourceManager.GetString(key, culture) ?? key;
+        var template = ResolveString(key, culture.Name);
         return string.Format(culture, template, args);
     }
 
@@ -245,13 +247,109 @@ public static class LocalizedText
 
     public static Dictionary<string, string> GetFrontendCatalog(string? cultureName)
     {
-        var culture = ResolveCulture(cultureName);
+        var cultureNameOrDefault = NormalizeCultureName(cultureName);
         var catalog = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var key in FrontendKeys)
         {
-            catalog[key] = ResourceManager.GetString(key, culture) ?? key;
+            catalog[key] = ResolveString(key, cultureNameOrDefault);
         }
 
         return catalog;
+    }
+
+    private static string ResolveString(string key, string cultureName)
+    {
+        return TryGetString(key, cultureName)
+            ?? TryGetString(key, DefaultCultureName)
+            ?? key;
+    }
+
+    private static string? TryGetString(string key, string cultureName)
+    {
+        return Catalogs.Value.TryGetValue(cultureName, out var catalog) && catalog.TryGetValue(key, out var value)
+            ? value
+            : null;
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> LoadCatalogs()
+    {
+        var assembly = typeof(LocalizedText).Assembly;
+        var catalogs = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var cultureName in SupportedCultures)
+        {
+            var fileName = cultureName == DefaultCultureName
+                ? "Strings.json"
+                : $"Strings.{cultureName}.json";
+            using var stream = OpenCatalogStream(assembly, fileName)
+                ?? throw new InvalidOperationException($"Embedded localization catalog '{fileName}' was not found.");
+
+            catalogs[cultureName] = ReadCatalog(stream, fileName);
+        }
+
+        return catalogs;
+    }
+
+    private static Stream? OpenCatalogStream(Assembly assembly, string fileName)
+    {
+        var resourceName = assembly
+            .GetManifestResourceNames()
+            .FirstOrDefault(name => name.EndsWith($".Localization.{fileName}", StringComparison.Ordinal));
+
+        return resourceName is null ? null : assembly.GetManifestResourceStream(resourceName);
+    }
+
+    private static IReadOnlyDictionary<string, string> ReadCatalog(Stream stream, string fileName)
+    {
+        using var document = JsonDocument.Parse(stream);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException($"Localization catalog '{fileName}' must be a JSON object.");
+        }
+
+        var catalog = new Dictionary<string, string>(StringComparer.Ordinal);
+        FlattenCatalogObject(document.RootElement, null, catalog, fileName);
+
+        return catalog;
+    }
+
+    private static void FlattenCatalogObject(
+        JsonElement element,
+        string? prefix,
+        Dictionary<string, string> catalog,
+        string fileName)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            var isNodeValue = property.Name == "$value";
+            var key = isNodeValue ? prefix : prefix is null ? property.Name : $"{prefix}.{property.Name}";
+            if (key is null)
+            {
+                throw new InvalidDataException($"Localization catalog '{fileName}' cannot define a root $value.");
+            }
+
+            switch (property.Value.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    if (isNodeValue)
+                    {
+                        throw new InvalidDataException(
+                            $"Localization value '{key}' in '{fileName}' must be a string.");
+                    }
+
+                    FlattenCatalogObject(property.Value, key, catalog, fileName);
+                    break;
+                case JsonValueKind.String:
+                    if (!catalog.TryAdd(key, property.Value.GetString() ?? string.Empty))
+                    {
+                        throw new InvalidDataException(
+                            $"Localization key '{key}' is duplicated in '{fileName}'.");
+                    }
+
+                    break;
+                default:
+                    throw new InvalidDataException(
+                        $"Localization value '{key}' in '{fileName}' must be a string or object.");
+            }
+        }
     }
 }

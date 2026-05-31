@@ -1,4 +1,4 @@
-# TunProxy 设计 Agent
+﻿# TunProxy 设计 Agent
 
 阅读并遵守 `docs/constitution.md` 和 `docs/agents/design-agent.md`。
 

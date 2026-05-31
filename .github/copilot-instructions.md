@@ -1,4 +1,4 @@
-# TunProxy.NET Copilot 指令
+﻿# TunProxy.NET Copilot 指令
 
 使用本仓库的共享 agent 定义。Copilot 专属文件只做薄适配，不维护另一套规则。
 

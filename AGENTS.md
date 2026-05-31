@@ -1,4 +1,4 @@
-# TunProxy.NET Agent 指令
+﻿# TunProxy.NET Agent 指令
 
 本仓库对 Codex、Claude、GitHub Copilot 使用同一套共享 agent 定义。
 

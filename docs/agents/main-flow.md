@@ -1,4 +1,4 @@
-# TunProxy.NET 主 Agent 流程
+﻿# TunProxy.NET 主 Agent 流程
 
 本文件是 Claude、Codex、GitHub Copilot 或人工协调者共用的主流程。各框架入口只负责加载本文件和角色文件，不能各自维护一套不同规则。
 

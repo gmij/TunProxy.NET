@@ -1,4 +1,4 @@
-# TunProxy.NET Claude 指令
+﻿# TunProxy.NET Claude 指令
 
 使用本仓库的共享 agent 定义。除非共享定义本身需要更新，否则不要创建 Claude 专属的另一套角色规则。
 

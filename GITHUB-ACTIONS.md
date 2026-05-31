@@ -1,4 +1,4 @@
-# 使用 GitHub Actions 自动编译
+﻿# 使用 GitHub Actions 自动编译
 
 ## 步骤
 

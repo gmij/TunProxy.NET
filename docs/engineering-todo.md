@@ -1,4 +1,4 @@
-# TunProxy.NET Engineering TODO
+﻿# TunProxy.NET Engineering TODO
 
 This checklist tracks the path from a working utility to a maintainable open-source product. Keep changes small, tested, and behavior-preserving unless a task explicitly changes product behavior.
 

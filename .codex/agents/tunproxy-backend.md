@@ -1,4 +1,4 @@
-# TunProxy 后端 Agent
+﻿# TunProxy 后端 Agent
 
 阅读并遵守 `docs/constitution.md` 和 `docs/agents/backend-agent.md`。
 

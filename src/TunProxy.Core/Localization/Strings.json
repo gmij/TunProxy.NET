@@ -1,0 +1,291 @@
+{
+  "Api": {
+    "InvalidConfigJson": "Invalid configuration JSON.",
+    "WindowsOnly": "Windows only."
+  },
+  "Mode": {
+    "Proxy": "Local Proxy",
+    "Tun": "TUN"
+  },
+  "Nav": {
+    "Config": "Config",
+    "Dns": "DNS",
+    "Language": "Language",
+    "Logs": "Logs",
+    "Status": "Status"
+  },
+  "Page": {
+    "Config": {
+      "ActionFailed": "Action failed.",
+      "AlertRestarting": "Restarting service. Refreshing in {0} seconds...",
+      "AlertSavedHtml": "Configuration saved. <strong>Changes take effect after restart.</strong>",
+      "ConfigPath": "Configuration file: <code>tunproxy.json</code>",
+      "CopyAddress": "Copy URL",
+      "CurrentMode": "Current mode:",
+      "DirectDomains": "Direct domains (one per line)",
+      "EnableGeo": "Enable GeoIP routing",
+      "EnableGfw": "Enable GFWList routing",
+      "RuleResource": {
+        "Disabled": "Disabled",
+        "Download": "Download",
+        "Downloading": "Downloading...",
+        "Missing": "Missing/invalid",
+        "Preparing": "Preparing GEO/GFW resources before restart...",
+        "Ready": "Valid",
+        "Retry": "Retry",
+        "AlreadyLatest": "Rule resources are already up to date.",
+        "Refreshed": "Rule resources refreshed."
+      },
+      "LocalProxyPort": "Local proxy port",
+      "ModeHintProxyHtml": "<strong>Local Proxy mode</strong> listens on a local port and can automatically update the system proxy. No administrator rights are required.<br>Use the status page to restart or stop the current service.",
+      "ModeHintTunHtml": "<strong>TUN mode</strong> transparently captures TCP traffic through the virtual adapter. FakeIP DNS is enabled by default — the DNS proxy returns virtual addresses so domain-based routing decisions can be made before the real IP is known.<br>Use the status page to restart or stop the current service.",
+      "ModeUnknown": "Unknown (service unavailable)",
+      "PacCleared": "PAC configuration cleared.",
+      "PacDescriptionHtml": "PAC (Proxy Auto-Config) decides whether requests should use the proxy or go direct based on domain rules. GFWList entries are merged automatically when enabled.",
+      "PacHeading": "PAC Auto Proxy",
+      "PacSet": "Applied: {0}",
+      "PacSetFailed": "Failed to apply PAC. Windows only.",
+      "PreviewPac": "Preview PAC",
+      "ProxyDomains": "Proxy domains (one per line)",
+      "ProxyHost": "Proxy host",
+      "ProxyPassword": "Password (optional)",
+      "ProxyCheck": "Check upstream proxy",
+      "ProxyStatus": {
+        "Unknown": "Unchecked",
+        "Hint": "Optional check through this proxy against Google, GitHub, and YouTube.",
+        "Checking": "Checking...",
+        "Available": "Available",
+        "AvailableHint": "Connection check passed. Save and restart to apply configuration changes.",
+        "Unavailable": "Unavailable",
+        "UnavailableHint": "Connection check failed. You can still save endpoint settings or download resources if the proxy is reachable for those requests.",
+        "TargetOk": "OK in {0} ms",
+        "TargetFailed": "Request failed",
+        "CheckFailed": "Proxy check failed: {0}",
+        "CheckCompleted": "Upstream proxy check completed.",
+        "RequiredBeforeSave": "Enter the upstream proxy host and port before saving or downloading rule resources."
+      },
+      "ProxyPort": "Port",
+      "ProxyServer": "Upstream proxy",
+      "ProxyType": "Type",
+      "ProxyUsername": "Username (optional)",
+      "Route": {
+        "Blacklist": "Blacklist",
+        "Global": "Global proxy",
+        "Whitelist": "Whitelist"
+      },
+      "RouteMode": "Route mode",
+      "RoutingRules": "Routing Rules",
+      "RoutingLocked": "Routing rules are locked until the upstream proxy check passes.",
+      "SmartRoutingDescription": "Smart routing evaluates enabled rules only when their files are present and valid. GFWList is evaluated first, then GeoIP.",
+      "DnsCacheHint": "DNS cache records can be viewed and cleared from the DNS page.",
+      "Save": "Save Configuration",
+      "SaveRestart": "Save and restart",
+      "SaveStatus": {
+        "EndpointRequired": "Enter the upstream proxy host and port to enable saving.",
+        "NoChanges": "No configuration changes to save.",
+        "Ready": "Configuration changes are ready to save.",
+        "Saving": "Saving..."
+      },
+      "SaveFailed": "Failed to save configuration: {0}",
+      "SetSystemProxy": "Automatically set system proxy",
+      "SystemProxyMode": {
+        "$value": "System proxy mode",
+        "Pac": "PAC auto proxy",
+        "Global": "Global proxy",
+        "Tun": "TUN",
+        "TunDescription": "TUN + FakeIP",
+        "Manual": "Global proxy",
+        "None": "Do not change system proxy"
+      },
+      "StepUpstream": "Upstream proxy",
+      "StepUpstreamHint": "Fill in the proxy endpoint first. The connection test is optional and does not block saving or resource downloads.",
+      "StepRoutingResources": "Routing resources",
+      "StepRoutingResourcesHint": "Download GFWList and GeoIP resources before enabling smart routing modes that depend on them.",
+      "StepProxyMode": "Proxy mode",
+      "StepProxyModeHint": "Choose how TunProxy should take over traffic, then save and restart to apply the final configuration.",
+      "ApplyPac": "Use as system PAC",
+      "ClearPac": "Clear system PAC",
+      "Title": "Config"
+    },
+    "Dns": {
+      "ClearSearch": "Clear",
+      "Empty": "No records yet. Data will appear automatically once traffic is flowing.",
+      "Heading": "DNS Resolution Records",
+      "IpAddress": "IP Address",
+      "ProxyModeNoticeHtml": "<strong>Local Proxy mode</strong> does not need DNS interception. Browsers send hostnames directly to the upstream proxy. This page only has data in <strong>TUN mode</strong>.",
+      "ResolvedDomain": "Resolved Domain",
+      "SeenCount": "Hits",
+      "Route": "Route",
+      "Reason": "Reason",
+      "LastActive": "Last active",
+      "RouteDirect": "DIRECT",
+      "RouteProxy": "PROXY",
+      "RouteUnknown": "UNKNOWN",
+      "PrivateIp": "Private",
+      "DnsCache": "DNS cache",
+      "EmptyApi": "The API returned no records. New DNS/TUN traffic will appear automatically.",
+      "ClearCache": "Clear",
+      "RouteStepCache": "DNS cache",
+      "RouteStepDirect": "Direct route",
+      "RouteStepProxy": "Proxy route",
+      "Records": "Records",
+      "RecordsSummary": "{0} domains / {1} IPs",
+      "LegendDirect": "Private IP, resolved private IP, direct domain, or direct Geo",
+      "LegendGfw": "matched by GFW list",
+      "LegendGeo": "matched by GeoIP",
+      "LegendDefault": "default or unknown GeoIP",
+      "SearchPlaceholder": "Search by IP or domain...",
+      "Title": "DNS",
+      "DoHNoticeTitle": "About incomplete DNS records",
+      "DoHNoticeBody": "Chrome and Edge enable Secure DNS (DoH) by default. DNS queries are sent over HTTPS and bypass TUN's UDP port 53 interception, so they do not appear here. To see complete records, disable \"Use secure DNS\" in your browser's security settings."
+    },
+    "Logs": {
+      "Clear": "Clear",
+      "EmptyHtml": "No logs yet. They will appear automatically after the service starts.<br>TUN mode: [CONN] shows TCP routing decisions and [DNS] shows DNS resolution results.<br>Local Proxy mode: [CONN] shows CONNECT and HTTP request routing decisions.",
+      "FilterAll": "All",
+      "FilterConnections": "Connections",
+      "FilterDns": "DNS",
+      "FilterErrors": "Errors",
+      "FilterPlaceholder": "Filter keywords...",
+      "FilterWarnings": "Warnings",
+      "Heading": "Live Logs",
+      "Pause": "Pause",
+      "Reconnecting": "Connection lost. Retrying...",
+      "Resume": "Resume",
+      "ScrollToLatest": "Scroll to latest",
+      "Title": "Logs",
+      "UpdatedAt": "Last updated: {0}",
+      "Waiting": "Waiting for logs...",
+      "TerminalMeta": "max {0} lines | filter {1}"
+    },
+    "Status": {
+      "ActiveConnections": "Active connections",
+      "Badge": {
+        "Downloading": "Downloading rules",
+        "Loading": "Loading",
+        "Running": "Running",
+        "Stopped": "Stopped",
+        "Unreachable": "Unreachable"
+      },
+      "ServiceRestart": "Restart",
+      "ServiceStop": "Stop",
+      "ServiceRestarting": "Service restart requested. The page will reconnect shortly.",
+      "ServiceStopping": "Service stop requested. The web console will become unavailable.",
+      "ServiceActionFailed": "Service action failed: {0}",
+      "ServiceUnavailableHint": "The service is not reachable. Start it from the system service manager or command line, then refresh this page.",
+      "ModeTunDescription": "TUN transparently captures traffic and routes it by rule.",
+      "BytesReceived": "Received",
+      "BytesSent": "Sent",
+      "FakeIp": "FakeIP",
+      "PacketRate": "Packet rate",
+      "RollingWindow": "5s rolling",
+      "TrafficChartTitle": "Traffic trend for the last 30 minutes",
+      "TrafficChartDescription": "Sampled every {0} seconds. Blue is sent, cyan is received.",
+      "Wintun": "Wintun",
+      "DirectRouted": "Direct routed",
+      "DnsFailures": "DNS failures",
+      "TunSendAllocationRetryAttempts": "Wintun send retries",
+      "TunSendAllocationDrops": "Wintun send drops",
+      "DnsQueries": "DNS queries",
+      "FailedConnections": "Failed connections",
+      "Heading": "Service Status",
+      "ParseFailures": "Malformed packets",
+      "Ipv6Packets": "IPv6 packets ignored",
+      "PortFiltered": "Filtered ports (non-80/443)",
+      "ProxyServer": "Proxy server",
+      "RawPackets": "Raw packets received",
+      "Title": "Status",
+      "TotalConnections": "Total connections",
+      "Traffic": "Traffic Stats",
+      "TunDiagnostics": "TUN Diagnostics",
+      "Uptime": "Uptime",
+      "ConnectIssue": {
+        "Title": "Recent connection issue",
+        "OccurredAt": "Occurred at: {0}",
+        "Reason": {
+          "ProxyDenied": "Proxy temporarily denied CONNECT requests (for example HTTP 503).",
+          "ConnectFailed": "Connection to upstream proxy failed.",
+          "DnsFailed": "DNS path had temporary failures.",
+          "Generic": "A connection error occurred."
+        },
+        "Hint": {
+          "ProxyDenied": "TunProxy now uses a short cooldown and retries automatically. If the issue keeps repeating, open Config and run proxy check, then verify endpoint/credentials.",
+          "ConnectFailed": "Check whether the proxy endpoint is reachable and whether local firewall or network policy blocks outbound access.",
+          "DnsFailed": "Check upstream DNS connectivity. If DoH fallback succeeds, this warning should clear after new successful connections.",
+          "Generic": "Review the error detail above and validate proxy settings in Config page."
+        }
+      }
+    }
+  },
+  "Shared": {
+    "Loading": "Loading...",
+    "On": "On",
+    "Off": "Off",
+    "Healthy": "Healthy",
+    "None": "None",
+    "RefreshAt": "Auto refresh every {0} seconds | Last update: {1}",
+    "Unknown": "Unknown"
+  },
+  "Tray": {
+    "Caption": {
+      "ConfirmUninstall": "Confirm Uninstall",
+      "Error": "Error",
+      "Info": "Info",
+      "InstallComplete": "Install Complete",
+      "RepairFailed": "Repair Failed",
+      "RepairSuccess": "Repair Succeeded"
+    },
+    "FileMissing": "Service executable not found:\n{0}",
+    "FixTun": {
+      "ApiError": "Repair endpoint returned an error: {0}",
+      "CannotConnectApi": "Unable to connect to the service API: {0}\n\nPlease confirm the service is running.",
+      "Menu": "Repair: switch to TUN mode (configuration was overwritten)",
+      "SuccessMessage": "TUN mode has been written back to the configuration. The service will restart automatically shortly."
+    },
+    "Install": {
+      "Failed": "Installation failed: {0}",
+      "PrerequisiteFailed": "Cannot enable the TUN system service because enabled GEO/GFW resources are missing or invalid. Open Config, download the missing resources, then try again.",
+      "Menu": "Install as system service",
+      "MenuInstalled": "Installed as system service",
+      "SuccessMessage": "Service installation completed. TUN mode has been enabled and the service was started automatically."
+    },
+    "Menu": {
+      "Exit": "Exit",
+      "OpenConsole": "Open Console",
+      "StartService": "Start Service",
+      "StopService": "Stop Service"
+    },
+    "Mode": {
+      "Proxy": "Local Proxy",
+      "Tun": "TUN"
+    },
+    "NoRunningCli": "No running TunProxy CLI process was found.",
+    "OpenBrowserFailed": "Unable to open the browser: {0}",
+    "Start": {
+      "Failed": "Failed to start: {0}"
+    },
+    "StartupFailed": "TunProxy failed to start",
+    "Status": {
+      "Downloading": "Downloading rules...",
+      "Error": "Service error",
+      "ResponseParseFailed": "Unable to parse service response",
+      "Restarting": "Restarting service...",
+      "RunningState": "Running",
+      "RunningSummary": "Running ({0}) | {1} connections",
+      "ServiceInstalledStopped": "Service installed, not running",
+      "ServiceNoResponse": "Service installed, no response",
+      "ServiceNotStarted": "Service not started",
+      "StoppedState": "Stopped",
+      "Unknown": "Unknown"
+    },
+    "Stop": {
+      "Failed": "Failed to stop: {0}"
+    },
+    "Tooltip": "TunProxy - {0}",
+    "Uninstall": {
+      "ConfirmMessage": "Are you sure you want to uninstall the TunProxy system service?\nAfter uninstalling, the app will switch back to Local Proxy mode.",
+      "Failed": "Uninstall failed: {0}",
+      "Menu": "Uninstall system service"
+    }
+  }
+}

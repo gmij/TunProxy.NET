@@ -12,6 +12,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Localization\Strings.json" LogicalName="TunProxy.Core.Localization.Strings.json" />
+    <EmbeddedResource Include="Localization\Strings.zh-CN.json" WithCulture="false" LogicalName="TunProxy.Core.Localization.Strings.zh-CN.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="TunProxy.Tests" />
   </ItemGroup>
 

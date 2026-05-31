@@ -534,25 +534,55 @@ public class TunProxyService : IProxyService
                         cachedHostname);
 
                     // For fake-IP destinations the destination address is a virtual placeholder
-                    // from the 198.18.0.0/16 pool. Prefer the most recent real resolved IP for
-                    // the domain when available; otherwise pass null so route selection falls
-                    // back to domain-based resolution instead of using the fake address.
+                    // from the 198.18.0.0/16 pool. Wait for the background real-IP resolution to
+                    // complete so that GeoIP routing decisions use the actual remote address.
                     IPAddress? effectiveDestIp;
+                    RouteDecision finalDecision;
                     if (_fakeIpPool != null && FakeIpPool.IsFakeIp(packet.Header.DestinationAddress))
                     {
-                        effectiveDestIp = target.DomainHint == null
-                            ? null
-                            : await WaitForResolvedAddressAsync(target.DomainHint, ct);
+                        var domainHint = target.DomainHint;
+
+                        // Fast path: if the routing decision can be made from the domain name alone
+                        // (GFW list, sticky cache, global mode), skip waiting for the real IP.
+                        // Waiting is only necessary when GeoIP lookup is the deciding factor.
+                        var quickDecision = domainHint != null
+                            ? _routeDecision.TryDecideWithoutIp(domainHint)
+                            : null;
+
+                        if (quickDecision != null)
+                        {
+                            effectiveDestIp = null;
+                            finalDecision = quickDecision;
+                        }
+                        else
+                        {
+                            // GeoIP lookup required — wait for background DoH to resolve the real IP.
+                            var resolvedRealIp = domainHint == null
+                                ? null
+                                : await WaitForResolvedAddressAsync(domainHint, ct);
+
+                            // Filter out fake-IPs that the DNS store may return when the real IP is
+                            // not yet available — they carry no GeoIP information.
+                            effectiveDestIp = resolvedRealIp != null && !FakeIpPool.IsFakeIp(resolvedRealIp)
+                                ? resolvedRealIp
+                                : null;
+
+                            // Avoid DecideForTunAsync (resolveHost:true) in FakeIP mode because it
+                            // calls Dns.GetHostAddressesAsync internally, which emits a UDP packet
+                            // back through the TUN device and risks a cross-worker stall.
+                            finalDecision = effectiveDestIp != null
+                                ? await _routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct)
+                                : await _routeDecision.DecideForDomainAsync(domainHint ?? string.Empty, ct);
+                        }
                     }
                     else
                     {
                         effectiveDestIp = packet.Header.DestinationAddress;
+                        finalDecision = await _routeDecision.DecideForTunAsync(
+                            target.DomainHint,
+                            effectiveDestIp,
+                            ct);
                     }
-
-                    var finalDecision = await _routeDecision.DecideForTunAsync(
-                        target.DomainHint,
-                        effectiveDestIp,
-                        ct);
                     if (target.HasDomainHint)
                     {
                         _dnsStore!.RecordObservedHostname(

@@ -63,6 +63,42 @@ public sealed class RouteDecisionService
     public Task<RouteDecision> DecideForObservedAddressAsync(string? host, IPAddress destinationIp, CancellationToken ct) =>
         DecideAsync(host, destinationIp, resolveHost: false, ct);
 
+    /// <summary>
+    /// Tries to make a routing decision from the domain name alone, without requiring a real IP.
+    /// Returns a decision when the result is conclusive (GFW list, explicit config, sticky cache,
+    /// or global route mode). Returns <c>null</c> when a real IP is needed for a GeoIP decision.
+    /// </summary>
+    public RouteDecision? TryDecideWithoutIp(string host)
+    {
+        var domain = NormalizeDomain(host);
+        if (domain == null)
+        {
+            return null;
+        }
+
+        if (IsProbeDomain(domain))
+        {
+            return RouteDecision.Direct("ProbeDomain", domain, null);
+        }
+
+        if (_config.Route.EnableGfwList && _isInGfwList(domain))
+        {
+            return RouteDecision.Proxy("GFW", domain, null);
+        }
+
+        if (TryGetStickyDecision(domain, out var sticky))
+        {
+            return sticky;
+        }
+
+        if (IsGlobalRouteMode())
+        {
+            return RouteDecision.Proxy("Global", domain, null);
+        }
+
+        return null;
+    }
+
     private async Task<RouteDecision> DecideAsync(
         string? host,
         IPAddress? destinationIp,

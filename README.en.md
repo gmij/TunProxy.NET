@@ -2,37 +2,59 @@
 
 [中文](README.md)
 
-TunProxy.NET is a .NET 8 proxy runtime with both local proxy mode and TUN transparent proxy mode. It forwards system or application traffic to an upstream SOCKS5/HTTP proxy, then makes routing decisions with GFWList, GeoIP, DNS/FakeIP cache state, and direct-route bypass state.
+TunProxy.NET is a .NET 8 proxy runtime built for local proxy and TUN transparent proxy workflows where operators need visibility, configuration, and diagnostics in one place. It forwards system or application traffic to an upstream SOCKS5/HTTP proxy, then makes routing decisions with GFWList, GeoIP, FakeIP DNS, manual domain rules, and direct-failure fallback policies.
 
 The current project has three user surfaces:
 
-- Web console: static Vue global + Ant Design pages for status, configuration, DNS diagnostics, and live logs.
+- Web console: static Vue global + Ant Design pages organized around five runtime workflows: Status, Config, Rules, DNS, and Logs.
 - CLI: useful on Linux, macOS, or headless hosts for initializing config, checking resources, and running in the background.
 - Windows tray: opens the console, starts/stops the runtime, installs/uninstalls `TunProxyService`, and coordinates restarts after config saves.
+
+The current Web console uses a sidebar-driven operations layout:
+
+- Status: runtime health, connection summary, traffic trends, and TUN diagnostics.
+- Config: upstream proxy, routing resources, and system proxy mode in one save/restart flow.
+- Rules: manual proxy/direct domain lists plus direct-failure fallback tuning.
+- DNS: DNS records, route reasons, cache state, and clear actions in TUN mode.
+- Logs: live in-memory logs with quick filters for connections, DNS, warnings, and errors.
 
 ## Screenshots
 
 The Web console is available at `http://localhost:50000/` by default.
 
+### Status
+
 ![Status](docs/images/status.png)
+
+### Config
 
 ![Config](docs/images/config.png)
 
+### Rules
+
+![Rules](docs/images/rules.png)
+
+### DNS
+
 ![DNS](docs/images/dns.png)
+
+### Logs
 
 ![Logs](docs/images/logs.png)
 
 ## Features
 
+- Operations-oriented Web console: sidebar navigation, summary cards, side panels, language switcher, and responsive layouts for long-running monitoring.
 - Local proxy mode: listens on a local port and can connect browsers/system traffic through PAC or global system proxy settings.
 - TUN transparent proxy: captures TCP traffic through Wintun, with virtual adapter setup, default route setup, upstream-proxy bypass route, and DNS forwarding.
 - Upstream proxy support: SOCKS5, HTTP CONNECT, and optional username/password authentication.
-- Upstream health check: checks Google, GitHub, and YouTube through the configured upstream proxy before depending on routing resources.
+- Upstream health check: runs Google, GitHub, and YouTube checks directly from the Config page before depending on rule resources.
 - Smart routing: GFWList first, private and explicit direct addresses direct, GeoIP by country/region when enabled, and unknown destinations proxy by default.
+- Manual routing rules: a dedicated Rules page manages `proxyDomains`, `directDomains`, and direct-failure fallback policy.
 - DNS and FakeIP: in TUN mode, A records can receive `198.18.0.0/16` fake IPs while the runtime resolves real addresses in the background and maps TCP connections back to domains.
 - Rule resource management: GeoIP must be readable by MaxMind, and GFWList must be parseable. Missing or invalid enabled resources keep the app in local-proxy setup mode instead of starting incomplete TUN routing.
 - PAC support: serves `/proxy.pac` and supports copy, preview, apply, and clear system PAC actions.
-- Logs and metrics: console logs, file logs, in-memory log API, connections, throughput, DNS queries, TUN packet diagnostics, and failure counters.
+- Logs and metrics: the Status page summarizes traffic and diagnostics, while the Logs page provides live memory-log streaming, filters, pause, clear, and scroll-to-latest actions.
 - Bilingual console: simplified Chinese and English can be switched in the Web console.
 
 ## Quick Start
@@ -58,8 +80,9 @@ Recommended console setup order:
 1. Open the Config page and enter upstream host, port, type, and optional credentials.
 2. Run the upstream proxy check and confirm the three targets are reachable.
 3. Enable or disable GFWList and GeoIP, then prepare rule resources.
-4. Choose the system proxy mode: PAC, Global, TUN, or None.
-5. Save and restart. On Windows, run TUN mode through the tray-installed service when possible.
+4. If you need fixed proxy domains, direct domains, or direct-failure fallback tuning, continue in the Rules page.
+5. Return to the Config page and choose the system proxy mode: PAC, Global, TUN, or None.
+6. Save and restart. On Windows, run TUN mode through the tray-installed service when possible.
 
 ### Development Run
 
@@ -117,7 +140,7 @@ Example:
 
 ### Status
 
-The Status page shows runtime state, current mode, upstream proxy, active connections, uptime, system proxy mode, FakeIP state, and the latest TCP connection failure. It refreshes every 5 seconds and keeps a 30-minute rolling traffic sample for sent/received charts, throughput, total connections, failed connections, and TUN packet diagnostics.
+The Status page is now organized like an operations dashboard: a top status band for runtime state, mode tags, proxy summary, and service actions; traffic cards and trend history in the middle; and a dedicated TUN diagnostics column on the right. It refreshes every 5 seconds and keeps rolling traffic samples for sent/received trend rendering.
 
 Page actions:
 
@@ -127,17 +150,27 @@ Page actions:
 
 ### Config
 
-The Config page is organized into three steps:
+The Config page follows a three-step workflow:
 
 1. Upstream proxy: host, port, type, and optional username/password.
 2. Routing resources: enable GFWList/GeoIP, inspect readiness, download one resource, or prepare all enabled resources.
 3. System proxy mode: PAC, Global, TUN, or None, plus the local proxy port.
 
-The side panel shows upstream check results, resource status, a config summary, and PAC actions. Saving config writes `tunproxy.json`, then creates `tunproxy.restart` so the tray or service can coordinate restart.
+The side panel shows a config summary plus PAC address and quick actions. Saving config writes `tunproxy.json`, then creates `tunproxy.restart` so the tray or service can coordinate restart.
+
+### Rules
+
+The Rules page separates manual routing policy from the basic connection setup. It is dedicated to:
+
+- `proxyDomains`: domains that must always use the proxy.
+- `directDomains`: domains that must always go direct.
+- Direct-failure fallback: failure threshold, observation window, and temporary proxy TTL.
+
+This keeps day-to-day configuration simpler while making route tuning easier to adjust independently.
 
 ### DNS
 
-The DNS page shows full data only in TUN mode. In local proxy mode, it explains that DNS interception is unavailable.
+The DNS page shows full data only in TUN mode. In local proxy mode it explicitly shows that DNS interception is unavailable; in TUN mode it adds summary cards, a grouped records table, route legends, and side explanations.
 
 In TUN mode, the DNS page groups records by domain and shows:
 
@@ -148,7 +181,7 @@ In TUN mode, the DNS page groups records by domain and shows:
 
 ### Logs
 
-The Logs page polls in-memory logs every 2 seconds, keeps up to 1000 lines, and defaults to connection logs. It supports:
+The Logs page polls in-memory logs every 2 seconds, keeps up to 1000 lines, and defaults to connection logs. The layout combines a terminal-style stream with a side summary panel and supports:
 
 - All, Connections, DNS, Warnings, and Errors segmented filters.
 - Custom text filter.
@@ -177,7 +210,7 @@ If GeoIP or GFWList is enabled but missing or invalid, TunProxy stays in local-p
 
 ## Configuration
 
-The configuration file is `tunproxy.json` in the application directory. Both the Web console and `config` commands update this file.
+The configuration file is `tunproxy.json` in the application directory. The Config and Rules pages in the Web console, plus the CLI `config` commands, all update the same file.
 
 ```json
 {
@@ -221,6 +254,10 @@ The configuration file is `tunproxy.json` in the application directory. Both the
     "enableGfwList": true,
     "gfwListUrl": "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt",
     "gfwListPath": "gfwlist.txt",
+    "enableDirectFailureFallback": true,
+    "directFailureThreshold": 3,
+    "directFailureWindowSeconds": 300,
+    "directFailureFallbackTtlSeconds": 900,
     "tunRouteMode": "global",
     "tunRouteApps": [],
     "autoAddDefaultRoute": true
@@ -234,19 +271,23 @@ The configuration file is `tunproxy.json` in the application directory. Both the
 
 ## Routing
 
-Smart routing roughly follows this order:
+Smart routing works together with the manual domain lists managed on the Rules page, roughly in this order:
 
-1. Explicit direct hits and private addresses go direct.
-2. Domains matching GFWList use the proxy.
-3. In TUN + FakeIP scenarios, fake IPs are mapped back to domains before waiting for real DNS results.
-4. When GeoIP is enabled and the database is ready, `geoDirect` and `geoProxy` are evaluated.
-5. If no usable rule matches or the target cannot be identified, proxy is the default.
+1. Probe domains and private addresses go direct.
+2. Domains in `proxyDomains` or matching GFWList use the proxy.
+3. Domains in `directDomains` go direct.
+4. In TUN + FakeIP scenarios, fake IPs are mapped back to domains before waiting for real DNS results.
+5. Direct domains that fail repeatedly within the configured window can be temporarily upgraded to proxy routing until the fallback TTL expires.
+6. When GeoIP is enabled and the database is ready, `geoDirect` and `geoProxy` are evaluated.
+7. If no usable rule matches or the target cannot be identified, proxy is the default.
 
 The policy favors reachability and leak avoidance: unknown destinations default to proxy, while private addresses default to direct.
 
 ## HTTP API
 
 Main APIs used by the Web console:
+
+Note: the Rules page does not have a separate API surface. Like the Config page, it reads and writes the shared configuration through `GET/POST /api/config`; the workflow is split in the UI, not in the API.
 
 ```text
 GET    /api/status
@@ -305,11 +346,11 @@ TunProxy.NET/
 
 ### Why does saving configuration restart the service?
 
-The upstream proxy, TUN adapter, DNS service, routes, and listening ports are runtime state. Saving config only writes `tunproxy.json`; applying it requires restart. The Web console creates `tunproxy.restart`, and the tray or service starts a replacement only after the old runtime has stopped, avoiding port, route, and driver ownership races.
+The upstream proxy, TUN adapter, DNS service, routes, and listening ports are runtime state. Saving from either the Config page or the Rules page only writes `tunproxy.json`; applying it requires restart. The Web console creates `tunproxy.restart`, and the tray or service starts a replacement only after the old runtime has stopped, avoiding port, route, and driver ownership races.
 
 ### Why did TUN not start directly?
 
-When GeoIP or GFWList is enabled, TunProxy verifies that the corresponding files are actually valid. A file that exists but cannot be read or parsed still blocks direct TUN startup and keeps local-proxy setup mode. Prepare resources from the Config page, then save and restart.
+When GeoIP or GFWList is enabled, TunProxy verifies that the corresponding files are actually valid. A file that exists but cannot be read or parsed still blocks direct TUN startup and keeps local-proxy setup mode. Prepare resources from the Config page, optionally adjust manual routing in the Rules page, then save and restart.
 
 ### Why is the DNS page empty?
 

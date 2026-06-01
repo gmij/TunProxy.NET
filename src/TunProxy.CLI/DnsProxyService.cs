@@ -13,8 +13,6 @@ namespace TunProxy.CLI;
 
 public class DnsProxyService
 {
-    private const string FakeIpDnsSource = "DNS-FakeIP";
-    private const string FakeIpInitialRoute = "UNKNOWN";
     private const string FakeIpLastMethod = "fakeip";
     internal const string DefaultDomesticDns = "119.29.29.29";
     private static readonly TimeSpan DirectDnsTimeout = TimeSpan.FromSeconds(3);
@@ -351,14 +349,8 @@ public class DnsProxyService
         _lastSuccessUtc = DateTime.UtcNow;
         _lastError = null;
 
-        // Register fake IP → domain so TCP/UDP path can find the hostname.
-        _resolutionStore.RecordObservedHostname(
-            fakeIpStr,
-            domain,
-            FakeIpDnsSource,
-            FakeIpInitialRoute,
-            FakeIpLastMethod,
-            traceId);
+        // Keep fake IP mappings inside FakeIpPool. They are virtual routing handles,
+        // not real DNS answers, so they should not pollute user-visible DNS records.
 
         // Return the synthetic response immediately – no upstream round-trip needed.
         var fakeResponse = BuildFakeIpDnsResponse(query, domain, fakeIp);

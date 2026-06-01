@@ -73,6 +73,25 @@ public class WebConsoleAssetTests
         Assert.Contains("data-page-title-key=", html);
     }
 
+    [Fact]
+    public void LogsPage_DnsFilterMatchesTraceScopedDnsLogs()
+    {
+        var script = File.ReadAllText(Path.Combine(SourceRoot, "logs-page.js"));
+
+        Assert.Contains("{ label: C.t('Page.Logs.FilterDns'), value: '[DNS' }", script);
+        Assert.DoesNotContain("{ label: C.t('Page.Logs.FilterDns'), value: '[DNS ]' }", script);
+    }
+
+    [Fact]
+    public void DnsTableHeader_DoesNotWrap()
+    {
+        var css = File.ReadAllText(Path.Combine(SourceRoot, "console.css"));
+
+        Assert.Contains(".tp-dns-table-scroll .ant-table-thead > tr > th", css);
+        Assert.Contains(".tp-dns-table-scroll .ant-table-column-title", css);
+        Assert.Contains("white-space: nowrap;", css);
+    }
+
     private static IReadOnlyList<string> EnumerateRelativeFiles(string root)
     {
         return Directory

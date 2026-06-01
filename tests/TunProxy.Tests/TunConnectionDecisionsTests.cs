@@ -61,6 +61,33 @@ public class TunConnectionDecisionsTests
         Assert.Equal("example.com", TunConnectionDecisions.SelectUpstreamHost(true, decision, target));
     }
 
+    [Fact]
+    public void CanUseFakeIpQuickDecision_AllowsOnlyProxyDecisions()
+    {
+        Assert.True(TunConnectionDecisions.CanUseFakeIpQuickDecision(
+            RouteDecision.Proxy("GFW", "example.com", null)));
+        Assert.False(TunConnectionDecisions.CanUseFakeIpQuickDecision(
+            RouteDecision.Direct("DirectDomain", "qq.com", null)));
+        Assert.False(TunConnectionDecisions.CanUseFakeIpQuickDecision(null));
+    }
+
+    [Fact]
+    public void CanEnsureDirectBypassRoute_SkipsOnlyFakeIpTargets()
+    {
+        Assert.True(TunConnectionDecisions.CanEnsureDirectBypassRoute(
+            IPAddress.Parse("112.53.42.114")));
+        Assert.False(TunConnectionDecisions.CanEnsureDirectBypassRoute(
+            IPAddress.Parse("198.18.0.13")));
+    }
+
+    [Fact]
+    public void CreateDirectConnectionManager_DoesNotBindToProxyOutboundAddress()
+    {
+        using var manager = TunProxyService.CreateDirectConnectionManager(TimeSpan.FromSeconds(8));
+
+        Assert.Null(manager.BindAddress);
+    }
+
     [Theory]
     [InlineData("Failed [PROXY_DENIED]", "PROXY", "proxy denied", true, false)]
     [InlineData("Failed [CONNECT_FAILED]", "PROXY", "connect failed", false, true)]

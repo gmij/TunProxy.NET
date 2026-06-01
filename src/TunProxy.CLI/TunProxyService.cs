@@ -140,6 +140,11 @@ public class TunProxyService : IProxyService
                 continue;
             }
 
+            if (!DnsObservationPolicy.ShouldPublishAddress(ipAddress))
+            {
+                continue;
+            }
+
             var decision = await _routeDecision.DecideForObservedAddressAsync(snapshot.Hostname, ipAddress, ct);
             records.Add(new DnsRouteRecord(
                 snapshot.IpAddress,
@@ -270,11 +275,8 @@ public class TunProxyService : IProxyService
                 _config.Proxy.Password,
                 connectionTimeout: TimeSpan.FromSeconds(8),
                 bindAddress: _outboundBindAddress);
-            _directConnectionManager = new TcpConnectionManager(
-                string.Empty,
-                0,
-                ProxyType.Direct,
-                connectionTimeout: TimeSpan.FromSeconds(8));
+            _directConnectionManager = CreateDirectConnectionManager(
+                TimeSpan.FromSeconds(8));
 
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             Log.Information("[TUN ] Starting packet workers and background services...");
@@ -553,17 +555,17 @@ public class TunProxyService : IProxyService
                     {
                         var domainHint = target.DomainHint;
 
-                        // Fast path: if the routing decision can be made from the domain name alone
-                        // (GFW list, sticky cache, global mode), skip waiting for the real IP.
-                        // Waiting is only necessary when GeoIP lookup is the deciding factor.
+                        // Fast path only for proxied routes: upstream proxies can resolve the
+                        // domain safely. Direct routes must wait for a real IP, otherwise the
+                        // OS resolver may return the same FakeIP and loop back into TUN.
                         var quickDecision = domainHint != null
                             ? _routeDecision.TryDecideWithoutIp(domainHint)
                             : null;
 
-                        if (quickDecision != null)
+                        if (TunConnectionDecisions.CanUseFakeIpQuickDecision(quickDecision))
                         {
                             effectiveDestIp = null;
-                            finalDecision = quickDecision;
+                            finalDecision = quickDecision!;
                         }
                         else
                         {
@@ -589,10 +591,12 @@ public class TunProxyService : IProxyService
                             // Avoid resolver-backed decisions in FakeIP mode when the real address
                             // is still unavailable. System DNS can return the same 198.18/16 fake
                             // address and poison the route as GeoUnknown before DoH catches up.
-                            finalDecision = effectiveDestIp != null
+                            finalDecision = effectiveDestIp != null && domainHint != null
                                 ? await _routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct)
                                 : domainHint != null
-                                    ? _routeDecision.TryDecideWithoutIp(domainHint) ?? RouteDecision.Proxy("FakeIpUnresolved", domainHint, null)
+                                    ? quickDecision is { ShouldProxy: false }
+                                        ? RouteDecision.Proxy("FakeIpDirectUnresolved", domainHint, null)
+                                        : _routeDecision.TryDecideWithoutIp(domainHint) ?? RouteDecision.Proxy("FakeIpUnresolved", domainHint, null)
                                     : RouteDecision.Proxy("Default", null, null);
                         }
                     }
@@ -604,19 +608,24 @@ public class TunProxyService : IProxyService
                             effectiveDestIp,
                             ct);
                     }
-                    if (target.HasDomainHint)
+                    var dnsStore = _dnsStore;
+                    if (target.HasDomainHint && dnsStore != null)
                     {
-                        _dnsStore!.RecordObservedHostname(
-                            destIP,
-                            target.ConnectHost,
-                            target.DomainSource,
-                            finalDecision.ShouldProxy ? "PROXY" : "DIRECT",
-                            finalDecision.Reason);
+                        if (DnsObservationPolicy.ShouldPublishAddress(packet.Header.DestinationAddress))
+                        {
+                            dnsStore.RecordObservedHostname(
+                                destIP,
+                                target.ConnectHost,
+                                target.DomainSource,
+                                finalDecision.ShouldProxy ? "PROXY" : "DIRECT",
+                                finalDecision.Reason);
+                        }
 
                         if (finalDecision.EvaluatedIp != null &&
+                            DnsObservationPolicy.ShouldPublishAddress(finalDecision.EvaluatedIp) &&
                             !finalDecision.EvaluatedIp.Equals(packet.Header.DestinationAddress))
                         {
-                            _dnsStore!.RecordObservedHostname(
+                            dnsStore.RecordObservedHostname(
                                 finalDecision.EvaluatedIp.ToString(),
                                 target.ConnectHost,
                                 target.DomainSource,
@@ -640,10 +649,7 @@ public class TunProxyService : IProxyService
                     {
                         _metrics.IncrementDirectRoutedPackets();
                         var routeIp = finalDecision.EvaluatedIp ?? packet.Header.DestinationAddress;
-                        // In FakeIP mode the destination is always a virtual address from the
-                        // 198.18.0.0/16 pool. Adding a bypass route for it would be incorrect
-                        // (the real peer IP is different). Skip route management for fake IPs.
-                        if (_fakeIpPool == null || !FakeIpPool.IsFakeIp(packet.Header.DestinationAddress))
+                        if (TunConnectionDecisions.CanEnsureDirectBypassRoute(routeIp))
                         {
                             await _directBypassRouteScheduler.EnsureAsync(routeIp, finalDecision, ct);
                             state.DirectBypassIp = routeIp.ToString();
@@ -659,13 +665,14 @@ public class TunProxyService : IProxyService
                     var routeLabel = usingProxy ? "PROXY" : "DIRECT";
                     var srcLabel = $"{target.DomainSource}/{finalDecision.Reason}";
                     Log.Information(
-                        "[CONN] {Host}:{Port}  {Route}  ({Source}; Cache={DnsCache}; DestIP={DestIP}; Conn={Connection})",
+                        "[CONN] {Host}:{Port}  {Route}  ({Source}; Cache={DnsCache}; DestIP={DestIP}; Target={Target}; Conn={Connection})",
                         target.ConnectHost,
                         destPort,
                         routeLabel,
                         srcLabel,
                         dnsCacheInfo,
                         destIP,
+                        upstreamHost,
                         connKey);
 
                     conn = connManager.GetOrCreateConnection(packet);
@@ -1077,6 +1084,13 @@ public class TunProxyService : IProxyService
             TimeSpan.FromSeconds(windowSeconds),
             TimeSpan.FromSeconds(ttlSeconds));
     }
+
+    internal static TcpConnectionManager CreateDirectConnectionManager(TimeSpan connectionTimeout) =>
+        new(
+            string.Empty,
+            0,
+            ProxyType.Direct,
+            connectionTimeout: connectionTimeout);
 
     private Task EnsureDirectDnsServerRouteAsync(IPAddress dnsServer, CancellationToken ct) =>
         _directBypassRouteScheduler.EnsureAsync(

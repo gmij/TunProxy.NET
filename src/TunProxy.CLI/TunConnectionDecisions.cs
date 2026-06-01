@@ -38,6 +38,12 @@ internal static class TunConnectionDecisions
             ? target.ConnectHost
             : decision.EvaluatedIp?.ToString() ?? target.ConnectHost;
 
+    public static bool CanUseFakeIpQuickDecision(RouteDecision? decision) =>
+        decision?.ShouldProxy == true;
+
+    public static bool CanEnsureDirectBypassRoute(IPAddress routeIp) =>
+        !FakeIpPool.IsFakeIp(routeIp);
+
     public static TunConnectionFailure ClassifyFailure(Exception ex, string routeLabel)
     {
         var proxyDenied = ex.Message.Contains("PROXY_DENIED", StringComparison.Ordinal);

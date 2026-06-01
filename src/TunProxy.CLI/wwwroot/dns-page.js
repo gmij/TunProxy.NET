@@ -73,7 +73,7 @@
             title: C.t('Page.Dns.SeenCount'),
             key: 'seenCount',
             dataIndex: 'seenCount',
-            width: 80,
+            width: 96,
             sorter: function (a, b) { return Number(a.seenCount || 0) - Number(b.seenCount || 0); }
           },
           {
@@ -91,7 +91,7 @@
             title: C.t('Page.Dns.LastActive'),
             key: 'lastActiveUtc',
             dataIndex: 'lastActiveUtc',
-            width: 110,
+            width: 120,
             sorter: function (a, b) {
               return new Date(a.lastActiveUtc || 0).getTime() - new Date(b.lastActiveUtc || 0).getTime();
             }

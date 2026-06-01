@@ -30,7 +30,7 @@
         return [
           { label: C.t('Page.Logs.FilterAll'), value: '' },
           { label: C.t('Page.Logs.FilterConnections'), value: '[CONN]' },
-          { label: C.t('Page.Logs.FilterDns'), value: '[DNS ]' },
+          { label: C.t('Page.Logs.FilterDns'), value: '[DNS' },
           { label: C.t('Page.Logs.FilterWarnings'), value: 'WRN' },
           { label: C.t('Page.Logs.FilterErrors'), value: 'ERR' }
         ];

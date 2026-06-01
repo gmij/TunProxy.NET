@@ -885,6 +885,11 @@ body {
   background: transparent !important;
 }
 
+.tp-dns-table-scroll .ant-table-thead > tr > th,
+.tp-dns-table-scroll .ant-table-column-title {
+  white-space: nowrap;
+}
+
 .tp-log-layout {
   display: block;
 }

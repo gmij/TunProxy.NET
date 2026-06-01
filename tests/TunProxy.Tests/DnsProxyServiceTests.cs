@@ -4,6 +4,8 @@ using System.Text;
 using TunProxy.CLI;
 using TunProxy.Core.Connections;
 using TunProxy.Core.Dns;
+using TunProxy.Core.Packets;
+using TunProxy.Core.Tun;
 
 namespace TunProxy.Tests;
 
@@ -129,6 +131,46 @@ public class DnsProxyServiceTests
     public void ShouldBypassFakeIpForDomain_DoesNotBypassOtherDomains(string domain)
     {
         Assert.False(DnsProxyService.ShouldBypassFakeIpForDomain(domain));
+    }
+
+    [Fact]
+    public async Task ProcessDnsQuery_FakeIpMode_DoesNotPublishFakeIpAsDnsRecord()
+    {
+        var store = new DnsResolutionStore();
+        var fakeIpPool = new FakeIpPool();
+        var service = new DnsProxyService(
+            "127.0.0.1",
+            1,
+            ProxyType.Socks5,
+            store,
+            fakeIpPool: fakeIpPool);
+        var query = BuildDnsQuery("example.com", 0x1234, 1);
+        var requestPacket = MakeUdpPacket("10.0.0.2", 49152, "10.0.0.1", 53, query);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        using var device = new CapturingTunDevice();
+
+        await service.ProcessDnsQueryAsync(device, requestPacket, cts.Token);
+
+        var responsePacket = Assert.Single(device.WrittenPackets);
+        var response = IPPacket.Parse(responsePacket);
+        Assert.NotNull(response);
+        var dnsResponse = DnsPacket.Parse(response!.Payload);
+        Assert.NotNull(dnsResponse);
+        var answer = Assert.Single(dnsResponse!.Answers);
+        var fakeIp = new IPAddress(answer.Data);
+        Assert.True(FakeIpPool.IsFakeIp(fakeIp));
+        Assert.Equal("example.com", fakeIpPool.GetDomain(fakeIp));
+        Assert.Empty(store.GetResolutionSnapshot());
+    }
+
+    [Theory]
+    [InlineData("198.18.0.42", false)]
+    [InlineData("203.0.113.42", true)]
+    [InlineData("192.168.1.42", true)]
+    public void ShouldPublishAddress_HidesOnlyFakeIpRange(string ip, bool expected)
+    {
+        Assert.Equal(expected, DnsObservationPolicy.ShouldPublishAddress(IPAddress.Parse(ip)));
     }
 
     [Fact]
@@ -446,5 +488,51 @@ public class DnsProxyServiceTests
         };
 
         return response.Build();
+    }
+
+    private static IPPacket MakeUdpPacket(
+        string srcIp,
+        ushort srcPort,
+        string dstIp,
+        ushort dstPort,
+        byte[] payload)
+    {
+        var src = IPAddress.Parse(srcIp);
+        var dst = IPAddress.Parse(dstIp);
+        var raw = PacketBuilder.BuildUdpPacket(
+            src.GetAddressBytes(),
+            dst.GetAddressBytes(),
+            srcPort,
+            dstPort,
+            payload);
+        return IPPacket.Parse(raw)!;
+    }
+
+    private sealed class CapturingTunDevice : ITunDevice
+    {
+        public List<byte[]> WrittenPackets { get; } = [];
+
+        public void Configure(string ip, string subnetMask, int mtu = 1500)
+        {
+        }
+
+        public void Start()
+        {
+        }
+
+        public void Stop()
+        {
+        }
+
+        public byte[]? ReadPacket() => null;
+
+        public void WritePacket(byte[] packet)
+        {
+            WrittenPackets.Add(packet);
+        }
+
+        public void Dispose()
+        {
+        }
     }
 }

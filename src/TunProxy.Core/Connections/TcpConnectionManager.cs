@@ -140,6 +140,8 @@ public class TcpConnectionManager : IDisposable
 
     public int ActiveConnections => _connections.Count;
 
+    internal IPAddress? BindAddress => _bindAddress;
+
     public void Dispose()
     {
         if (!_disposed)

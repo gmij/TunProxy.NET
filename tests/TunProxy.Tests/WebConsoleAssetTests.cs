@@ -83,6 +83,35 @@ public class WebConsoleAssetTests
     }
 
     [Fact]
+    public void Navigation_DefinesClientSidePageMetadata()
+    {
+        var script = File.ReadAllText(Path.Combine(SourceRoot, "nav.js"));
+
+        Assert.Contains("script: '/status-page.js'", script);
+        Assert.Contains("script: '/config-page.js'", script);
+        Assert.Contains("script: '/rules-page.js'", script);
+        Assert.Contains("script: '/dns-page.js'", script);
+        Assert.Contains("script: '/logs-page.js'", script);
+        Assert.Contains("pageById: pageById", script);
+        Assert.Contains("pageFromPath: pageFromPath", script);
+    }
+
+    [Fact]
+    public void ConsoleApp_UsesClientSideNavigationForPageSwitches()
+    {
+        var script = File.ReadAllText(Path.Combine(SourceRoot, "console-app.js"));
+
+        Assert.Contains("function navigateTo(pageOrId, options)", script);
+        Assert.Contains("document.createElement('script')", script);
+        Assert.Contains("history.pushState({ pageId: page.id }, '', page.href);", script);
+        Assert.Contains("window.addEventListener('popstate'", script);
+        Assert.Contains("currentApp.unmount();", script);
+        Assert.Contains("event.preventDefault();", script);
+        Assert.Contains("@click=\"handleNavClick($event, page)\"", script);
+        Assert.Contains("@change=\"handleMobileChange\"", script);
+    }
+
+    [Fact]
     public void DnsTableHeader_DoesNotWrap()
     {
         var css = File.ReadAllText(Path.Combine(SourceRoot, "console.css"));

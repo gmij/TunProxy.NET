@@ -179,6 +179,134 @@
     return value === 'pac' || value === 'global' || value === 'tun' ? value : 'none';
   }
 
+  var pageDefinitions = {};
+  var pageScriptPromises = {};
+  var currentApp = null;
+  var currentPageId = null;
+  var navigationVersion = 0;
+  var catalogPromise = null;
+
+  function ensureCatalog() {
+    if (!catalogPromise) {
+      catalogPromise = window.TunProxyI18n.initPage();
+    }
+
+    return catalogPromise;
+  }
+
+  function pageById(pageOrId) {
+    if (typeof pageOrId === 'string') {
+      return window.TunProxyNav.pageById(pageOrId);
+    }
+
+    return pageOrId || window.TunProxyNav.pageFromPath(location.pathname);
+  }
+
+  function currentPageHref() {
+    return window.TunProxyNav.pageFromPath(location.pathname).href;
+  }
+
+  function setDocumentPage(page) {
+    document.body.dataset.pageTitleKey = page.titleKey;
+    document.title = 'TunProxy - ' + t(page.titleKey);
+  }
+
+  function loadPageScript(page) {
+    if (pageDefinitions[page.id]) {
+      return Promise.resolve(pageDefinitions[page.id]);
+    }
+
+    if (pageScriptPromises[page.id]) {
+      return pageScriptPromises[page.id];
+    }
+
+    pageScriptPromises[page.id] = new Promise(function (resolve, reject) {
+      var script = document.createElement('script');
+      script.src = page.script;
+      script.async = true;
+      script.dataset.tunproxyPageScript = page.id;
+      script.onload = function () {
+        if (pageDefinitions[page.id]) {
+          resolve(pageDefinitions[page.id]);
+          return;
+        }
+
+        reject(new Error('Page script did not register: ' + page.script));
+      };
+      script.onerror = function () {
+        reject(new Error('Failed to load page script: ' + page.script));
+      };
+      document.body.appendChild(script);
+    });
+
+    return pageScriptPromises[page.id];
+  }
+
+  function renderRegisteredPage(pageId) {
+    var options = pageDefinitions[pageId];
+    if (!options) {
+      return Promise.reject(new Error('Page is not registered: ' + pageId));
+    }
+
+    if (currentPageId === pageId && currentApp) {
+      return Promise.resolve(currentApp);
+    }
+
+    var page = window.TunProxyNav.pageById(pageId);
+    setDocumentPage(page);
+
+    if (currentApp) {
+      currentApp.unmount();
+      currentApp = null;
+    }
+
+    var el = options.el || '#app';
+    var root = document.querySelector(el);
+    if (root) {
+      root.innerHTML = '';
+    }
+
+    var app = Vue.createApp({
+      setup: buildShellSetup(options.pageId, options.setup),
+      template: options.template
+    });
+    app.use(antd);
+    registerSharedComponents(app);
+    app.mount(el);
+    currentApp = app;
+    currentPageId = pageId;
+    return Promise.resolve(app);
+  }
+
+  function navigateTo(pageOrId, options) {
+    var settings = options || {};
+    var page = pageById(pageOrId);
+    var requestVersion = ++navigationVersion;
+
+    if (settings.updateHistory !== false && currentPageHref() !== page.href) {
+      history.pushState({ pageId: page.id }, '', page.href);
+    }
+
+    return ensureCatalog()
+      .then(function () {
+        return loadPageScript(page);
+      })
+      .then(function () {
+        if (requestVersion !== navigationVersion) {
+          return null;
+        }
+
+        return renderRegisteredPage(page.id);
+      })
+      .catch(function () {
+        location.href = page.href;
+      });
+  }
+
+  window.addEventListener('popstate', function () {
+    navigateTo(window.TunProxyNav.pageFromPath(location.pathname), { updateHistory: false });
+  });
+
   function buildShellSetup(pageId, extraSetup) {
     return function () {
       var culture = Vue.ref(normalizeCulture(window.TunProxyI18n.culture));
@@ -247,14 +375,12 @@
   }
 
   function mountPage(options) {
-    window.TunProxyI18n.initPage().then(function () {
-      var app = Vue.createApp({
-        setup: buildShellSetup(options.pageId, options.setup),
-        template: options.template
-      });
-      app.use(antd);
-      registerSharedComponents(app);
-      app.mount(options.el || '#app');
+    pageDefinitions[options.pageId] = options;
+
+    ensureCatalog().then(function () {
+      if (!currentApp && window.TunProxyNav.pageIdFromPath(location.pathname) === options.pageId) {
+        renderRegisteredPage(options.pageId);
+      }
     });
   }
 
@@ -270,8 +396,43 @@
         title: { type: String, required: true }
       },
       emits: ['change-culture', 'update:activePage'],
-      setup: function () {
-        return { C: window.TunProxyConsole };
+      setup: function (props, context) {
+        function canNavigateInPlace(event) {
+          return event.button === 0 &&
+            !event.defaultPrevented &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.shiftKey &&
+            !event.altKey;
+        }
+
+        function handleNavigation(page) {
+          if (!page) return;
+          context.emit('update:activePage', page.id);
+          window.TunProxyConsole.navigateTo(page);
+        }
+
+        function handleNavClick(event, page) {
+          if (!canNavigateInPlace(event)) {
+            return;
+          }
+
+          event.preventDefault();
+          handleNavigation(page);
+        }
+
+        function handleMobileChange(pageId) {
+          var page = props.pages.find(function (item) {
+            return item.id === pageId;
+          });
+          handleNavigation(page);
+        }
+
+        return {
+          C: window.TunProxyConsole,
+          handleMobileChange: handleMobileChange,
+          handleNavClick: handleNavClick
+        };
       },
       template: `
         <div :class="['tp-shell', 'tp-shell-' + activePage]">
@@ -281,7 +442,7 @@
               <div><div class="tp-brand-title">TunProxy</div><div class="tp-brand-subtitle">Web Console</div></div>
             </div>
             <nav class="tp-nav-list">
-              <a v-for="page in pages" :key="page.id" class="tp-nav-item" :class="{ active: page.id === activePage }" :href="page.href">
+              <a v-for="page in pages" :key="page.id" class="tp-nav-item" :class="{ active: page.id === activePage }" :href="page.href" @click="handleNavClick($event, page)">
                 <span class="tp-nav-icon">{{ page.icon }}</span><span>{{ C.t(page.key) }}</span>
               </a>
             </nav>
@@ -290,7 +451,7 @@
             </div>
           </aside>
           <main class="tp-main">
-            <a-segmented class="tp-mobile-tabs" :value="activePage" :options="mobileOptions" block @change="$emit('update:activePage', $event)"></a-segmented>
+            <a-segmented class="tp-mobile-tabs" :value="activePage" :options="mobileOptions" block @change="handleMobileChange"></a-segmented>
             <header class="tp-topbar">
               <div><div class="tp-eyebrow">{{ eyebrow }}</div><h1 class="tp-title">{{ title }}</h1></div>
               <div class="tp-toolbar">
@@ -348,6 +509,7 @@
     htmlText: htmlText,
     modeLabel: modeLabel,
     mountPage: mountPage,
+    navigateTo: navigateTo,
     normalizeSystemProxyMode: normalizeSystemProxyMode,
     routeColor: routeColor,
     routeLabel: routeLabel,

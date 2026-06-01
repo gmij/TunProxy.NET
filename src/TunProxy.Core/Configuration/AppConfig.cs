@@ -242,6 +242,11 @@ public class LoggingConfig
 public class ServiceStatus
 {
     public string Mode { get; set; } = "proxy";
+    public string Platform { get; set; } =
+        OperatingSystem.IsWindows() ? "windows" :
+        OperatingSystem.IsLinux() ? "linux" :
+        OperatingSystem.IsMacOS() ? "macos" :
+        "unknown";
     public bool IsRunning { get; set; }
     public bool IsDownloading { get; set; }
     public bool FakeIpMode { get; set; }

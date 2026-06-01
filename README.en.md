@@ -198,6 +198,8 @@ When `tun.enabled = false`, TunProxy runs in local proxy mode. The runtime liste
 - `global`: system proxy points directly to the local proxy port.
 - `none`: local proxy runs without changing system proxy settings.
 
+Linux/macOS do not provide one system proxy switch that applies to every process, so the Web Console only shows PAC and Global on Windows. On Linux/macOS, use TUN for transparent system-wide capture; local proxy mode is still useful for clients that explicitly set `http_proxy`, `https_proxy`, or `curl -x`.
+
 This mode does not require administrator privileges and is useful for upstream checks, rule resource downloads, and PAC setup.
 
 ### TUN

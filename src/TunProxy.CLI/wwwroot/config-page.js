@@ -40,22 +40,31 @@
         return status.value ? status.value.mode : '';
       });
 
+      var platform = Vue.computed(function () {
+        return status.value && status.value.platform ? String(status.value.platform).toLowerCase() : 'unknown';
+      });
+
+      var isWindowsPlatform = Vue.computed(function () {
+        return platform.value === 'windows';
+      });
+
       var hasProxyEndpoint = Vue.computed(function () {
         return form.proxyHost.trim().length > 0 && Number(form.proxyPort || 0) > 0;
       });
 
       function buildPayload() {
         var payload = C.clone(cfg.value || {});
+        var mode = normalizeModeForPlatform(form.systemProxyMode);
         payload.localProxy.listenPort = Number(form.localPort || 8080);
-        payload.localProxy.systemProxyMode = form.systemProxyMode;
-        payload.localProxy.setSystemProxy = form.systemProxyMode === 'pac' || form.systemProxyMode === 'global';
-        payload.tun.enabled = form.systemProxyMode === 'tun';
+        payload.localProxy.systemProxyMode = mode;
+        payload.localProxy.setSystemProxy = isWindowsPlatform.value && (mode === 'pac' || mode === 'global');
+        payload.tun.enabled = mode === 'tun';
         payload.proxy.host = form.proxyHost.trim();
         payload.proxy.port = Number(form.proxyPort || 7890);
         payload.proxy.type = form.proxyType;
         payload.proxy.username = form.proxyUsername.trim() || null;
         payload.proxy.password = form.proxyPassword || null;
-        payload.route.mode = form.systemProxyMode === 'global' ? 'global' : 'smart';
+        payload.route.mode = mode === 'global' ? 'global' : 'smart';
         payload.route.enableGfwList = form.enableGfw;
         payload.route.enableGeo = form.enableGeo;
         return payload;
@@ -89,12 +98,15 @@
       });
 
       var modeOptions = Vue.computed(function () {
-        return [
+        var options = [
           { value: 'pac', title: C.t('Page.Config.SystemProxyMode.Pac'), desc: 'PAC' },
           { value: 'global', title: C.t('Page.Config.SystemProxyMode.Global'), desc: C.t('Page.Config.Route.Global') },
           { value: 'tun', title: C.t('Page.Config.SystemProxyMode.Tun'), desc: C.t('Page.Config.SystemProxyMode.TunDescription') },
           { value: 'none', title: C.t('Page.Config.SystemProxyMode.None'), desc: C.t('Page.Config.SystemProxyMode.None') }
         ];
+        return isWindowsPlatform.value
+          ? options
+          : options.filter(function (option) { return option.value === 'tun' || option.value === 'none'; });
       });
 
       var modeSegmentOptions = Vue.computed(function () {
@@ -134,6 +146,15 @@
         });
       }
 
+      function normalizeModeForPlatform(value) {
+        var mode = C.normalizeSystemProxyMode(value);
+        if (!isWindowsPlatform.value && (mode === 'pac' || mode === 'global')) {
+          return 'none';
+        }
+
+        return mode;
+      }
+
       var resourceRows = Vue.computed(function () {
         var data = resources.value || {};
         return [
@@ -171,9 +192,9 @@
       var summary = Vue.computed(function () {
         return [
           { label: C.t('Page.Status.ProxyServer'), value: form.proxyHost ? form.proxyHost + ':' + form.proxyPort : '-' },
-          { label: C.t('Page.Config.SystemProxyMode'), value: C.systemProxyModeLabel(form.systemProxyMode) },
+          { label: C.t('Page.Config.SystemProxyMode'), value: C.systemProxyModeLabel(normalizeModeForPlatform(form.systemProxyMode)) },
           { label: C.t('Page.Config.LocalProxyPort'), value: form.localPort },
-          { label: C.t('Page.Config.RouteMode'), value: form.systemProxyMode === 'global' ? 'global' : 'smart' },
+          { label: C.t('Page.Config.RouteMode'), value: normalizeModeForPlatform(form.systemProxyMode) === 'global' ? 'global' : 'smart' },
           { label: C.t('Page.Status.FakeIp'), value: C.t(cfg.value && cfg.value.tun && cfg.value.tun.fakeIpMode ? 'Shared.On' : 'Shared.Off') }
         ];
       });
@@ -182,7 +203,7 @@
         return window.TunProxyApi.getJson('/api/config').then(function (payload) {
           cfg.value = payload;
           form.localPort = payload.localProxy.listenPort;
-          form.systemProxyMode = C.normalizeSystemProxyMode(payload.tun.enabled ? 'tun' : (payload.localProxy.systemProxyMode || (payload.localProxy.setSystemProxy ? 'pac' : 'none')));
+          form.systemProxyMode = normalizeModeForPlatform(payload.tun.enabled ? 'tun' : (payload.localProxy.systemProxyMode || (payload.localProxy.setSystemProxy ? 'pac' : 'none')));
           form.proxyHost = payload.proxy.host || '';
           form.proxyPort = payload.proxy.port || 7890;
           form.proxyType = payload.proxy.type || 'Http';
@@ -287,7 +308,9 @@
 
       function loadInitialData() {
         return initialLoadPipeline.run(function () {
-          return Promise.all([loadMode(), loadConfig(), loadResources()]);
+          return loadMode().then(function () {
+            return Promise.all([loadConfig(), loadResources()]);
+          });
         }, {
           error: function (err) {
             error.value = C.format('Page.Config.SaveFailed', err.message);
@@ -376,6 +399,7 @@
         form: form,
         handlePacMenu: handlePacMenu,
         hasProxyEndpoint: hasProxyEndpoint,
+        isWindowsPlatform: isWindowsPlatform,
         loading: initialLoadPipeline.loading,
         modeOptions: modeOptions,
         modeSegmentOptions: modeSegmentOptions,
@@ -452,7 +476,7 @@
                     style="width: 190px"
                     :min="1"
                     :max="65535"
-                    :disabled="!(form.systemProxyMode === 'pac' || form.systemProxyMode === 'global')"></a-input-number>
+                    :disabled="!isWindowsPlatform || !(form.systemProxyMode === 'pac' || form.systemProxyMode === 'global')"></a-input-number>
                 </label>
                 <div class="tp-mode-list" role="radiogroup">
                   <button v-for="option in modeOptions" :key="option.value" type="button" class="tp-mode-option tp-mode-choice" :class="{ active: form.systemProxyMode === option.value }" role="radio" :aria-checked="form.systemProxyMode === option.value" @click="form.systemProxyMode = option.value">

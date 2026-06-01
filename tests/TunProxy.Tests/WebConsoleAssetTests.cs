@@ -92,6 +92,16 @@ public class WebConsoleAssetTests
         Assert.Contains("white-space: nowrap;", css);
     }
 
+    [Fact]
+    public void ConfigPage_HidesPacAndGlobalModesOutsideWindows()
+    {
+        var script = File.ReadAllText(Path.Combine(SourceRoot, "config-page.js"));
+
+        Assert.Contains("isWindowsPlatform", script);
+        Assert.Contains("options.filter(function (option) { return option.value === 'tun' || option.value === 'none'; })", script);
+        Assert.Contains("payload.localProxy.setSystemProxy = isWindowsPlatform.value", script);
+    }
+
     private static IReadOnlyList<string> EnumerateRelativeFiles(string root)
     {
         return Directory

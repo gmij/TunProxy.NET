@@ -198,6 +198,8 @@ TUN 模式下，DNS 页会按域名聚合解析记录，展示：
 - `global`：系统代理直接指向本地代理端口。
 - `none`：只启动本地代理，不修改系统代理。
 
+Linux/macOS 没有统一、对所有进程生效的系统代理开关，因此 Web 控制台只在 Windows 上展示 PAC 和 Global 选项。Linux/macOS 下如果需要透明接管系统流量，请使用 TUN；本地代理模式仍可供显式配置了 `http_proxy`、`https_proxy` 或 `curl -x` 的客户端使用。
+
 这个模式不需要管理员权限，适合先完成上游代理检查、规则资源下载和 PAC 配置。
 
 ### TUN

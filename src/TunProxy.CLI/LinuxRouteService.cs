@@ -53,11 +53,11 @@ public sealed class LinuxRouteService : IRouteService
 
     public bool AddBypassRoute(string ip, int prefixLength = 32)
     {
-        var route = GetOriginalDefaultRoute();
+        var route = ResolveBypassRouteTarget(ip) ?? GetOriginalDefaultRoute();
         if (route == null)
         {
             Log.Warning(
-                "[ROUTE] Failed to find original default route; skipping bypass route {IP}/{Prefix}.",
+                "[ROUTE] Failed to find a usable bypass route target; skipping bypass route {IP}/{Prefix}.",
                 ip,
                 prefixLength);
             return false;
@@ -174,6 +174,12 @@ public sealed class LinuxRouteService : IRouteService
         return ParseOriginalDefaultRoute(output, _devName, _tunIp);
     }
 
+    private LinuxDefaultRoute? ResolveBypassRouteTarget(string ip)
+    {
+        var (_, output) = _run("ip", $"route get {ip} mark 0x{LinuxSocketMark.TunProxyBypassMark:x}");
+        return ParseRouteGetTarget(output, _devName, _tunIp);
+    }
+
     private bool AddRule(int priority, string selector) =>
         RunIdempotentCommand(
             "ip",
@@ -267,7 +273,8 @@ public sealed class LinuxRouteService : IRouteService
 
         foreach (var address in candidates)
         {
-            if (AddBypassRoute(address.ToString(), 32, route))
+            var target = ResolveBypassRouteTarget(address.ToString()) ?? route;
+            if (AddBypassRoute(address.ToString(), 32, target))
             {
                 Log.Information("[ROUTE] Management bypass route ready: {IP}/32", address);
             }
@@ -291,6 +298,57 @@ public sealed class LinuxRouteService : IRouteService
             string? gateway = null;
             string? device = null;
             for (var i = 1; i < parts.Length - 1; i++)
+            {
+                if (parts[i].Equals("via", StringComparison.OrdinalIgnoreCase))
+                {
+                    gateway = parts[i + 1];
+                    i++;
+                    continue;
+                }
+
+                if (parts[i].Equals("dev", StringComparison.OrdinalIgnoreCase))
+                {
+                    device = parts[i + 1];
+                    i++;
+                }
+            }
+
+            if (device != null && device.Equals(tunDeviceName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (gateway != null && gateway.Equals(tunIp, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(gateway) || !string.IsNullOrWhiteSpace(device))
+            {
+                return new LinuxDefaultRoute(gateway, device);
+            }
+        }
+
+        return null;
+    }
+
+    internal static LinuxDefaultRoute? ParseRouteGetTarget(
+        string routeOutput,
+        string tunDeviceName,
+        string tunIp)
+    {
+        foreach (var line in routeOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0 ||
+                parts[0].Equals("RTNETLINK", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string? gateway = null;
+            string? device = null;
+            for (var i = 0; i < parts.Length - 1; i++)
             {
                 if (parts[i].Equals("via", StringComparison.OrdinalIgnoreCase))
                 {

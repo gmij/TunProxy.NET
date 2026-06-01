@@ -95,6 +95,90 @@ public class LinuxRouteServiceTests
     }
 
     [Fact]
+    public void AddDefaultRoute_PreservesZeroTierRouteForActiveManagementClient()
+    {
+        var commands = new List<string>();
+        var service = new LinuxRouteService(
+            "10.255.0.1",
+            "255.255.255.0",
+            "tun0",
+            (file, args) =>
+            {
+                commands.Add($"{file} {args}");
+                return args switch
+                {
+                    "route show default table main" => (0, "default via 192.0.2.1 dev eth0 metric 100"),
+                    "route get 10.144.20.50 mark 0x5450" => (0, "10.144.20.50 dev ztzxudepi2 src 10.144.20.200 uid 0"),
+                    "-Htn state established" => (0, string.Empty),
+                    "-Hunp" => (0, string.Empty),
+                    _ => (0, string.Empty)
+                };
+            },
+            name => name == "SSH_CONNECTION"
+                ? "10.144.20.50 53344 10.144.20.200 22"
+                : null);
+
+        var added = service.AddDefaultRoute();
+
+        Assert.True(added);
+        Assert.Contains("ip route replace 10.144.20.50/32 dev ztzxudepi2", commands);
+        Assert.DoesNotContain("ip route replace 10.144.20.50/32 via 192.0.2.1 dev eth0", commands);
+    }
+
+    [Fact]
+    public void AddBypassRoute_PreservesDestinationSpecificRouteForZeroTierProxy()
+    {
+        var commands = new List<string>();
+        var service = new LinuxRouteService(
+            "10.255.0.1",
+            "255.255.255.0",
+            "tun0",
+            (file, args) =>
+            {
+                commands.Add($"{file} {args}");
+                return args switch
+                {
+                    "route get 10.144.20.222 mark 0x5450" => (0, "10.144.20.222 dev ztzxudepi2 src 10.144.20.200 uid 0"),
+                    "route show default table main" => (0, "default via 192.0.2.1 dev eth0 metric 100"),
+                    _ => (0, string.Empty)
+                };
+            },
+            _ => null);
+
+        var added = service.AddBypassRoute("10.144.20.222");
+
+        Assert.True(added);
+        Assert.Contains("ip route replace 10.144.20.222/32 dev ztzxudepi2", commands);
+        Assert.DoesNotContain("ip route replace 10.144.20.222/32 via 192.0.2.1 dev eth0", commands);
+    }
+
+    [Fact]
+    public void AddBypassRoute_FallsBackToOriginalDefaultRouteWhenRouteGetFindsTun()
+    {
+        var commands = new List<string>();
+        var service = new LinuxRouteService(
+            "10.255.0.1",
+            "255.255.255.0",
+            "tun0",
+            (file, args) =>
+            {
+                commands.Add($"{file} {args}");
+                return args switch
+                {
+                    "route get 203.0.113.10 mark 0x5450" => (0, "203.0.113.10 dev tun0 src 10.255.0.1 uid 0"),
+                    "route show default table main" => (0, "default via 192.0.2.1 dev eth0 metric 100"),
+                    _ => (0, string.Empty)
+                };
+            },
+            _ => null);
+
+        var added = service.AddBypassRoute("203.0.113.10");
+
+        Assert.True(added);
+        Assert.Contains("ip route replace 203.0.113.10/32 via 192.0.2.1 dev eth0", commands);
+    }
+
+    [Fact]
     public void RemoveDefaultRoute_RemovesPolicyRouteState()
     {
         var commands = new List<string>();
@@ -131,6 +215,25 @@ public class LinuxRouteServiceTests
             """);
 
         Assert.Equal([9993, 9994], ports);
+    }
+
+    [Fact]
+    public void ParseRouteGetTarget_SkipsTunRouteAndUsesOnLinkDevice()
+    {
+        var route = LinuxRouteService.ParseRouteGetTarget(
+            "10.144.20.222 dev ztzxudepi2 src 10.144.20.200 uid 0",
+            "tun0",
+            "10.255.0.1");
+
+        Assert.NotNull(route);
+        Assert.Null(route.Gateway);
+        Assert.Equal("ztzxudepi2", route.Device);
+        Assert.Equal("dev ztzxudepi2", route.ToRouteTarget());
+
+        Assert.Null(LinuxRouteService.ParseRouteGetTarget(
+            "203.0.113.10 dev tun0 src 10.255.0.1 uid 0",
+            "tun0",
+            "10.255.0.1"));
     }
 }
 

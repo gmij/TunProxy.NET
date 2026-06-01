@@ -86,6 +86,29 @@ public class TunProxyRouteDecisionTests
     }
 
     [Fact]
+    public async Task SharedAddressSpaceIp_UsesDirectRouteWithoutGeoLookup()
+    {
+        var geoLookupCalls = 0;
+        var service = new RouteDecisionService(
+            new AppConfig { Route = { EnableGeo = true } },
+            getCountryCode: _ =>
+            {
+                geoLookupCalls++;
+                return null;
+            });
+
+        var decision = await service.DecideForTunAsync(
+            "service.axt.aliyuncs.com",
+            IPAddress.Parse("100.100.100.10"),
+            CancellationToken.None);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("PrivateIP", decision.Reason);
+        Assert.Equal(IPAddress.Parse("100.100.100.10"), decision.EvaluatedIp);
+        Assert.Equal(0, geoLookupCalls);
+    }
+
+    [Fact]
     public async Task ThisNetworkIp_UsesDirectRoute()
     {
         var service = new RouteDecisionService(new AppConfig { Route = { EnableGeo = true } });

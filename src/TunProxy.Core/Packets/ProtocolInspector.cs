@@ -107,7 +107,7 @@ public static class ProtocolInspector
     }
 
     /// <summary>
-    /// Returns true for RFC1918, loopback, link-local, and this-network IPv4 addresses.
+    /// Returns true for local-use IPv4 addresses that should not be routed through an upstream proxy.
     /// </summary>
     public static bool IsPrivateIp(System.Net.IPAddress ip)
     {
@@ -116,6 +116,7 @@ public static class ProtocolInspector
         return b[0] == 0                                 // 0.0.0.0/8 this network
             || b[0] == 127                               // 127.0.0.0/8 loopback
             || b[0] == 10                                // 10.0.0.0/8
+            || (b[0] == 100 && b[1] >= 64 && b[1] <= 127) // 100.64.0.0/10 shared address space
             || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) // 172.16.0.0/12
             || (b[0] == 192 && b[1] == 168)              // 192.168.0.0/16
             || (b[0] == 169 && b[1] == 254);             // 169.254.0.0/16 link-local

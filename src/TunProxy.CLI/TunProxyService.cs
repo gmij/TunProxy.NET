@@ -115,7 +115,8 @@ public class TunProxyService : IProxyService
             onDirectRouteCandidate: _fakeIpPool != null ? null : _directBypassRouteScheduler.ScheduleAsync,
             onDirectDnsServerCandidate: EnsureDirectDnsServerRouteAsync,
             probeDirectDomains: config.Route.ProbeDirectDomains,
-            fakeIpPool: _fakeIpPool);
+            fakeIpPool: _fakeIpPool,
+            linuxSocketMark: LinuxSocketMark.TunProxyBypassMark);
     }
 
     public ServiceStatus GetStatus() => TunRuntimeDiagnosticsProvider.CreateStatus(
@@ -274,9 +275,11 @@ public class TunProxyService : IProxyService
                 _config.Proxy.Username,
                 _config.Proxy.Password,
                 connectionTimeout: TimeSpan.FromSeconds(8),
-                bindAddress: _outboundBindAddress);
+                bindAddress: _outboundBindAddress,
+                linuxSocketMark: LinuxSocketMark.TunProxyBypassMark);
             _directConnectionManager = CreateDirectConnectionManager(
-                TimeSpan.FromSeconds(8));
+                TimeSpan.FromSeconds(8),
+                LinuxSocketMark.TunProxyBypassMark);
 
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             Log.Information("[TUN ] Starting packet workers and background services...");
@@ -408,7 +411,12 @@ public class TunProxyService : IProxyService
                         udpDestIp,
                         packet.DestinationPort,
                         udpDecision.Reason);
-                    await _udpDirectRelay.ForwardAsync(device, packet, _outboundBindAddress, ct);
+                    await _udpDirectRelay.ForwardAsync(
+                        device,
+                        packet,
+                        _outboundBindAddress,
+                        LinuxSocketMark.TunProxyBypassMark,
+                        ct);
                     return;
                 }
 
@@ -1085,12 +1093,15 @@ public class TunProxyService : IProxyService
             TimeSpan.FromSeconds(ttlSeconds));
     }
 
-    internal static TcpConnectionManager CreateDirectConnectionManager(TimeSpan connectionTimeout) =>
+    internal static TcpConnectionManager CreateDirectConnectionManager(
+        TimeSpan connectionTimeout,
+        int? linuxSocketMark = null) =>
         new(
             string.Empty,
             0,
             ProxyType.Direct,
-            connectionTimeout: connectionTimeout);
+            connectionTimeout: connectionTimeout,
+            linuxSocketMark: linuxSocketMark);
 
     private Task EnsureDirectDnsServerRouteAsync(IPAddress dnsServer, CancellationToken ct) =>
         _directBypassRouteScheduler.EnsureAsync(

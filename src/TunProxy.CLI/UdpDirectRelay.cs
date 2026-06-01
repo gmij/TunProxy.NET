@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using Serilog;
+using TunProxy.Core.Connections;
 using TunProxy.Core.Packets;
 using TunProxy.Core.Tun;
 using TunProxy.Core.Wintun;
@@ -37,6 +38,7 @@ internal sealed class UdpDirectRelay : IDisposable
         ITunDevice device,
         IPPacket packet,
         IPAddress? bindAddress,
+        int? linuxSocketMark,
         CancellationToken ct)
     {
         if (_disposed)
@@ -52,7 +54,7 @@ internal sealed class UdpDirectRelay : IDisposable
 
         var session = _sessions.GetOrAdd(
             key,
-            _ => CreateSession(key, device, srcIp, srcPort, dstIp, dstPort, bindAddress, ct));
+            _ => CreateSession(key, device, srcIp, srcPort, dstIp, dstPort, bindAddress, linuxSocketMark, ct));
 
         session.Touch();
         return session.SendAsync(packet.Payload, ct);
@@ -105,6 +107,7 @@ internal sealed class UdpDirectRelay : IDisposable
         IPAddress dstIp,
         ushort dstPort,
         IPAddress? bindAddress,
+        int? linuxSocketMark,
         CancellationToken ct)
     {
         var localEndpoint = bindAddress != null
@@ -112,6 +115,7 @@ internal sealed class UdpDirectRelay : IDisposable
             : new IPEndPoint(IPAddress.Any, 0);
 
         var udpClient = new UdpClient(localEndpoint);
+        LinuxSocketMark.TryApply(udpClient.Client, linuxSocketMark);
         var session = new UdpRelaySession(
             udpClient,
             srcIp.GetAddressBytes(),

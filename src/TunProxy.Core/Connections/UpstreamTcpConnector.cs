@@ -18,7 +18,8 @@ public sealed record UpstreamConnectionOptions(
     string? Username = null,
     string? Password = null,
     TimeSpan? ConnectionTimeout = null,
-    IPAddress? BindAddress = null);
+    IPAddress? BindAddress = null,
+    int? LinuxSocketMark = null);
 
 public static class UpstreamTcpConnector
 {
@@ -41,6 +42,8 @@ public static class UpstreamTcpConnector
         var client = new TcpClient();
         try
         {
+            LinuxSocketMark.TryApply(client.Client, options.LinuxSocketMark);
+
             if (options.BindAddress != null)
             {
                 client.Client.Bind(new IPEndPoint(options.BindAddress, 0));

@@ -41,6 +41,7 @@ public class DnsProxyService
     private readonly Func<IPAddress, RouteDecision, CancellationToken, Task>? _onDirectRouteCandidate;
     private readonly Func<IPAddress, CancellationToken, Task>? _onDirectDnsServerCandidate;
     private readonly FakeIpPool? _fakeIpPool;
+    private readonly int? _linuxSocketMark;
     private readonly HashSet<string> _probeDirectDomainSuffixes;
     private readonly string _dohEndpoint;
     private long _tcpQueries;
@@ -74,7 +75,8 @@ public class DnsProxyService
         Func<IPAddress, RouteDecision, CancellationToken, Task>? onDirectRouteCandidate = null,
         Func<IPAddress, CancellationToken, Task>? onDirectDnsServerCandidate = null,
         IEnumerable<string>? probeDirectDomains = null,
-        FakeIpPool? fakeIpPool = null)
+        FakeIpPool? fakeIpPool = null,
+        int? linuxSocketMark = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
@@ -87,6 +89,7 @@ public class DnsProxyService
         _onDirectRouteCandidate = onDirectRouteCandidate;
         _onDirectDnsServerCandidate = onDirectDnsServerCandidate;
         _fakeIpPool = fakeIpPool;
+        _linuxSocketMark = linuxSocketMark;
         _dohEndpoint = ResolveDohEndpoint(upstreamDns);
         _probeDirectDomainSuffixes = new HashSet<string>(
             (probeDirectDomains ?? [])
@@ -511,6 +514,7 @@ public class DnsProxyService
             }
 
             using var udp = new System.Net.Sockets.UdpClient(System.Net.Sockets.AddressFamily.InterNetwork);
+            LinuxSocketMark.TryApply(udp.Client, _linuxSocketMark);
             await udp.SendAsync(dnsQueryPayload, new IPEndPoint(dnsAddress, 53), ct);
             var result = await udp.ReceiveAsync(ct).AsTask().WaitAsync(DirectDnsTimeout, ct);
             _lastSuccessUtc = DateTime.UtcNow;
@@ -553,6 +557,7 @@ public class DnsProxyService
         try
         {
             client = new System.Net.Sockets.TcpClient();
+            LinuxSocketMark.TryApply(client.Client, _linuxSocketMark);
             await client.ConnectAsync(_proxyHost, _proxyPort, ct);
             var stream = client.GetStream();
 
@@ -713,7 +718,7 @@ public class DnsProxyService
         var endpoint = dohEndpoint ?? _dohEndpoint;
         try
         {
-            using var client = ProxyHttpClientFactory.Create(_proxyConfig, TimeSpan.FromSeconds(15));
+            using var client = ProxyHttpClientFactory.Create(_proxyConfig, TimeSpan.FromSeconds(15), _linuxSocketMark);
             using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
             {
                 Content = new ByteArrayContent(dnsQueryPayload)

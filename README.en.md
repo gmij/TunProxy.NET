@@ -206,6 +206,8 @@ When `tun.enabled = true` or `localProxy.systemProxyMode = "tun"`, TunProxy runs
 
 FakeIP is enabled by default in TUN mode. The DNS service returns addresses from `198.18.0.0/16` for A records, and the TUN layer maps those fake-IP connections back to domain names and real addresses so routing does not lose domain context.
 
+On Linux, TUN full-capture mode uses a dedicated routing table plus `fwmark` policy routing. Existing non-default routes in the main table, such as LAN, ZeroTier, Docker, and cloud private routes, keep priority; ordinary default traffic enters `tun0`. TunProxy's own upstream proxy, direct-connect, DNS, and DoH sockets are marked so they return through the original main route instead of looping back into TUN. Common ZeroTier UDP ports are also kept on the main route, which lets ZeroTier remain the underlay network while TunProxy performs split routing.
+
 If GeoIP or GFWList is enabled but missing or invalid, TunProxy stays in local-proxy setup mode. Prepare or repair resources, then save config and restart into TUN.
 
 ## Configuration

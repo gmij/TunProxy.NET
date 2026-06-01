@@ -33,7 +33,7 @@ public class UdpDirectRelayTests
 
         // ForwardAsync after disposal must complete without throwing.
         var packet = MakeUdpPacket("10.0.0.2", 12345, "8.8.8.8", 53, [0xAB]);
-        await relay.ForwardAsync(null!, packet, null, CancellationToken.None);
+        await relay.ForwardAsync(null!, packet, null, null, CancellationToken.None);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

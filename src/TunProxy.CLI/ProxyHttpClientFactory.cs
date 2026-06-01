@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using TunProxy.Core.Configuration;
 using TunProxy.Core.Connections;
 
@@ -6,12 +7,13 @@ namespace TunProxy.CLI;
 
 internal static class ProxyHttpClientFactory
 {
-    public static HttpClient Create(ProxyConfig? proxyConfig, TimeSpan timeout)
+    public static HttpClient Create(ProxyConfig? proxyConfig, TimeSpan timeout, int? linuxSocketMark = null)
     {
         var handler = new SocketsHttpHandler
         {
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
         };
+        ConfigureLinuxSocketMark(handler, linuxSocketMark);
 
         var proxy = CreateProxy(proxyConfig);
         if (proxy != null)
@@ -25,6 +27,34 @@ internal static class ProxyHttpClientFactory
         }
 
         return new HttpClient(handler) { Timeout = timeout };
+    }
+
+    private static void ConfigureLinuxSocketMark(SocketsHttpHandler handler, int? linuxSocketMark)
+    {
+        if (linuxSocketMark == null || !OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        handler.ConnectCallback = async (context, ct) =>
+        {
+            var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
+            {
+                NoDelay = true
+            };
+
+            try
+            {
+                LinuxSocketMark.TryApply(socket, linuxSocketMark);
+                await socket.ConnectAsync(context.DnsEndPoint, ct);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
+        };
     }
 
     internal static IWebProxy? CreateProxy(ProxyConfig? proxyConfig)

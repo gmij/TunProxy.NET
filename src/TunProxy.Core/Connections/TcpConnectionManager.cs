@@ -20,6 +20,7 @@ public class TcpConnectionManager : IDisposable
     private readonly int _maxConnections;
     private readonly TimeSpan _connectionTimeout;
     private readonly IPAddress? _bindAddress; // 强制绑定的本地 IP（防止走 TUN 接口）
+    private readonly int? _linuxSocketMark;
     private bool _disposed;
 
     public TcpConnectionManager(
@@ -30,7 +31,8 @@ public class TcpConnectionManager : IDisposable
         string? password = null,
         int maxConnections = 10000,
         TimeSpan? connectionTimeout = null,
-        IPAddress? bindAddress = null)
+        IPAddress? bindAddress = null,
+        int? linuxSocketMark = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
@@ -40,6 +42,7 @@ public class TcpConnectionManager : IDisposable
         _maxConnections = maxConnections;
         _connectionTimeout = connectionTimeout ?? TimeSpan.FromSeconds(30);
         _bindAddress = bindAddress;
+        _linuxSocketMark = linuxSocketMark;
     }
 
     /// <summary>
@@ -69,7 +72,15 @@ public class TcpConnectionManager : IDisposable
 
         return _connections.GetOrAdd(
             connKey,
-            _ => new TcpConnection(_proxyHost, _proxyPort, _proxyType, _username, _password, _connectionTimeout, _bindAddress));
+            _ => new TcpConnection(
+                _proxyHost,
+                _proxyPort,
+                _proxyType,
+                _username,
+                _password,
+                _connectionTimeout,
+                _bindAddress,
+                _linuxSocketMark));
     }
 
     /// <summary>
@@ -168,6 +179,7 @@ public class TcpConnection : IDisposable
     private readonly string? _password;
     private readonly TimeSpan _connectionTimeout;
     private readonly IPAddress? _bindAddress;
+    private readonly int? _linuxSocketMark;
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     private TcpClient? _client;
     private NetworkStream? _stream;
@@ -189,7 +201,8 @@ public class TcpConnection : IDisposable
         string? username = null,
         string? password = null,
         TimeSpan? connectionTimeout = null,
-        IPAddress? bindAddress = null)
+        IPAddress? bindAddress = null,
+        int? linuxSocketMark = null)
     {
         _proxyHost = proxyHost;
         _proxyPort = proxyPort;
@@ -198,6 +211,7 @@ public class TcpConnection : IDisposable
         _password = password;
         _connectionTimeout = connectionTimeout ?? TimeSpan.FromSeconds(30);
         _bindAddress = bindAddress;
+        _linuxSocketMark = linuxSocketMark;
     }
 
     /// <summary>
@@ -234,7 +248,8 @@ public class TcpConnection : IDisposable
                             _username,
                             _password,
                             _connectionTimeout,
-                            _bindAddress),
+                            _bindAddress,
+                            _linuxSocketMark),
                         mode,
                         ct);
                     _stream = _client.GetStream();

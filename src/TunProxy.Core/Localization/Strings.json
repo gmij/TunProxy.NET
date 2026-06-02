@@ -42,7 +42,9 @@
         "AlreadyLatest": "Rule resources are already up to date.",
         "Refreshed": "Rule resources refreshed."
       },
-      "LocalProxyPort": "Local proxy port",
+      "ListenHost": "Listen host",
+      "ListenHostHint": "127.0.0.1 = localhost only · 0.0.0.0 = open to LAN",
+      "LocalProxyPort": "Listen port",
       "ModeHintProxyHtml": "<strong>Local Proxy mode</strong> listens on a local port and can automatically update the system proxy. No administrator rights are required.<br>Use the status page to restart or stop the current service.",
       "ModeHintTunHtml": "<strong>TUN mode</strong> transparently captures TCP traffic through the virtual adapter. FakeIP DNS is enabled by default — the DNS proxy returns virtual addresses so domain-based routing decisions can be made before the real IP is known.<br>Use the status page to restart or stop the current service.",
       "ModeUnknown": "Unknown (service unavailable)",
@@ -109,6 +111,8 @@
       "StepRoutingResourcesHint": "Download GFWList and GeoIP resources before enabling smart routing modes that depend on them.",
       "StepProxyMode": "Proxy mode",
       "StepProxyModeHint": "Choose how TunProxy should take over traffic, then save and restart to apply the final configuration.",
+      "StepAdvanced": "Advanced",
+      "StepAdvancedHint": "Optional: configure the proxy listen address to enable LAN clients to connect for multi-hop forwarding.",
       "ApplyPac": "Use as system PAC",
       "ClearPac": "Clear system PAC",
       "Title": "Config"

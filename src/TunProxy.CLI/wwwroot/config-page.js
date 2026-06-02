@@ -31,6 +31,7 @@
         proxyUsername: '',
         proxyPassword: '',
         systemProxyMode: 'none',
+        localHost: '127.0.0.1',
         localPort: 8080,
         enableGfw: true,
         enableGeo: true
@@ -55,6 +56,7 @@
       function buildPayload() {
         var payload = C.clone(cfg.value || {});
         var mode = normalizeModeForPlatform(form.systemProxyMode);
+        payload.localProxy.listenHost = form.localHost.trim() || '127.0.0.1';
         payload.localProxy.listenPort = Number(form.localPort || 8080);
         payload.localProxy.systemProxyMode = mode;
         payload.localProxy.setSystemProxy = isWindowsPlatform.value && (mode === 'pac' || mode === 'global');
@@ -76,6 +78,7 @@
         return JSON.stringify({
           proxy: payload.proxy,
           localProxy: {
+            listenHost: payload.localProxy.listenHost,
             listenPort: payload.localProxy.listenPort,
             systemProxyMode: payload.localProxy.systemProxyMode,
             setSystemProxy: payload.localProxy.setSystemProxy
@@ -193,7 +196,7 @@
         return [
           { label: C.t('Page.Status.ProxyServer'), value: form.proxyHost ? form.proxyHost + ':' + form.proxyPort : '-' },
           { label: C.t('Page.Config.SystemProxyMode'), value: C.systemProxyModeLabel(normalizeModeForPlatform(form.systemProxyMode)) },
-          { label: C.t('Page.Config.LocalProxyPort'), value: form.localPort },
+          { label: C.t('Page.Config.LocalProxyPort'), value: form.localHost + ':' + form.localPort },
           { label: C.t('Page.Config.RouteMode'), value: normalizeModeForPlatform(form.systemProxyMode) === 'global' ? 'global' : 'smart' },
           { label: C.t('Page.Status.FakeIp'), value: C.t(cfg.value && cfg.value.tun && cfg.value.tun.fakeIpMode ? 'Shared.On' : 'Shared.Off') }
         ];
@@ -202,6 +205,7 @@
       function loadConfig() {
         return window.TunProxyApi.getJson('/api/config').then(function (payload) {
           cfg.value = payload;
+          form.localHost = payload.localProxy.listenHost || '127.0.0.1';
           form.localPort = payload.localProxy.listenPort;
           form.systemProxyMode = normalizeModeForPlatform(payload.tun.enabled ? 'tun' : (payload.localProxy.systemProxyMode || (payload.localProxy.setSystemProxy ? 'pac' : 'none')));
           form.proxyHost = payload.proxy.host || '';
@@ -469,20 +473,28 @@
                   <div><div class="tp-step-title"><span class="tp-step-number">3</span><span>{{ t('Page.Config.StepProxyMode') }}</span></div><div class="tp-muted">{{ t('Page.Config.StepProxyModeHint') }}</div></div>
                 </div>
                 <div class="tp-section-title">{{ t('Page.Config.SystemProxyMode') }}</div>
-                <label class="tp-field tp-local-port-field" style="margin-top: 10px">
-                  <span class="tp-field-label">{{ t('Page.Config.LocalProxyPort') }}</span>
-                  <a-input-number
-                    v-model:value="form.localPort"
-                    style="width: 190px"
-                    :min="1"
-                    :max="65535"
-                    :disabled="!isWindowsPlatform || !(form.systemProxyMode === 'pac' || form.systemProxyMode === 'global')"></a-input-number>
-                </label>
                 <div class="tp-mode-list" role="radiogroup">
                   <button v-for="option in modeOptions" :key="option.value" type="button" class="tp-mode-option tp-mode-choice" :class="{ active: form.systemProxyMode === option.value }" role="radio" :aria-checked="form.systemProxyMode === option.value" @click="form.systemProxyMode = option.value">
                     <span><strong>{{ option.title }}</strong><span class="tp-muted">{{ option.desc }}</span></span>
                     <span v-if="form.systemProxyMode === option.value" class="tp-current-dot" :title="t('Page.Config.CurrentMode')" aria-hidden="true"></span>
                   </button>
+                </div>
+              </section>
+
+              <section class="tp-section">
+                <div class="tp-section-head">
+                  <div><div class="tp-step-title"><span class="tp-step-number">4</span><span>{{ t('Page.Config.StepAdvanced') }}</span></div><div class="tp-muted">{{ t('Page.Config.StepAdvancedHint') }}</div></div>
+                </div>
+                <div class="tp-three-grid" style="align-items:start">
+                  <label class="tp-field" style="grid-column:span 2">
+                    <span class="tp-field-label">{{ t('Page.Config.ListenHost') }}</span>
+                    <a-input v-model:value="form.localHost" placeholder="127.0.0.1"></a-input>
+                    <span class="tp-muted" style="font-size:11px;margin-top:3px;display:block">{{ t('Page.Config.ListenHostHint') }}</span>
+                  </label>
+                  <label class="tp-field">
+                    <span class="tp-field-label">{{ t('Page.Config.LocalProxyPort') }}</span>
+                    <a-input-number v-model:value="form.localPort" style="width:100%" :min="1" :max="65535"></a-input-number>
+                  </label>
                 </div>
               </section>
 

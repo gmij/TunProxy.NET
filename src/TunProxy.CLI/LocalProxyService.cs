@@ -68,9 +68,16 @@ public class LocalProxyService : IProxyService
     public async Task StartAsync(CancellationToken ct)
     {
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var host = _config.LocalProxy.ListenHost;
         var port = _config.LocalProxy.ListenPort;
 
-        Log.Information("Starting local proxy mode on 127.0.0.1:{Port}", port);
+        if (!IPAddress.TryParse(host, out var listenAddress))
+        {
+            Log.Error("Invalid listen host address: {Host}", host);
+            throw new InvalidOperationException($"Invalid listen host address: {host}");
+        }
+
+        Log.Information("Starting local proxy mode on {Host}:{Port}", host, port);
         Log.Information("Upstream proxy: {Host}:{Port} ({Type})", _config.Proxy.Host, _config.Proxy.Port, _config.Proxy.Type);
 
         InitializeBackgroundServices();
@@ -80,7 +87,7 @@ public class LocalProxyService : IProxyService
             ApplySystemProxyMode(port);
         }
 
-        _listener = new TcpListener(IPAddress.Loopback, port);
+        _listener = new TcpListener(listenAddress, port);
         _listener.Start();
 
         try

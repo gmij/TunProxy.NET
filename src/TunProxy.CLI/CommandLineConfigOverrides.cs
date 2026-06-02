@@ -37,6 +37,10 @@ internal static class CommandLineConfigOverrides
                     ApplyMode(config, ReadRequiredValue(args, ref i, token));
                     break;
 
+                case "--listen-host":
+                    config.LocalProxy.ListenHost = ReadRequiredValue(args, ref i, token);
+                    break;
+
                 case "--listen-port":
                     config.LocalProxy.ListenPort = ParseRequiredInt(ReadRequiredValue(args, ref i, token), token);
                     break;

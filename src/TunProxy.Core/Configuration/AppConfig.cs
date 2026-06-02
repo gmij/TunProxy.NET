@@ -82,6 +82,7 @@ public class LocalProxyConfig
 {
     private string _systemProxyMode = SystemProxyModes.None;
 
+    public string ListenHost { get; set; } = "127.0.0.1";
     public int ListenPort { get; set; } = 8080;
     public bool SetSystemProxy
     {
@@ -112,6 +113,7 @@ public class LocalProxyConfig
     {
         ArgumentNullException.ThrowIfNull(other);
 
+        ListenHost = other.ListenHost;
         ListenPort = other.ListenPort;
         SystemProxyMode = other.SystemProxyMode;
         BypassList = other.BypassList;

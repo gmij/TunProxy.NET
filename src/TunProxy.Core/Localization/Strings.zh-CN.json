@@ -42,7 +42,9 @@
         "AlreadyLatest": "路由资源已经是最新。",
         "Refreshed": "路由资源刷新完成。"
       },
-      "LocalProxyPort": "本地代理端口",
+      "ListenHost": "监听地址",
+      "ListenHostHint": "127.0.0.1 仅本机 · 0.0.0.0 开放局域网",
+      "LocalProxyPort": "监听端口",
       "ModeHintProxyHtml": "<strong>本地代理模式</strong>监听本机端口，并可自动设置系统代理，无需管理员权限。<br>可在状态页重启或停止当前服务。",
       "ModeHintTunHtml": "<strong>TUN 模式</strong>通过虚拟网卡透明接管 TCP 流量。默认启用 FakeIP DNS —— DNS 代理返回虚拟地址，以便在获知真实 IP 之前即可进行基于域名的路由决策。<br>可在状态页重启或停止当前服务。",
       "ModeUnknown": "未知（服务未运行）",
@@ -109,6 +111,8 @@
       "StepRoutingResourcesHint": "先下载 GFWList 和 GeoIP 资源，再使用依赖它们的智能路由模式。",
       "StepProxyMode": "代理方式",
       "StepProxyModeHint": "最后选择 TunProxy 接管流量的方式，然后保存并重启生效。",
+      "StepAdvanced": "高级选项",
+      "StepAdvancedHint": "可选：配置代理监听地址，开放后局域网内其它设备可接入，实现多级转发。",
       "ApplyPac": "设为系统 PAC",
       "ClearPac": "清除系统 PAC",
       "Title": "配置"

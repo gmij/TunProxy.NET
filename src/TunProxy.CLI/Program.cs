@@ -142,6 +142,11 @@ public class Program
                 builder.Services.AddSingleton<TunProxyService>();
                 builder.Services.AddSingleton<IProxyService>(sp => sp.GetRequiredService<TunProxyService>());
                 builder.Services.AddHostedService<ProxyHostedService<TunProxyService>>();
+                
+                // Also register LocalProxyService for multi-level forwarding (LAN access in TUN mode)
+                Log.Information("Registering local proxy hosted service for LAN access.");
+                builder.Services.AddSingleton<LocalProxyService>();
+                builder.Services.AddHostedService<ProxyHostedService<LocalProxyService>>();
             }
             else
             {

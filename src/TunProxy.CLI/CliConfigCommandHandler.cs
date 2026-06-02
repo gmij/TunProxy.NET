@@ -138,6 +138,7 @@ internal sealed class CliConfigCommandHandler
         config.Proxy.Username = await PromptOptionalStringAsync("Upstream proxy username", config.Proxy.Username);
         config.Proxy.Password = await PromptOptionalSecretAsync("Upstream proxy password", config.Proxy.Password);
 
+        config.LocalProxy.ListenHost = await PromptStringAsync("Local proxy listen host (127.0.0.1 for localhost only, 0.0.0.0 for LAN access)", config.LocalProxy.ListenHost);
         config.LocalProxy.ListenPort = await PromptIntAsync("Local proxy listen port", config.LocalProxy.ListenPort);
         config.Tun.DnsServer = await PromptStringAsync("TUN DNS server", config.Tun.DnsServer);
         config.Route.EnableGfwList = await PromptBoolAsync("Enable GFWList rules", true);
@@ -332,6 +333,7 @@ internal sealed class CliConfigCommandHandler
         builder.AppendLine("  --username, -u USER");
         builder.AppendLine("  --password, -w PASS");
         builder.AppendLine("  --mode proxy|tun");
+        builder.AppendLine("  --listen-host HOST      (default: 127.0.0.1; use 0.0.0.0 for LAN)");
         builder.AppendLine("  --listen-port PORT");
         builder.AppendLine("  --dns-server IP");
         builder.AppendLine("  --enable-gfw | --disable-gfw");

@@ -84,6 +84,7 @@ public class LocalProxyConfig
 
     public string ListenHost { get; set; } = "127.0.0.1";
     public int ListenPort { get; set; } = 8080;
+    public bool EnableLanProxy { get; set; } = false;
     public bool SetSystemProxy
     {
         get => SystemProxyMode is SystemProxyModes.Pac or SystemProxyModes.Global;
@@ -115,6 +116,7 @@ public class LocalProxyConfig
 
         ListenHost = other.ListenHost;
         ListenPort = other.ListenPort;
+        EnableLanProxy = other.EnableLanProxy;
         SystemProxyMode = other.SystemProxyMode;
         BypassList = other.BypassList;
         SystemProxyBackup.ApplyFrom(other.SystemProxyBackup);

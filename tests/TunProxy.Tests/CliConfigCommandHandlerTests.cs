@@ -74,6 +74,7 @@ public class CliConfigCommandHandlerTests
                     "",
                     "",    // listen host: accept default 127.0.0.1
                     "8088",
+                    "n",   // enable lan proxy: no
                     "1.1.1.1",
                     "y",
                     "n",

@@ -45,6 +45,14 @@ internal static class CommandLineConfigOverrides
                     config.LocalProxy.ListenPort = ParseRequiredInt(ReadRequiredValue(args, ref i, token), token);
                     break;
 
+                case "--enable-lan-proxy":
+                    config.LocalProxy.EnableLanProxy = true;
+                    break;
+
+                case "--no-lan-proxy":
+                    config.LocalProxy.EnableLanProxy = false;
+                    break;
+
                 case "--system-proxy-mode":
                     ApplySystemProxyMode(config, ReadRequiredValue(args, ref i, token));
                     break;

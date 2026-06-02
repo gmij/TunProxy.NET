@@ -140,6 +140,7 @@ internal sealed class CliConfigCommandHandler
 
         config.LocalProxy.ListenHost = await PromptStringAsync("Local proxy listen host (127.0.0.1 for localhost only, 0.0.0.0 for LAN access)", config.LocalProxy.ListenHost);
         config.LocalProxy.ListenPort = await PromptIntAsync("Local proxy listen port", config.LocalProxy.ListenPort);
+        config.LocalProxy.EnableLanProxy = await PromptBoolAsync("Open proxy port in TUN mode for LAN/multi-hop forwarding", config.LocalProxy.EnableLanProxy);
         config.Tun.DnsServer = await PromptStringAsync("TUN DNS server", config.Tun.DnsServer);
         config.Route.EnableGfwList = await PromptBoolAsync("Enable GFWList rules", true);
         config.Route.EnableGeo = await PromptBoolAsync("Enable GeoIP rules", true);

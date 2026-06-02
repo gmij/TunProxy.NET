@@ -42,6 +42,7 @@
         "AlreadyLatest": "Rule resources are already up to date.",
         "Refreshed": "Rule resources refreshed."
       },
+      "EnableLanProxy": "Open proxy port in TUN mode",
       "ListenHost": "Listen host",
       "ListenHostHint": "127.0.0.1 = localhost only · 0.0.0.0 = open to LAN",
       "LocalProxyPort": "Listen port",

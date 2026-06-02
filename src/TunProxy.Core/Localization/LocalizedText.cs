@@ -84,6 +84,7 @@ public static class LocalizedText
         "Page.Config.ModeHintProxyHtml",
         "Page.Config.ModeHintTunHtml",
         "Page.Config.LocalProxyPort",
+        "Page.Config.EnableLanProxy",
         "Page.Config.ListenHost",
         "Page.Config.ListenHostHint",
         "Page.Config.SetSystemProxy",

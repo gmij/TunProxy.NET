@@ -31,6 +31,7 @@
         proxyUsername: '',
         proxyPassword: '',
         systemProxyMode: 'none',
+        enableLanProxy: false,
         localHost: '127.0.0.1',
         localPort: 8080,
         enableGfw: true,
@@ -56,6 +57,7 @@
       function buildPayload() {
         var payload = C.clone(cfg.value || {});
         var mode = normalizeModeForPlatform(form.systemProxyMode);
+        payload.localProxy.enableLanProxy = form.enableLanProxy;
         payload.localProxy.listenHost = form.localHost.trim() || '127.0.0.1';
         payload.localProxy.listenPort = Number(form.localPort || 8080);
         payload.localProxy.systemProxyMode = mode;
@@ -78,6 +80,7 @@
         return JSON.stringify({
           proxy: payload.proxy,
           localProxy: {
+            enableLanProxy: payload.localProxy.enableLanProxy,
             listenHost: payload.localProxy.listenHost,
             listenPort: payload.localProxy.listenPort,
             systemProxyMode: payload.localProxy.systemProxyMode,
@@ -205,6 +208,7 @@
       function loadConfig() {
         return window.TunProxyApi.getJson('/api/config').then(function (payload) {
           cfg.value = payload;
+          form.enableLanProxy = !!payload.localProxy.enableLanProxy;
           form.localHost = payload.localProxy.listenHost || '127.0.0.1';
           form.localPort = payload.localProxy.listenPort;
           form.systemProxyMode = normalizeModeForPlatform(payload.tun.enabled ? 'tun' : (payload.localProxy.systemProxyMode || (payload.localProxy.setSystemProxy ? 'pac' : 'none')));
@@ -484,6 +488,10 @@
               <section class="tp-section">
                 <div class="tp-section-head">
                   <div><div class="tp-step-title"><span class="tp-step-number">4</span><span>{{ t('Page.Config.StepAdvanced') }}</span></div><div class="tp-muted">{{ t('Page.Config.StepAdvancedHint') }}</div></div>
+                </div>
+                <div class="tp-field" style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+                  <a-switch v-model:checked="form.enableLanProxy" size="small"></a-switch>
+                  <span>{{ t('Page.Config.EnableLanProxy') }}</span>
                 </div>
                 <div class="tp-three-grid" style="align-items:start">
                   <label class="tp-field" style="grid-column:span 2">

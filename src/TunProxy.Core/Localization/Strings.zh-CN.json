@@ -42,6 +42,7 @@
         "AlreadyLatest": "路由资源已经是最新。",
         "Refreshed": "路由资源刷新完成。"
       },
+      "EnableLanProxy": "TUN 模式下同时开放代理端口",
       "ListenHost": "监听地址",
       "ListenHostHint": "127.0.0.1 仅本机 · 0.0.0.0 开放局域网",
       "LocalProxyPort": "监听端口",

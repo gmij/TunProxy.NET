@@ -72,6 +72,7 @@ public class CliConfigCommandHandlerTests
                     "Http",
                     "",
                     "",
+                    "",    // listen host: accept default 127.0.0.1
                     "8088",
                     "1.1.1.1",
                     "y",

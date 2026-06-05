@@ -13,6 +13,7 @@ namespace TunProxy.CLI;
 [JsonSerializable(typeof(RouteConfig))]
 [JsonSerializable(typeof(LoggingConfig))]
 [JsonSerializable(typeof(ServiceStatus))]
+[JsonSerializable(typeof(ServiceStartupIssue))]
 [JsonSerializable(typeof(MetricsSnapshot))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(List<string>))]

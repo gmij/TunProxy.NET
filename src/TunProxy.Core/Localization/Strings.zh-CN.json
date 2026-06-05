@@ -234,6 +234,19 @@
           "DnsFailed": "请检查上游 DNS 连通性。若 DoH 回退成功，该提示会在后续连接成功后自动消失。",
           "Generic": "请结合上方错误详情，在配置页核对代理参数。"
         }
+      },
+      "StartupIssue": {
+        "Title": "启动路由异常",
+        "OccurredAt": "检测时间：{0}",
+        "MessageUnavailable": "没有记录更多详情。",
+        "Reason": {
+          "LocalSubnetConfirmationFailed": "TunProxy 无法确认私有代理地址所在的本地网段链路。",
+          "Generic": "TunProxy 检测到启动异常。"
+        },
+        "Hint": {
+          "LocalSubnetConfirmationFailed": "TUN 默认路由没有被应用。请检查承载代理网段的 ZeroTier/VPN 或本地网卡是否已上线，然后重启服务。",
+          "Generic": "请查看服务日志，修复底层网络问题后重启 TunProxy。"
+        }
       }
     }
   },

@@ -46,4 +46,15 @@ public class LocalizedTextTests
 
         Assert.Equal("Last active", catalog["Page.Dns.LastActive"]);
     }
+
+    [Fact]
+    public void GetFrontendCatalog_ContainsStartupIssueText()
+    {
+        var catalog = LocalizedText.GetFrontendCatalog("en");
+
+        Assert.Equal("Startup route issue", catalog["Page.Status.StartupIssue.Title"]);
+        Assert.Equal(
+            "TunProxy could not confirm the local network path for the private proxy address.",
+            catalog["Page.Status.StartupIssue.Reason.LocalSubnetConfirmationFailed"]);
+    }
 }

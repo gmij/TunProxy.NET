@@ -54,14 +54,17 @@ public class TunProxyService : IProxyService
     private DateTime? _lastTcpConnectFailureUtc;
     private DateTime? _lastPacketReadUtc;
     private DateTime? _lastPacketProcessedUtc;
+    private ServiceStartupIssue? _startupIssue;
 
     private const int PacketQueueCapacity = 4096;
     private const int MaxInitialPayloadBufferBytes = 64 * 1024;
+    private const int MaxLocalSubnetConfirmationFailures = 3;
+    private const string StartupIssueLocalSubnetConfirmationFailed = "local-subnet-confirmation-failed";
     private static readonly TimeSpan ClientWindowPollInterval = TimeSpan.FromMilliseconds(1);
     private static readonly TimeSpan FakeIpResolveWaitTimeout = TimeSpan.FromMilliseconds(4500);
     private static readonly TimeSpan FakeIpResolvePollInterval = TimeSpan.FromMilliseconds(25);
     private static readonly TimeSpan PendingRelayStateIdleTimeout = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan OutboundReadyWaitTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan OutboundReadyWaitTimeout = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan OutboundReadyPollInterval = TimeSpan.FromSeconds(1);
 
     public TunProxyService(AppConfig config)
@@ -126,6 +129,7 @@ public class TunProxyService : IProxyService
         _connectionManager,
         _directConnectionManager,
         _metrics,
+        _startupIssue,
         _lastTcpConnectFailure,
         _lastTcpConnectFailureUtc);
 
@@ -153,7 +157,7 @@ public class TunProxyService : IProxyService
                 decision.ShouldProxy ? "PROXY" : "DIRECT",
                 decision.Reason,
                 snapshot.SeenCount,
-                ProtocolInspector.IsPrivateIp(ipAddress),
+                LocalNetworkAddressClassifier.IsLocalUseAddress(ipAddress),
                 snapshot.IsDnsCached,
                 snapshot.DnsLastActiveUtc ?? snapshot.LastSeenUtc));
         }
@@ -197,6 +201,7 @@ public class TunProxyService : IProxyService
             _proxyBypassRoutes,
             _directBypassRoutes,
             _dnsProxy,
+            _startupIssue,
             _lastTcpConnectFailure,
             _lastTcpConnectFailureUtc,
             _lastPacketReadUtc,
@@ -234,25 +239,32 @@ public class TunProxyService : IProxyService
             _tunDevice = TunDeviceFactory.Create(_config.Tun);
             Log.Information("[TUN ] Starting TUN device...");
             _tunDevice.Start();
-            var preferredBindAddress = _runtimeStateStore.LoadLastOutboundBindAddress();
+            var preferredBindAddress = _runtimeStateStore.LoadLastOutboundBindState()?.Address;
             var tunMtu = _tunMtuResolver.Resolve(_config.Proxy, _routeService, preferredBindAddress);
             Log.Information("[TUN ] Configuring TUN address {IP}/{Mask} with MTU {Mtu}...", _config.Tun.IpAddress, _config.Tun.SubnetMask, tunMtu);
             _tunDevice.Configure(_config.Tun.IpAddress, _config.Tun.SubnetMask, tunMtu);
 
             if (_config.Route.AutoAddDefaultRoute)
             {
-                await WaitForOutboundReadyAsync(ct);
-                Log.Information("[ROUTE] Applying proxy bypass routes and TUN default route...");
-                AddProxyBypassRoutes();
-                SelectOutboundBindAddress();
-                _ipCache!.RetireDirectIpCache();
-                _ipCache.LoadBlockedIpCache();
-                var defaultRouteReady = _routeService!.AddDefaultRoute();
-                Log.Information("[ROUTE] Route setup completed. DefaultRouteReady={DefaultRouteReady}", defaultRouteReady);
-                await EnsureStartupDirectDnsRoutesAsync(ct);
-                if (!defaultRouteReady)
+                var outboundReadyForRoutes = await WaitForOutboundReadyAsync(ct);
+                if (outboundReadyForRoutes)
                 {
-                    Log.Warning("[ROUTE] TUN default route is still missing; system traffic may not enter TUN.");
+                    Log.Information("[ROUTE] Applying proxy bypass routes and TUN default route...");
+                    AddProxyBypassRoutes();
+                    SelectOutboundBindAddress();
+                    _ipCache!.RetireDirectIpCache();
+                    _ipCache.LoadBlockedIpCache();
+                    var defaultRouteReady = _routeService!.AddDefaultRoute();
+                    Log.Information("[ROUTE] Route setup completed. DefaultRouteReady={DefaultRouteReady}", defaultRouteReady);
+                    await EnsureStartupDirectDnsRoutesAsync(ct);
+                    if (!defaultRouteReady)
+                    {
+                        Log.Warning("[ROUTE] TUN default route is still missing; system traffic may not enter TUN.");
+                    }
+                }
+                else
+                {
+                    Log.Warning("[ROUTE] Skipping TUN default route setup because the outbound private proxy path could not be confirmed.");
                 }
             }
             else
@@ -1385,22 +1397,23 @@ public class TunProxyService : IProxyService
         }
     }
 
-    private async Task WaitForOutboundReadyAsync(CancellationToken ct)
+    private async Task<bool> WaitForOutboundReadyAsync(CancellationToken ct)
     {
         var selector = new TunOutboundBindAddressSelector();
         var deadline = DateTime.UtcNow + OutboundReadyWaitTimeout;
         var attempt = 0;
+        var localSubnetConfirmationFailures = 0;
 
         while (true)
         {
             ct.ThrowIfCancellationRequested();
             attempt++;
 
-            var preferredBindAddress = _runtimeStateStore.LoadLastOutboundBindAddress();
+            var preferredBindState = _runtimeStateStore.LoadLastOutboundBindState();
             var selection = selector.SelectWithSource(
                 _config.Proxy,
                 _routeService,
-                preferredBindAddress);
+                preferredBindState);
 
             if (selection.IsReady)
             {
@@ -1409,17 +1422,48 @@ public class TunProxyService : IProxyService
                     attempt,
                     selection.Source,
                     selection.Address);
-                return;
+                ClearStartupIssue();
+                return true;
             }
 
             if (DateTime.UtcNow >= deadline)
             {
+                if (selection.RequiresLocalSubnetConfirmation)
+                {
+                    localSubnetConfirmationFailures++;
+                    if (localSubnetConfirmationFailures >= MaxLocalSubnetConfirmationFailures)
+                    {
+                        SetStartupIssue(
+                            StartupIssueLocalSubnetConfirmationFailed,
+                            $"Private proxy path was not confirmed after {MaxLocalSubnetConfirmationFailures} wait window(s) of {OutboundReadyWaitTimeout.TotalSeconds:0}s; TUN default route was not applied.");
+                        Log.Warning(
+                            "[ROUTE] Local subnet confirmation failed after {FailureCount} wait window(s) of {TimeoutSeconds}s. LastSource={Source}, LastBindAddress={BindAddress}. TUN default route will not be applied.",
+                            localSubnetConfirmationFailures,
+                            OutboundReadyWaitTimeout.TotalSeconds,
+                            selection.Source,
+                            selection.Address?.ToString() ?? "(not bound)");
+                        return false;
+                    }
+
+                    Log.Warning(
+                        "[ROUTE] Local subnet confirmation is still missing for the private proxy path after {FailureCount}/{MaxFailureCount} wait window(s) of {TimeoutSeconds}s. LastSource={Source}, LastBindAddress={BindAddress}. Waiting before applying TUN default route.",
+                        localSubnetConfirmationFailures,
+                        MaxLocalSubnetConfirmationFailures,
+                        OutboundReadyWaitTimeout.TotalSeconds,
+                        selection.Source,
+                        selection.Address?.ToString() ?? "(not bound)");
+                    deadline = DateTime.UtcNow + OutboundReadyWaitTimeout;
+                    await Task.Delay(OutboundReadyPollInterval, ct);
+                    continue;
+                }
+
                 Log.Warning(
                     "[ROUTE] Outbound path was not ready after waiting {TimeoutSeconds}s. LastSource={Source}, LastBindAddress={BindAddress}. Continuing with best-effort startup.",
                     OutboundReadyWaitTimeout.TotalSeconds,
                     selection.Source,
                     selection.Address?.ToString() ?? "(not bound)");
-                return;
+                ClearStartupIssue();
+                return true;
             }
 
             if (attempt == 1 || attempt % 5 == 0)
@@ -1433,6 +1477,21 @@ public class TunProxyService : IProxyService
 
             await Task.Delay(OutboundReadyPollInterval, ct);
         }
+    }
+
+    private void SetStartupIssue(string type, string message)
+    {
+        _startupIssue = new ServiceStartupIssue
+        {
+            Type = type,
+            Message = message,
+            OccurredUtc = DateTime.UtcNow
+        };
+    }
+
+    private void ClearStartupIssue()
+    {
+        _startupIssue = null;
     }
 
     /// <summary>
@@ -1479,12 +1538,13 @@ public class TunProxyService : IProxyService
 
     private void SelectOutboundBindAddress()
     {
-        var preferredBindAddress = _runtimeStateStore.LoadLastOutboundBindAddress();
-        _outboundBindAddress = new TunOutboundBindAddressSelector().Select(
+        var preferredBindState = _runtimeStateStore.LoadLastOutboundBindState();
+        var selection = new TunOutboundBindAddressSelector().SelectWithSource(
             _config.Proxy,
             _routeService,
-            preferredBindAddress);
-        _runtimeStateStore.SaveLastOutboundBindAddress(_outboundBindAddress);
+            preferredBindState);
+        _outboundBindAddress = selection.Address;
+        _runtimeStateStore.SaveLastOutboundBindSelection(selection);
         Log.Information(
             "[TUN ] Outbound bind address: {BindAddress}",
             _outboundBindAddress?.ToString() ?? "(not bound)");

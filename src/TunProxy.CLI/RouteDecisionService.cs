@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using TunProxy.Core.Configuration;
-using TunProxy.Core.Packets;
 
 namespace TunProxy.CLI;
 
@@ -19,6 +18,7 @@ public sealed class RouteDecisionService
     private readonly Func<bool> _isGeoReady;
     private readonly Func<string, CancellationToken, Task<IPAddress?>> _resolveHost;
     private readonly Func<string, bool> _isProxyFallbackActive;
+    private readonly Func<IPAddress, bool> _isLocalUseAddress;
     private readonly ConcurrentDictionary<string, HostResolutionCacheEntry> _hostResolutionCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, StickyRouteDecisionEntry> _stickyRouteDecisions = new(StringComparer.OrdinalIgnoreCase);
 
@@ -43,7 +43,8 @@ public sealed class RouteDecisionService
         Func<IPAddress, string?>? getCountryCode = null,
         Func<bool>? isGeoReady = null,
         Func<string, CancellationToken, Task<IPAddress?>>? resolveHost = null,
-        Func<string, bool>? isProxyFallbackActive = null)
+        Func<string, bool>? isProxyFallbackActive = null,
+        Func<IPAddress, bool>? isLocalUseAddress = null)
     {
         _config = config;
         _probeDirectDomainSuffixes = BuildDomainSuffixSet(_config.Route.ProbeDirectDomains);
@@ -54,6 +55,7 @@ public sealed class RouteDecisionService
         _isGeoReady = isGeoReady ?? (() => getCountryCode != null);
         _resolveHost = resolveHost ?? ResolveHostAsync;
         _isProxyFallbackActive = isProxyFallbackActive ?? (_ => false);
+        _isLocalUseAddress = isLocalUseAddress ?? LocalNetworkAddressClassifier.IsLocalUseAddress;
     }
 
     public Task<RouteDecision> DecideForDomainAsync(string host, CancellationToken ct) =>
@@ -164,7 +166,7 @@ public sealed class RouteDecisionService
             }
         }
 
-        if (destinationIp != null && ProtocolInspector.IsPrivateIp(destinationIp))
+        if (destinationIp != null && _isLocalUseAddress(destinationIp))
         {
             return RouteDecision.Direct("PrivateIP", domain, destinationIp);
         }
@@ -173,7 +175,7 @@ public sealed class RouteDecisionService
         if (resolveHost && domain != null)
         {
             resolvedIp = await ResolveHostWithCacheAsync(domain, ct);
-            if (resolvedIp != null && ProtocolInspector.IsPrivateIp(resolvedIp))
+            if (resolvedIp != null && _isLocalUseAddress(resolvedIp))
             {
                 return RouteDecision.Direct("ResolvedPrivateIP", domain, resolvedIp);
             }

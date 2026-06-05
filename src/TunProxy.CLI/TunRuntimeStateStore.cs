@@ -15,6 +15,11 @@ internal sealed class TunRuntimeStateStore
 
     public IPAddress? LoadLastOutboundBindAddress()
     {
+        return LoadLastOutboundBindState()?.Address;
+    }
+
+    public TunOutboundBindState? LoadLastOutboundBindState()
+    {
         if (!File.Exists(_path))
         {
             return null;
@@ -24,9 +29,27 @@ internal sealed class TunRuntimeStateStore
         {
             var json = File.ReadAllText(_path);
             var state = JsonSerializer.Deserialize(json, AppJsonContext.Default.TunRuntimeState);
-            return IPAddress.TryParse(state?.LastOutboundBindAddress, out var address)
-                ? address
+            if (!IPAddress.TryParse(state?.LastOutboundBindAddress, out var address))
+            {
+                return null;
+            }
+
+            var proxyAddress = IPAddress.TryParse(state.LastOutboundProxyAddress, out var parsedProxyAddress)
+                ? parsedProxyAddress
                 : null;
+            var netmask = IPAddress.TryParse(state.LastOutboundNetmask, out var parsedNetmask)
+                ? parsedNetmask
+                : null;
+            var source = Enum.TryParse<OutboundBindAddressSource>(state.LastOutboundBindSource, out var parsedSource)
+                ? parsedSource
+                : (OutboundBindAddressSource?)null;
+
+            return new TunOutboundBindState(
+                address,
+                proxyAddress,
+                netmask,
+                source,
+                state.LastOutboundBindAddressUtc);
         }
         catch (Exception ex)
         {
@@ -37,7 +60,12 @@ internal sealed class TunRuntimeStateStore
 
     public void SaveLastOutboundBindAddress(IPAddress? address)
     {
-        if (address == null)
+        SaveLastOutboundBindSelection(new OutboundBindSelection(address, OutboundBindAddressSource.None));
+    }
+
+    public void SaveLastOutboundBindSelection(OutboundBindSelection selection)
+    {
+        if (selection.Address == null)
         {
             return;
         }
@@ -52,8 +80,11 @@ internal sealed class TunRuntimeStateStore
 
             var state = new TunRuntimeState
             {
-                LastOutboundBindAddress = address.ToString(),
-                LastOutboundBindAddressUtc = DateTime.UtcNow
+                LastOutboundBindAddress = selection.Address.ToString(),
+                LastOutboundBindAddressUtc = DateTime.UtcNow,
+                LastOutboundProxyAddress = selection.ProxyAddress?.ToString(),
+                LastOutboundNetmask = selection.Netmask?.ToString(),
+                LastOutboundBindSource = selection.Source.ToString()
             };
             File.WriteAllText(_path, JsonSerializer.Serialize(state, AppJsonContext.Default.TunRuntimeState));
         }
@@ -68,4 +99,7 @@ public sealed class TunRuntimeState
 {
     public string? LastOutboundBindAddress { get; set; }
     public DateTime? LastOutboundBindAddressUtc { get; set; }
+    public string? LastOutboundProxyAddress { get; set; }
+    public string? LastOutboundNetmask { get; set; }
+    public string? LastOutboundBindSource { get; set; }
 }

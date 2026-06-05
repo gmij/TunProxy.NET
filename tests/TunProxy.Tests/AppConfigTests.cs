@@ -205,4 +205,29 @@ public class AppConfigTests
         Assert.False(config.SetSystemProxy);
         Assert.Equal(SystemProxyModes.None, config.SystemProxyMode);
     }
+
+    [Fact]
+    public void ServiceStatus_SerializesStartupIssue()
+    {
+        var occurredUtc = new DateTime(2026, 6, 5, 8, 10, 0, DateTimeKind.Utc);
+        var status = new ServiceStatus
+        {
+            Mode = "tun",
+            StartupIssue = new ServiceStartupIssue
+            {
+                Type = "local-subnet-confirmation-failed",
+                Message = "private proxy path was not confirmed",
+                OccurredUtc = occurredUtc
+            }
+        };
+
+        var json = JsonSerializer.Serialize(status, AppJsonContext.Default.ServiceStatus);
+        var parsed = JsonSerializer.Deserialize(json, AppJsonContext.Default.ServiceStatus);
+
+        Assert.NotNull(parsed);
+        Assert.NotNull(parsed.StartupIssue);
+        Assert.Equal("local-subnet-confirmation-failed", parsed.StartupIssue.Type);
+        Assert.Equal("private proxy path was not confirmed", parsed.StartupIssue.Message);
+        Assert.Equal(occurredUtc, parsed.StartupIssue.OccurredUtc);
+    }
 }

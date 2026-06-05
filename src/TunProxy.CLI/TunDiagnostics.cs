@@ -1,3 +1,4 @@
+using TunProxy.Core.Configuration;
 using TunProxy.Core.Metrics;
 
 namespace TunProxy.CLI;
@@ -23,6 +24,7 @@ public sealed class TunDiagnosticsSnapshot
     public MetricsSnapshot Metrics { get; set; } = new();
     public DnsDiagnosticsSnapshot Dns { get; set; } = new();
     public RouteDiagnosticsSnapshot Route { get; set; } = new();
+    public ServiceStartupIssue? StartupIssue { get; set; }
     public string? LastTcpConnectFailure { get; set; }
     public DateTime? LastTcpConnectFailureUtc { get; set; }
     public DateTime? LastPacketReadUtc { get; set; }

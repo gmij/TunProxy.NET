@@ -234,6 +234,19 @@
           "DnsFailed": "Check upstream DNS connectivity. If DoH fallback succeeds, this warning should clear after new successful connections.",
           "Generic": "Review the error detail above and validate proxy settings in Config page."
         }
+      },
+      "StartupIssue": {
+        "Title": "Startup route issue",
+        "OccurredAt": "Detected at: {0}",
+        "MessageUnavailable": "No additional detail was recorded.",
+        "Reason": {
+          "LocalSubnetConfirmationFailed": "TunProxy could not confirm the local network path for the private proxy address.",
+          "Generic": "TunProxy detected a startup issue."
+        },
+        "Hint": {
+          "LocalSubnetConfirmationFailed": "The TUN default route was not applied. Check whether the ZeroTier/VPN or local interface that owns the proxy subnet is online, then restart the service.",
+          "Generic": "Review the service log and restart TunProxy after the underlying network issue is fixed."
+        }
       }
     }
   },

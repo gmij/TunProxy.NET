@@ -109,6 +109,63 @@ public class TunProxyRouteDecisionTests
     }
 
     [Fact]
+    public async Task LocalInterfaceSubnetIp_UsesDirectRouteWithoutGeoLookup()
+    {
+        var geoLookupCalls = 0;
+        var localAddress = IPAddress.Parse("203.0.113.42");
+        var service = new RouteDecisionService(
+            new AppConfig { Route = { EnableGeo = true } },
+            getCountryCode: _ =>
+            {
+                geoLookupCalls++;
+                return "US";
+            },
+            isLocalUseAddress: ip => ip.Equals(localAddress));
+
+        var decision = await service.DecideForTunAsync(null, localAddress, CancellationToken.None);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("PrivateIP", decision.Reason);
+        Assert.Equal(localAddress, decision.EvaluatedIp);
+        Assert.Equal(0, geoLookupCalls);
+    }
+
+    [Fact]
+    public async Task ResolvedLocalInterfaceSubnetIp_UsesDirectRoute()
+    {
+        var localAddress = IPAddress.Parse("203.0.113.42");
+        var service = new RouteDecisionService(
+            new AppConfig { Route = { EnableGeo = true } },
+            getCountryCode: _ => "US",
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(localAddress),
+            isLocalUseAddress: ip => ip.Equals(localAddress));
+
+        var decision = await service.DecideForDomainAsync("nas.example", CancellationToken.None);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("ResolvedPrivateIP", decision.Reason);
+        Assert.Equal(localAddress, decision.EvaluatedIp);
+    }
+
+    [Fact]
+    public void LocalNetworkAddressClassifier_MatchesConfiguredSubnet()
+    {
+        var subnets = new[]
+        {
+            new LocalNetworkSubnet(
+                IPAddress.Parse("203.0.113.42"),
+                IPAddress.Parse("255.255.255.0"))
+        };
+
+        Assert.True(LocalNetworkAddressClassifier.IsInConfiguredLocalSubnet(
+            IPAddress.Parse("203.0.113.200"),
+            subnets));
+        Assert.False(LocalNetworkAddressClassifier.IsInConfiguredLocalSubnet(
+            IPAddress.Parse("203.0.114.1"),
+            subnets));
+    }
+
+    [Fact]
     public async Task ThisNetworkIp_UsesDirectRoute()
     {
         var service = new RouteDecisionService(new AppConfig { Route = { EnableGeo = true } });

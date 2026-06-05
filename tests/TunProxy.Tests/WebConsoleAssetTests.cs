@@ -83,6 +83,18 @@ public class WebConsoleAssetTests
     }
 
     [Fact]
+    public void StatusPage_ShowsStartupIssueAlert()
+    {
+        var script = File.ReadAllText(Path.Combine(SourceRoot, "status-page.js"));
+
+        Assert.Contains("status.value.startupIssue", script);
+        Assert.Contains("Page.Status.StartupIssue.Title", script);
+        Assert.Contains("Page.Status.StartupIssue.Hint.' + suffix", script);
+        Assert.Contains("LocalSubnetConfirmationFailed", script);
+        Assert.Contains("v-if=\"startupIssue\"", script);
+    }
+
+    [Fact]
     public void Navigation_DefinesClientSidePageMetadata()
     {
         var script = File.ReadAllText(Path.Combine(SourceRoot, "nav.js"));

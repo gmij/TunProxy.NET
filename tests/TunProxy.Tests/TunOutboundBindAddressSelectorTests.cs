@@ -55,6 +55,82 @@ public class TunOutboundBindAddressSelectorTests
     }
 
     [Fact]
+    public void SelectWithSource_DoesNotMarkPrivateProxyRouteReadyWithoutLocalSubnetMatch()
+    {
+        var routeAddress = IPAddress.Parse("10.0.0.138");
+        var selector = new TunOutboundBindAddressSelector(
+            (_, _) => throw new InvalidOperationException("probe should not run when route lookup succeeds"),
+            _ => throw new InvalidOperationException("gateway lookup should not run when route lookup succeeds"),
+            _ => null);
+
+        var result = selector.SelectWithSource(
+            new ProxyConfig { Host = "10.144.20.200", Port = 3222 },
+            new FakeRouteService("10.0.0.1", routeAddress));
+
+        Assert.Equal(routeAddress, result.Address);
+        Assert.Equal(OutboundBindAddressSource.ProxyRoute, result.Source);
+        Assert.True(result.RequiresLocalSubnetConfirmation);
+        Assert.False(result.IsReady);
+    }
+
+    [Fact]
+    public void SelectWithSource_MarksPrivateProxyLocalSubnetMatchReady()
+    {
+        var subnetAddress = IPAddress.Parse("10.144.20.210");
+        var selector = new TunOutboundBindAddressSelector(
+            (_, _) => throw new InvalidOperationException("probe should not run when subnet match succeeds"),
+            _ => throw new InvalidOperationException("gateway lookup should not run when subnet match succeeds"),
+            destination => destination.Equals(IPAddress.Parse("10.144.20.200")) ? LocalSubnet(subnetAddress) : null);
+
+        var result = selector.SelectWithSource(
+            new ProxyConfig { Host = "10.144.20.200", Port = 3222 },
+            new FakeRouteService("10.0.0.1", IPAddress.Parse("10.0.0.138")));
+
+        Assert.Equal(subnetAddress, result.Address);
+        Assert.Equal(OutboundBindAddressSource.LocalSubnet, result.Source);
+        Assert.False(result.RequiresLocalSubnetConfirmation);
+        Assert.True(result.IsReady);
+    }
+
+    [Fact]
+    public void SelectWithSource_MarksPublicProxyRouteReady()
+    {
+        var routeAddress = IPAddress.Parse("192.168.66.76");
+        var selector = new TunOutboundBindAddressSelector(
+            (_, _) => throw new InvalidOperationException("probe should not run when route lookup succeeds"),
+            _ => throw new InvalidOperationException("gateway lookup should not run when route lookup succeeds"),
+            _ => null);
+
+        var result = selector.SelectWithSource(
+            new ProxyConfig { Host = "203.0.113.10", Port = 3222 },
+            new FakeRouteService("192.168.66.1", routeAddress));
+
+        Assert.Equal(routeAddress, result.Address);
+        Assert.Equal(OutboundBindAddressSource.ProxyRoute, result.Source);
+        Assert.False(result.RequiresLocalSubnetConfirmation);
+        Assert.True(result.IsReady);
+    }
+
+    [Fact]
+    public void SelectWithSource_DoesNotMarkPrivateProxyGatewayFallbackReady()
+    {
+        var gatewayAddress = IPAddress.Parse("10.0.0.138");
+        var selector = new TunOutboundBindAddressSelector(
+            (_, _) => IPAddress.Loopback,
+            gateway => gateway == "10.0.0.1" ? gatewayAddress : null,
+            _ => null);
+
+        var result = selector.SelectWithSource(
+            new ProxyConfig { Host = "10.144.20.200", Port = 3222 },
+            new FakeRouteService("10.0.0.1"));
+
+        Assert.Equal(gatewayAddress, result.Address);
+        Assert.Equal(OutboundBindAddressSource.Gateway, result.Source);
+        Assert.True(result.RequiresLocalSubnetConfirmation);
+        Assert.False(result.IsReady);
+    }
+
+    [Fact]
     public void Select_ResolvesHostForRouteLocalAddress()
     {
         var routeAddress = IPAddress.Parse("10.144.20.231");
@@ -151,7 +227,7 @@ public class TunOutboundBindAddressSelectorTests
         var selector = new TunOutboundBindAddressSelector(
             (_, _) => throw new InvalidOperationException("probe should not run when subnet match succeeds"),
             _ => throw new InvalidOperationException("gateway lookup should not run when subnet match succeeds"),
-            destination => destination.Equals(IPAddress.Parse("10.144.20.222")) ? subnetAddress : null);
+            destination => destination.Equals(IPAddress.Parse("10.144.20.222")) ? LocalSubnet(subnetAddress) : null);
 
         var result = selector.Select(
             new ProxyConfig { Host = "10.144.20.222", Port = 7890 },
@@ -179,6 +255,66 @@ public class TunOutboundBindAddressSelectorTests
         Assert.Equal(preferred, result);
     }
 
+    [Fact]
+    public void SelectWithSource_UsesRecordedLinkWhenItStillMatches()
+    {
+        var preferred = IPAddress.Parse("10.144.20.210");
+        var proxyAddress = IPAddress.Parse("10.144.20.200");
+        var netmask = IPAddress.Parse("255.255.255.0");
+        var selector = new TunOutboundBindAddressSelector(
+            (_, _) => throw new InvalidOperationException("probe should not run when runtime state is valid"),
+            _ => throw new InvalidOperationException("gateway lookup should not run when runtime state is valid"),
+            destination => destination.Equals(proxyAddress) ? new LocalNetworkSubnet(preferred, netmask) : null,
+            isUsableLocalAddress: address => address.Equals(preferred),
+            hasConfiguredLocalSubnet: subnet => subnet.LocalAddress.Equals(preferred) && subnet.Netmask.Equals(netmask));
+
+        var result = selector.SelectWithSource(
+            new ProxyConfig { Host = proxyAddress.ToString(), Port = 3222 },
+            new FakeRouteService("10.0.0.1", IPAddress.Parse("10.0.0.138")),
+            new TunOutboundBindState(
+                preferred,
+                proxyAddress,
+                netmask,
+                OutboundBindAddressSource.LocalSubnet,
+                DateTime.UtcNow));
+
+        Assert.Equal(preferred, result.Address);
+        Assert.Equal(OutboundBindAddressSource.RuntimeState, result.Source);
+        Assert.Equal(proxyAddress, result.ProxyAddress);
+        Assert.Equal(netmask, result.Netmask);
+        Assert.True(result.IsReady);
+    }
+
+    [Fact]
+    public void SelectWithSource_IgnoresRecordedLinkWhenSubnetIsNotConfigured()
+    {
+        var preferred = IPAddress.Parse("10.144.20.210");
+        var proxyAddress = IPAddress.Parse("10.144.20.200");
+        var netmask = IPAddress.Parse("255.255.255.0");
+        var routeAddress = IPAddress.Parse("10.0.0.138");
+        var selector = new TunOutboundBindAddressSelector(
+            (_, _) => throw new InvalidOperationException("probe should not run when route lookup succeeds"),
+            _ => throw new InvalidOperationException("gateway lookup should not run when route lookup succeeds"),
+            _ => null,
+            isUsableLocalAddress: address => address.Equals(preferred),
+            hasConfiguredLocalSubnet: _ => false);
+
+        var result = selector.SelectWithSource(
+            new ProxyConfig { Host = proxyAddress.ToString(), Port = 3222 },
+            new FakeRouteService("10.0.0.1", routeAddress),
+            new TunOutboundBindState(
+                preferred,
+                proxyAddress,
+                netmask,
+                OutboundBindAddressSource.LocalSubnet,
+                DateTime.UtcNow));
+
+        Assert.Equal(routeAddress, result.Address);
+        Assert.Equal(OutboundBindAddressSource.ProxyRoute, result.Source);
+        Assert.True(result.RequiresLocalSubnetConfirmation);
+        Assert.False(result.IsReady);
+    }
+
     private sealed class FakeRouteService(string? gateway, IPAddress? localAddress = null) : IRouteService
     {
         public bool AddBypassRoute(string ip, int prefixLength = 32) => true;
@@ -197,4 +333,7 @@ public class TunOutboundBindAddressSelectorTests
         {
         }
     }
+
+    private static LocalNetworkSubnet LocalSubnet(IPAddress address) =>
+        new(address, IPAddress.Parse("255.255.255.0"));
 }

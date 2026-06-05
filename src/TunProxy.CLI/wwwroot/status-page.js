@@ -154,6 +154,18 @@
         };
       });
 
+      var startupIssue = Vue.computed(function () {
+        if (!status.value || !status.value.startupIssue) return null;
+        var issue = status.value.startupIssue;
+        var suffix = issue.type === 'local-subnet-confirmation-failed' ? 'LocalSubnetConfirmationFailed' : 'Generic';
+        return {
+          reason: C.t('Page.Status.StartupIssue.Reason.' + suffix),
+          hint: C.t('Page.Status.StartupIssue.Hint.' + suffix),
+          message: issue.message || C.t('Page.Status.StartupIssue.MessageUnavailable'),
+          time: issue.occurredUtc ? C.timeString(issue.occurredUtc) : '-'
+        };
+      });
+
       var trafficLineChart = Vue.computed(function () {
         var width = 1000;
         var height = 220;
@@ -283,6 +295,7 @@
         sampleIntervalSeconds: sampleIntervalSeconds,
         trafficWindowSeconds: trafficWindowSeconds,
         connectIssue: connectIssue,
+        startupIssue: startupIssue,
         controlService: controlService,
         diagnostics: diagnostics,
         isRunning: isRunning,
@@ -320,6 +333,15 @@
         </template>
 
           <a-alert v-if="serviceMessage" :type="serviceAlertType" :message="serviceMessage" show-icon style="margin-bottom: 14px"></a-alert>
+          <a-alert v-if="startupIssue" type="warning" show-icon style="margin-bottom: 14px">
+            <template #message>{{ t('Page.Status.StartupIssue.Title') }}</template>
+            <template #description>
+              <strong>{{ startupIssue.reason }}</strong>
+              <div>{{ C.format('Page.Status.StartupIssue.OccurredAt', startupIssue.time) }}</div>
+              <div class="tp-code">{{ startupIssue.message }}</div>
+              <div>{{ startupIssue.hint }}</div>
+            </template>
+          </a-alert>
           <a-alert v-if="connectIssue" type="warning" show-icon style="margin-bottom: 14px">
             <template #message>{{ t('Page.Status.ConnectIssue.Title') }}</template>
             <template #description>

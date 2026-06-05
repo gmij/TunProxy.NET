@@ -16,6 +16,7 @@ internal static class TunRuntimeDiagnosticsProvider
         TcpConnectionManager? proxyConnections,
         TcpConnectionManager? directConnections,
         ProxyMetrics metrics,
+        ServiceStartupIssue? startupIssue,
         string? lastTcpConnectFailure,
         DateTime? lastTcpConnectFailureUtc)
     {
@@ -29,6 +30,7 @@ internal static class TunRuntimeDiagnosticsProvider
             ProxyPort = config.Proxy.Port,
             ProxyType = config.Proxy.Type,
             ActiveConnections = GetActiveConnections(proxyConnections, directConnections),
+            StartupIssue = startupIssue,
             LastTcpConnectFailure = lastTcpConnectFailure,
             LastTcpConnectFailureUtc = lastTcpConnectFailureUtc,
             Metrics = metrics.GetSnapshot()
@@ -46,6 +48,7 @@ internal static class TunRuntimeDiagnosticsProvider
         IReadOnlyCollection<string> proxyBypassRoutes,
         DirectBypassRouteManager directBypassRoutes,
         DnsProxyService? dnsProxy,
+        ServiceStartupIssue? startupIssue,
         string? lastTcpConnectFailure,
         DateTime? lastTcpConnectFailureUtc,
         DateTime? lastPacketReadUtc,
@@ -80,6 +83,7 @@ internal static class TunRuntimeDiagnosticsProvider
             Metrics = metrics.GetSnapshot(),
             Dns = dnsProxy?.GetDiagnostics() ?? new DnsDiagnosticsSnapshot(),
             Route = route,
+            StartupIssue = startupIssue,
             LastTcpConnectFailure = lastTcpConnectFailure,
             LastTcpConnectFailureUtc = lastTcpConnectFailureUtc,
             LastPacketReadUtc = lastPacketReadUtc,

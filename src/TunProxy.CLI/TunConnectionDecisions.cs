@@ -59,6 +59,14 @@ internal static class TunConnectionDecisions
             ShouldRecordProxyConnectFailed: routeLabel == "PROXY" && connectFailed);
     }
 
+    public static bool CanRetryDirectFailureViaProxy(
+        string routeLabel,
+        string? domain,
+        TunConnectionFailure failure) =>
+        routeLabel.Equals("DIRECT", StringComparison.OrdinalIgnoreCase) &&
+        failure.Reason.Equals("connect failed", StringComparison.OrdinalIgnoreCase) &&
+        RouteDecisionService.NormalizeDomain(domain) != null;
+
     private static TunConnectionTarget FromCachedHostnameOrIp(string? cachedHostname, string destIp) =>
         cachedHostname != null
             ? new TunConnectionTarget(cachedHostname, "DNS", destIp)

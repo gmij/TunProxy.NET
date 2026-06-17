@@ -910,9 +910,140 @@ public class TunProxyService : IProxyService
             }
             catch (Exception ex)
             {
-                HandleConnectionException(ex, connKey, device, packet, connectHost, destPort, routeLabel, srcLabel, destIP, dnsCacheHost);
+                if (!await TryRetryDirectFailureViaProxyAsync(
+                        ex,
+                        connKey,
+                        connManager,
+                        state,
+                        device,
+                        packet,
+                        connectHost,
+                        destPort,
+                        routeLabel,
+                        srcLabel,
+                        destIP,
+                        dnsCacheHost,
+                        initialPayload,
+                        initialPayloadAlreadyAcked,
+                        ct))
+                {
+                    HandleConnectionException(ex, connKey, device, packet, connectHost, destPort, routeLabel, srcLabel, destIP, dnsCacheHost);
+                }
             }
         }, ct);
+    }
+
+    private async Task<bool> TryRetryDirectFailureViaProxyAsync(
+        Exception ex,
+        string connKey,
+        TcpConnectionManager connManager,
+        TcpRelayState state,
+        ITunDevice device,
+        IPPacket packet,
+        string connectHost,
+        int destPort,
+        string routeLabel,
+        string srcLabel,
+        string destIP,
+        string? dnsCacheHost,
+        byte[] initialPayload,
+        bool initialPayloadAlreadyAcked,
+        CancellationToken ct)
+    {
+        var failure = TunConnectionDecisions.ClassifyFailure(ex, routeLabel);
+        var retryHost = dnsCacheHost ?? connectHost;
+        if (!TunConnectionDecisions.CanRetryDirectFailureViaProxy(routeLabel, retryHost, failure))
+        {
+            return false;
+        }
+
+        _lastTcpConnectFailure = $"{connectHost}:{destPort} {routeLabel}/{srcLabel} {failure.Reason}: {ex.GetType().Name}: {ex.Message}";
+        _lastTcpConnectFailureUtc = DateTime.UtcNow;
+        Log.Warning(ex,
+            "[CONN] {Host}:{Port} direct connect failed; retrying via proxy ({Source}; DestIP={DestIP}; RetryHost={RetryHost})",
+            connectHost,
+            destPort,
+            srcLabel,
+            destIP,
+            retryHost);
+
+        RecordDirectDomainFailure(retryHost, failure);
+        _dnsStore?.RemoveCachedAddress(dnsCacheHost, destIP);
+        connManager.RemoveConnectionByKey(connKey);
+
+        if (!_relayStates.ContainsKey(connKey))
+        {
+            _metrics.DecrementActiveConnections();
+            return true;
+        }
+
+        var retryManager = _connectionManager!;
+        var retryConn = retryManager.GetOrCreateConnection(packet);
+        if (retryConn == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var started = DateTime.UtcNow;
+            await retryConn.ConnectAsync(retryHost, destPort, ct);
+            _ipCache?.ClearProxyBlocked(destIP);
+            _lastTcpConnectFailure = null;
+            _lastTcpConnectFailureUtc = null;
+
+            if (!_relayStates.ContainsKey(connKey))
+            {
+                retryManager.RemoveConnectionByKey(connKey);
+                _metrics.DecrementActiveConnections();
+                return true;
+            }
+
+            state.IsProxyConnected = true;
+            state.ConnectionManager = retryManager;
+            state.DirectBypassIp = null;
+            _ = Task.Run(() => RelayProxyToTunAsync(device, retryConn, connKey, retryManager, ct), ct);
+
+            Log.Information(
+                "[CONN] {Host}:{Port}  PROXY  ({Source}/DirectRetry; DestIP={DestIP}; Target={RetryHost}; Conn={Connection})",
+                retryHost,
+                destPort,
+                srcLabel,
+                destIP,
+                retryHost,
+                connKey);
+            Log.Debug(
+                "[CONN] {Host}:{Port} direct retry via proxy connected in {ElapsedMs} ms",
+                retryHost,
+                destPort,
+                (DateTime.UtcNow - started).TotalMilliseconds);
+
+            await SendInitialClientPayloadAsync(
+                device,
+                retryConn,
+                state,
+                packet,
+                connKey,
+                initialPayload,
+                initialPayloadAlreadyAcked,
+                ct);
+            return true;
+        }
+        catch (Exception retryEx)
+        {
+            HandleConnectionException(
+                retryEx,
+                connKey,
+                device,
+                packet,
+                retryHost,
+                destPort,
+                "PROXY",
+                $"{srcLabel}/DirectRetry",
+                destIP,
+                dnsCacheHost);
+            return true;
+        }
     }
 
     private async Task SendInitialClientPayloadAsync(

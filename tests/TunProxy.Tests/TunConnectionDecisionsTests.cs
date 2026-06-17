@@ -106,4 +106,23 @@ public class TunConnectionDecisionsTests
         Assert.Equal(expectedBlocked, failure.ShouldRecordProxyBlocked);
         Assert.Equal(expectedConnectFailed, failure.ShouldRecordProxyConnectFailed);
     }
+
+    [Theory]
+    [InlineData("DIRECT", "nydus.battle.net", "connect failed", true)]
+    [InlineData("DIRECT", "223.252.234.104", "connect failed", false)]
+    [InlineData("DIRECT", "nydus.battle.net", "error", false)]
+    [InlineData("PROXY", "nydus.battle.net", "connect failed", false)]
+    public void CanRetryDirectFailureViaProxy_OnlyRetriesDomainConnectFailures(
+        string routeLabel,
+        string? domain,
+        string reason,
+        bool expected)
+    {
+        var failure = new TunConnectionFailure(
+            reason,
+            ShouldRecordProxyBlocked: false,
+            ShouldRecordProxyConnectFailed: false);
+
+        Assert.Equal(expected, TunConnectionDecisions.CanRetryDirectFailureViaProxy(routeLabel, domain, failure));
+    }
 }

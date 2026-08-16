@@ -582,14 +582,17 @@ public class TunProxyService : IProxyService
                             ? _routeDecision.TryDecideWithoutIp(domainHint)
                             : null;
 
-                        if (TunConnectionDecisions.CanUseFakeIpQuickDecision(quickDecision))
+                        var shouldWaitForRealIp = domainHint != null && (quickDecision == null || !quickDecision.ShouldProxy);
+                        if (TunConnectionDecisions.CanUseFakeIpQuickDecision(quickDecision) && !shouldWaitForRealIp)
                         {
                             effectiveDestIp = null;
                             finalDecision = quickDecision!;
                         }
                         else
                         {
-                            // GeoIP lookup required — wait for background DoH to resolve the real IP.
+                            // For direct routes we still need a real IP so we can establish the
+                            // direct connection and install the bypass route. For proxy routes,
+                            // the quick decision can be used immediately without waiting.
                             if (domainHint != null && _dnsProxy != null)
                             {
                                 _ = _dnsProxy.EnsureFakeIpRealDnsResolutionAsync(
@@ -608,12 +611,9 @@ public class TunProxyService : IProxyService
                                 ? resolvedRealIp
                                 : null;
 
-                            // Avoid resolver-backed decisions in FakeIP mode when the real address
-                            // is still unavailable. System DNS can return the same 198.18/16 fake
-                            // address and poison the route as GeoUnknown before DoH catches up.
                             finalDecision = effectiveDestIp != null && domainHint != null
                                 ? await _routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct)
-                                : TunConnectionDecisions.SelectFakeIpFallbackDecision(quickDecision, domainHint, _routeDecision);
+                                : await TunConnectionDecisions.SelectFakeIpFallbackDecisionAsync(quickDecision, domainHint, _routeDecision, effectiveDestIp, ct);
                         }
                     }
                     else

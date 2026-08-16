@@ -73,7 +73,7 @@ public class TunConnectionDecisionsTests
     }
 
     [Fact]
-    public void SelectFakeIpFallbackDecision_PreservesDirectQuickDecision()
+    public async Task SelectFakeIpFallbackDecisionAsync_PreservesDirectQuickDecision()
     {
         var config = new AppConfig
         {
@@ -85,11 +85,43 @@ public class TunConnectionDecisionsTests
         var routeDecision = new RouteDecisionService(config);
         var quickDecision = RouteDecision.Direct("DirectDomain", "lan.example", null);
 
-        var decision = TunConnectionDecisions.SelectFakeIpFallbackDecision(quickDecision, "lan.example", routeDecision);
+        var decision = await TunConnectionDecisions.SelectFakeIpFallbackDecisionAsync(
+            quickDecision,
+            "lan.example",
+            routeDecision,
+            null,
+            CancellationToken.None);
 
         Assert.False(decision.ShouldProxy);
         Assert.Equal("DirectDomain", decision.Reason);
         Assert.Equal("lan.example", decision.Domain);
+    }
+
+    [Fact]
+    public async Task SelectFakeIpFallbackDecisionAsync_UsesResolvedIpForDirectRoutes()
+    {
+        var config = new AppConfig
+        {
+            Route =
+            {
+                DirectDomains = ["lan.example"]
+            }
+        };
+        var routeDecision = new RouteDecisionService(
+            config,
+            resolveHost: (_, _) => Task.FromResult<IPAddress?>(IPAddress.Parse("192.168.10.12")));
+        var quickDecision = RouteDecision.Direct("DirectDomain", "lan.example", null);
+
+        var decision = await TunConnectionDecisions.SelectFakeIpFallbackDecisionAsync(
+            quickDecision,
+            "lan.example",
+            routeDecision,
+            IPAddress.Parse("192.168.10.12"),
+            CancellationToken.None);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("DirectDomain", decision.Reason);
+        Assert.Equal(IPAddress.Parse("192.168.10.12"), decision.EvaluatedIp);
     }
 
     [Fact]

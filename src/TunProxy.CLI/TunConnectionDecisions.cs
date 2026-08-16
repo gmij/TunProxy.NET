@@ -41,23 +41,31 @@ internal static class TunConnectionDecisions
     public static bool CanUseFakeIpQuickDecision(RouteDecision? decision) =>
         decision?.ShouldProxy == true;
 
-    public static RouteDecision SelectFakeIpFallbackDecision(
+    public static Task<RouteDecision> SelectFakeIpFallbackDecisionAsync(
         RouteDecision? quickDecision,
         string? domainHint,
-        RouteDecisionService routeDecision)
+        RouteDecisionService routeDecision,
+        IPAddress? effectiveDestIp,
+        CancellationToken ct)
     {
+        if (effectiveDestIp != null && domainHint != null)
+        {
+            return routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct);
+        }
+
         if (quickDecision != null)
         {
-            return quickDecision;
+            return Task.FromResult(quickDecision);
         }
 
         if (domainHint != null)
         {
-            return routeDecision.TryDecideWithoutIp(domainHint) ??
+            var fallbackDecision = routeDecision.TryDecideWithoutIp(domainHint) ??
                 RouteDecision.Proxy("FakeIpUnresolved", domainHint, null);
+            return Task.FromResult(fallbackDecision);
         }
 
-        return RouteDecision.Proxy("Default", null, null);
+        return Task.FromResult(RouteDecision.Proxy("Default", null, null));
     }
 
     public static bool CanEnsureDirectBypassRoute(IPAddress routeIp) =>

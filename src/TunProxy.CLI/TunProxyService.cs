@@ -105,19 +105,19 @@ public class TunProxyService : IProxyService
         }
 
         _dnsProxy = new DnsProxyService(
-           config.Proxy.Host,
-           config.Proxy.Port,
-           config.Proxy.GetProxyType(),
-           _dnsStore,
-           config.Tun.DnsServer,
-           config.Proxy.Username,
-           config.Proxy.Password,
-           _routeDecision,
-           onDirectRouteCandidate: _directBypassRouteScheduler.ScheduleAsync,
-           onDirectDnsServerCandidate: EnsureDirectDnsServerRouteAsync,
-           probeDirectDomains: config.Route.ProbeDirectDomains,
-           fakeIpPool: _fakeIpPool,
-           linuxSocketMark: LinuxSocketMark.TunProxyBypassMark);
+            config.Proxy.Host,
+            config.Proxy.Port,
+            config.Proxy.GetProxyType(),
+            _dnsStore,
+            config.Tun.DnsServer,
+            config.Proxy.Username,
+            config.Proxy.Password,
+            _routeDecision,
+            onDirectRouteCandidate: _fakeIpPool == null ? _directBypassRouteScheduler.ScheduleAsync : null,
+            onDirectDnsServerCandidate: EnsureDirectDnsServerRouteAsync,
+            probeDirectDomains: config.Route.ProbeDirectDomains,
+            fakeIpPool: _fakeIpPool,
+            linuxSocketMark: LinuxSocketMark.TunProxyBypassMark);
     }
 
     public ServiceStatus GetStatus() => TunRuntimeDiagnosticsProvider.CreateStatus(
@@ -580,8 +580,8 @@ public class TunProxyService : IProxyService
                             ? _routeDecision.TryDecideWithoutIp(domainHint)
                             : null;
 
-                        var shouldWaitForRealIp = domainHint != null && (quickDecision == null || !quickDecision.ShouldProxy);
-                        if (TunConnectionDecisions.CanUseFakeIpQuickDecision(quickDecision) && !shouldWaitForRealIp)
+                        var shouldUseQuickDecision = TunConnectionDecisions.CanUseFakeIpQuickDecision(quickDecision);
+                        if (shouldUseQuickDecision)
                         {
                             effectiveDestIp = null;
                             finalDecision = quickDecision!;
@@ -609,9 +609,12 @@ public class TunProxyService : IProxyService
                                 ? resolvedRealIp
                                 : null;
 
-                            finalDecision = effectiveDestIp != null && domainHint != null
-                                ? await _routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct)
-                                : await TunConnectionDecisions.SelectFakeIpFallbackDecisionAsync(quickDecision, domainHint, _routeDecision, effectiveDestIp, ct);
+                            finalDecision = await TunConnectionDecisions.SelectFakeIpFallbackDecisionAsync(
+                                quickDecision,
+                                domainHint,
+                                _routeDecision,
+                                effectiveDestIp,
+                                ct);
                         }
                     }
                     else

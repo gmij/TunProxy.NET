@@ -73,7 +73,7 @@ public class TunConnectionDecisionsTests
     }
 
     [Fact]
-    public async Task SelectFakeIpFallbackDecisionAsync_PreservesDirectQuickDecision()
+    public async Task SelectFakeIpFallbackDecisionAsync_UsesProxyFallbackForDirectQuickDecisionWithoutResolvedIp()
     {
         var config = new AppConfig
         {
@@ -92,9 +92,62 @@ public class TunConnectionDecisionsTests
             null,
             CancellationToken.None);
 
-        Assert.False(decision.ShouldProxy);
-        Assert.Equal("DirectDomain", decision.Reason);
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("FakeIpDirectUnresolved", decision.Reason);
         Assert.Equal("lan.example", decision.Domain);
+    }
+
+    [Fact]
+    public async Task SelectFakeIpFallbackDecisionAsync_ReturnsProxyQuickDecisionAsIs()
+    {
+        var routeDecision = new RouteDecisionService(new AppConfig());
+        var quickDecision = RouteDecision.Proxy("GFW", "example.com", null);
+
+        var decision = await TunConnectionDecisions.SelectFakeIpFallbackDecisionAsync(
+            quickDecision,
+            "example.com",
+            routeDecision,
+            null,
+            CancellationToken.None);
+
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("GFW", decision.Reason);
+        Assert.Equal("example.com", decision.Domain);
+    }
+
+    [Fact]
+    public async Task SelectFakeIpFallbackDecisionAsync_DefaultsToProxyWithoutDomainHint()
+    {
+        var routeDecision = new RouteDecisionService(new AppConfig());
+
+        var decision = await TunConnectionDecisions.SelectFakeIpFallbackDecisionAsync(
+            null,
+            null,
+            routeDecision,
+            null,
+            CancellationToken.None);
+
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("Default", decision.Reason);
+        Assert.Null(decision.Domain);
+    }
+
+    [Fact]
+    public async Task SelectFakeIpFallbackDecisionAsync_UsesProxyFallbackForDirectQuickDecisionWithoutDomainHint()
+    {
+        var routeDecision = new RouteDecisionService(new AppConfig());
+        var quickDecision = RouteDecision.Direct("DirectDomain", "lan.example", null);
+
+        var decision = await TunConnectionDecisions.SelectFakeIpFallbackDecisionAsync(
+            quickDecision,
+            null,
+            routeDecision,
+            null,
+            CancellationToken.None);
+
+        Assert.True(decision.ShouldProxy);
+        Assert.Equal("Default", decision.Reason);
+        Assert.Null(decision.Domain);
     }
 
     [Fact]

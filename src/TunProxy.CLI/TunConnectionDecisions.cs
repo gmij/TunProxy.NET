@@ -41,31 +41,35 @@ internal static class TunConnectionDecisions
     public static bool CanUseFakeIpQuickDecision(RouteDecision? decision) =>
         decision?.ShouldProxy == true;
 
-    public static Task<RouteDecision> SelectFakeIpFallbackDecisionAsync(
+    public static async Task<RouteDecision> SelectFakeIpFallbackDecisionAsync(
         RouteDecision? quickDecision,
         string? domainHint,
         RouteDecisionService routeDecision,
         IPAddress? effectiveDestIp,
         CancellationToken ct)
     {
-        if (effectiveDestIp != null && domainHint != null)
+        if (domainHint == null)
         {
-            return routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct);
+            return RouteDecision.Proxy("Default", null, null);
+        }
+
+        if (effectiveDestIp != null)
+        {
+            return await routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct);
         }
 
         if (quickDecision != null)
         {
-            return Task.FromResult(quickDecision);
+            if (!quickDecision.ShouldProxy)
+            {
+                return RouteDecision.Proxy("FakeIpDirectUnresolved", domainHint, null);
+            }
+
+            return quickDecision;
         }
 
-        if (domainHint != null)
-        {
-            var fallbackDecision = routeDecision.TryDecideWithoutIp(domainHint) ??
-                RouteDecision.Proxy("FakeIpUnresolved", domainHint, null);
-            return Task.FromResult(fallbackDecision);
-        }
-
-        return Task.FromResult(RouteDecision.Proxy("Default", null, null));
+        return routeDecision.TryDecideWithoutIp(domainHint) ??
+            RouteDecision.Proxy("FakeIpUnresolved", domainHint, null);
     }
 
     public static bool CanEnsureDirectBypassRoute(IPAddress routeIp) =>

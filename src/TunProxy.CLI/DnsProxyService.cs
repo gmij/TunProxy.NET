@@ -846,7 +846,7 @@ public class DnsProxyService
         var normalized = domain.Trim().TrimEnd('.');
         if (normalized.Length == 0)
         {
-            return false;
+            return true;
         }
 
         if (normalized
@@ -856,6 +856,9 @@ public class DnsProxyService
             return true;
         }
 
+        // Direct-route domains should bypass FakeIP so DNS returns the real A-records.
+        // If the real IP is still unavailable, the TUN layer falls back to a proxy decision
+        // until the background resolution and bypass route installation complete.
         return domainDecision is { ShouldProxy: false };
     }
 

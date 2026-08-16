@@ -105,21 +105,19 @@ public class TunProxyService : IProxyService
         }
 
         _dnsProxy = new DnsProxyService(
-            config.Proxy.Host,
-            config.Proxy.Port,
-            config.Proxy.GetProxyType(),
-            _dnsStore,
-            config.Tun.DnsServer,
-            config.Proxy.Username,
-            config.Proxy.Password,
-            _routeDecision,
-            // In FakeIP mode bypass-route candidates are not added because traffic always
-            // arrives at the fake IP (never at the real IP directly).
-            onDirectRouteCandidate: _fakeIpPool != null ? null : _directBypassRouteScheduler.ScheduleAsync,
-            onDirectDnsServerCandidate: EnsureDirectDnsServerRouteAsync,
-            probeDirectDomains: config.Route.ProbeDirectDomains,
-            fakeIpPool: _fakeIpPool,
-            linuxSocketMark: LinuxSocketMark.TunProxyBypassMark);
+           config.Proxy.Host,
+           config.Proxy.Port,
+           config.Proxy.GetProxyType(),
+           _dnsStore,
+           config.Tun.DnsServer,
+           config.Proxy.Username,
+           config.Proxy.Password,
+           _routeDecision,
+           onDirectRouteCandidate: _directBypassRouteScheduler.ScheduleAsync,
+           onDirectDnsServerCandidate: EnsureDirectDnsServerRouteAsync,
+           probeDirectDomains: config.Route.ProbeDirectDomains,
+           fakeIpPool: _fakeIpPool,
+           linuxSocketMark: LinuxSocketMark.TunProxyBypassMark);
     }
 
     public ServiceStatus GetStatus() => TunRuntimeDiagnosticsProvider.CreateStatus(

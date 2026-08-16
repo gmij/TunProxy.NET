@@ -133,6 +133,14 @@ public class DnsProxyServiceTests
         Assert.False(DnsProxyService.ShouldBypassFakeIpForDomain(domain));
     }
 
+    [Theory]
+    [InlineData("direct.example")]
+    [InlineData("mail.qq.com")]
+    public void ShouldBypassFakeIpForDomain_BypassesDirectRouteDecisions(string domain)
+    {
+        Assert.True(DnsProxyService.ShouldBypassFakeIpForDomain(domain, RouteDecision.Direct("DirectDomain", domain, null)));
+    }
+
     [Fact]
     public async Task ProcessDnsQuery_FakeIpMode_DoesNotPublishFakeIpAsDnsRecord()
     {

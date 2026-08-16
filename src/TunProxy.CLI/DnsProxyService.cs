@@ -136,7 +136,8 @@ public class DnsProxyService
             // FakeIP mode: intercept A-record queries and return a synthetic fake address.
             if (_fakeIpPool != null && dnsPacket.Questions[0].Type == 1 /* A record */)
             {
-                if (ShouldBypassFakeIpForDomain(domain))
+                var fakeIpDomainDecision = _routeDecision?.TryDecideWithoutIp(domain);
+                if (ShouldBypassFakeIpForDomain(domain, fakeIpDomainDecision))
                 {
                     await HandleFakeIpBypassQueryAsync(device, requestPacket, dnsPacket, domain, traceId, ct);
                     return;
@@ -840,7 +841,7 @@ public class DnsProxyService
             normalized.EndsWith('.' + suffix, StringComparison.OrdinalIgnoreCase));
     }
 
-    internal static bool ShouldBypassFakeIpForDomain(string domain)
+    internal static bool ShouldBypassFakeIpForDomain(string domain, RouteDecision? domainDecision = null)
     {
         var normalized = domain.Trim().TrimEnd('.');
         if (normalized.Length == 0)
@@ -848,9 +849,14 @@ public class DnsProxyService
             return false;
         }
 
-        return normalized
+        if (normalized
             .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(static label => label.Equals("localhost", StringComparison.OrdinalIgnoreCase));
+            .Any(static label => label.Equals("localhost", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return domainDecision is { ShouldProxy: false };
     }
 
     private async Task<bool> HandleProbeDomainQueryAsync(

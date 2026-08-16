@@ -47,7 +47,7 @@
       "ListenHostHint": "127.0.0.1 = localhost only · 0.0.0.0 = open to LAN",
       "LocalProxyPort": "Listen port",
       "ModeHintProxyHtml": "<strong>Local Proxy mode</strong> listens on a local port and can automatically update the system proxy. No administrator rights are required.<br>Use the status page to restart or stop the current service.",
-      "ModeHintTunHtml": "<strong>TUN mode</strong> transparently captures TCP traffic through the virtual adapter. FakeIP DNS is enabled by default — the DNS proxy returns virtual addresses so domain-based routing decisions can be made before the real IP is known.<br>Use the status page to restart or stop the current service.",
+      "ModeHintTunHtml": "<strong>TUN mode</strong> transparently captures TCP traffic through the virtual adapter. FakeIP DNS is optional and can be enabled explicitly when you want the DNS proxy to return virtual addresses before the real IP is known.<br>Use the status page to restart or stop the current service.",
       "ModeUnknown": "Unknown (service unavailable)",
       "PacCleared": "PAC configuration cleared.",
       "PacDescriptionHtml": "PAC (Proxy Auto-Config) decides whether requests should use the proxy or go direct based on domain rules. GFWList entries are merged automatically when enabled.",

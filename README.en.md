@@ -51,7 +51,7 @@ The Web console is available at `http://localhost:50000/` by default.
 - Upstream health check: runs Google, GitHub, and YouTube checks directly from the Config page before depending on rule resources.
 - Smart routing: GFWList first, private and explicit direct addresses direct, GeoIP by country/region when enabled, and unknown destinations proxy by default.
 - Manual routing rules: a dedicated Rules page manages `proxyDomains`, `directDomains`, and direct-failure fallback policy.
-- DNS and FakeIP: in TUN mode, A records can receive `198.18.0.0/16` fake IPs while the runtime resolves real addresses in the background and maps TCP connections back to domains.
+- DNS and FakeIP: in TUN mode, A records can receive `198.18.0.0/16` fake IPs while the runtime resolves real addresses in the background and maps TCP connections back to domains. It is disabled by default and only enabled when you explicitly want this behavior.
 - Rule resource management: GeoIP must be readable by MaxMind, and GFWList must be parseable. Missing or invalid enabled resources keep the app in local-proxy setup mode instead of starting incomplete TUN routing.
 - PAC support: serves `/proxy.pac` and supports copy, preview, apply, and clear system PAC actions.
 - Logs and metrics: the Status page summarizes traffic and diagnostics, while the Logs page provides live memory-log streaming, filters, pause, clear, and scroll-to-latest actions.
@@ -206,7 +206,7 @@ This mode does not require administrator privileges and is useful for upstream c
 
 When `tun.enabled = true` or `localProxy.systemProxyMode = "tun"`, TunProxy runs in TUN mode. On Windows this requires administrator privileges or the Windows service. The runtime creates a Wintun adapter, configures the TUN address, default route, upstream-proxy bypass route, and DNS forwarding.
 
-FakeIP is enabled by default in TUN mode. The DNS service returns addresses from `198.18.0.0/16` for A records, and the TUN layer maps those fake-IP connections back to domain names and real addresses so routing does not lose domain context.
+FakeIP is optional in TUN mode and is only enabled when you explicitly want the DNS service to return addresses from `198.18.0.0/16` for A records. The TUN layer then maps those fake-IP connections back to domain names and real addresses so routing does not lose domain context.
 
 On Linux, TUN full-capture mode uses a dedicated routing table plus `fwmark` policy routing. Existing non-default routes in the main table, such as LAN, ZeroTier, Docker, and cloud private routes, keep priority; ordinary default traffic enters `tun0`. TunProxy's own upstream proxy, direct-connect, DNS, and DoH sockets are marked so they return through the original main route instead of looping back into TUN. Common ZeroTier UDP ports are also kept on the main route, which lets ZeroTier remain the underlay network while TunProxy performs split routing.
 

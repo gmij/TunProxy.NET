@@ -59,11 +59,12 @@ public class TunConfig
 
     /// <summary>
     /// When true the DNS proxy returns fake IPs from the 198.18.0.0/16 block instead of the
-    /// real upstream addresses.  The TUN layer intercepts connections to those fake IPs and
+    /// real upstream addresses. The TUN layer intercepts connections to those fake IPs and
     /// forwards them to the correct upstream host via the configured proxy.
     /// Requires <see cref="AddDefaultRoute"/> = true (or a manual 198.18.0.0/16 → TUN route).
+    /// Defaults to false so normal name resolution remains unchanged unless explicitly enabled.
     /// </summary>
-    public bool FakeIpMode { get; set; } = true;
+    public bool FakeIpMode { get; set; }
 
     public void ApplyFrom(TunConfig other)
     {

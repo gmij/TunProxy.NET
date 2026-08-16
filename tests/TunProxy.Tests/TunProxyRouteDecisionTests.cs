@@ -499,11 +499,10 @@ public class TunProxyRouteDecisionTests
     }
 
     [Fact]
-    public void FakeIpPool_IsDefaultEnabled()
+    public void FakeIpMode_IsDisabledByDefault()
     {
-        // FakeIpMode must default to true so new deployments get FakeIP without explicit config.
         var config = new TunProxy.Core.Configuration.TunConfig();
-        Assert.True(config.FakeIpMode);
+        Assert.False(config.FakeIpMode);
     }
 
 }

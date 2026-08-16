@@ -47,7 +47,7 @@
       "ListenHostHint": "127.0.0.1 仅本机 · 0.0.0.0 开放局域网",
       "LocalProxyPort": "监听端口",
       "ModeHintProxyHtml": "<strong>本地代理模式</strong>监听本机端口，并可自动设置系统代理，无需管理员权限。<br>可在状态页重启或停止当前服务。",
-      "ModeHintTunHtml": "<strong>TUN 模式</strong>通过虚拟网卡透明接管 TCP 流量。默认启用 FakeIP DNS —— DNS 代理返回虚拟地址，以便在获知真实 IP 之前即可进行基于域名的路由决策。<br>可在状态页重启或停止当前服务。",
+      "ModeHintTunHtml": "<strong>TUN 模式</strong>通过虚拟网卡透明接管 TCP 流量。FakeIP DNS 为可选能力；只有在需要在获知真实 IP 之前先返回虚拟地址时才显式启用。<br>可在状态页重启或停止当前服务。",
       "ModeUnknown": "未知（服务未运行）",
       "PacCleared": "PAC 已清除。",
       "PacDescriptionHtml": "PAC（Proxy Auto-Config）会根据域名规则自动决定走代理还是直连。启用 GFWList 后，相关域名会自动合并进 PAC。",

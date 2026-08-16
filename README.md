@@ -51,7 +51,7 @@ Web 控制台默认访问地址为 `http://localhost:50000/`。
 - 代理可用性检查：在 Config 页直接通过当前上游代理检查 Google、GitHub、YouTube，帮助确认资源下载和路由前置条件。
 - 智能路由：GFWList 优先，私有地址和明确直连地址直连，GeoIP 可按国家或地区判断，未知目标默认代理。
 - 手动路由规则：独立 Rules 页维护 `proxyDomains`、`directDomains` 和直连失败自动切代理策略。
-- DNS 与 FakeIP：TUN 模式下可返回 `198.18.0.0/16` FakeIP，并在后台解析真实地址，用于稳定地把连接映射回域名。
+- DNS 与 FakeIP：TUN 模式下可返回 `198.18.0.0/16` FakeIP，并在后台解析真实地址，用于稳定地把连接映射回域名。默认不启用；只有在需要时才显式开启。
 - 规则资源管理：GeoIP 必须能被 MaxMind 读取，GFWList 必须能解析。启用资源缺失或无效时，会保留本地代理设置模式，不会直接进入不完整的 TUN。
 - PAC 支持：生成 `/proxy.pac`，支持复制、预览、应用和清除系统 PAC。
 - 日志和指标：状态页展示流量/诊断摘要，日志页提供内存日志流、筛选器、暂停、清空和滚动到最新。
@@ -206,7 +206,7 @@ Linux/macOS 没有统一、对所有进程生效的系统代理开关，因此 W
 
 `tun.enabled = true` 或 `localProxy.systemProxyMode = "tun"` 时进入 TUN 模式。Windows 下需要管理员权限或 Windows 服务。运行时会创建 Wintun 适配器，配置 TUN 地址、默认路由、代理服务器绕行路由和 DNS 转发。
 
-TUN 模式默认启用 FakeIP。DNS 服务为 A 记录返回 `198.18.0.0/16` 地址，TUN 层再把 FakeIP 连接还原到域名和真实地址，避免路由决策丢失域名上下文。
+TUN 模式默认不启用 FakeIP；只有在需要时才显式开启。DNS 服务为 A 记录返回 `198.18.0.0/16` 地址，TUN 层再把 FakeIP 连接还原到域名和真实地址，避免路由决策丢失域名上下文。
 
 Linux 下的 TUN 全局接管采用独立路由表和 `fwmark` 策略路由：已有主路由表中的内网、ZeroTier、Docker 或云内网等非默认路由优先生效，普通默认流量进入 `tun0`，TunProxy 自身的上游代理、直连、DNS 和 DoH 出口会打标记绕回原始主路由，避免自循环。ZeroTier 常用 UDP 端口也会被保留在主路由，用于把 ZeroTier 作为底座网络时维持节点互联。
 

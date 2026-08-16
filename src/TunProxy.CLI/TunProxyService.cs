@@ -613,11 +613,7 @@ public class TunProxyService : IProxyService
                             // address and poison the route as GeoUnknown before DoH catches up.
                             finalDecision = effectiveDestIp != null && domainHint != null
                                 ? await _routeDecision.DecideForObservedAddressAsync(domainHint, effectiveDestIp, ct)
-                                : domainHint != null
-                                    ? quickDecision is { ShouldProxy: false }
-                                        ? RouteDecision.Proxy("FakeIpDirectUnresolved", domainHint, null)
-                                        : _routeDecision.TryDecideWithoutIp(domainHint) ?? RouteDecision.Proxy("FakeIpUnresolved", domainHint, null)
-                                    : RouteDecision.Proxy("Default", null, null);
+                                : TunConnectionDecisions.SelectFakeIpFallbackDecision(quickDecision, domainHint, _routeDecision);
                         }
                     }
                     else

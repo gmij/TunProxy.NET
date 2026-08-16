@@ -41,6 +41,25 @@ internal static class TunConnectionDecisions
     public static bool CanUseFakeIpQuickDecision(RouteDecision? decision) =>
         decision?.ShouldProxy == true;
 
+    public static RouteDecision SelectFakeIpFallbackDecision(
+        RouteDecision? quickDecision,
+        string? domainHint,
+        RouteDecisionService routeDecision)
+    {
+        if (quickDecision != null)
+        {
+            return quickDecision;
+        }
+
+        if (domainHint != null)
+        {
+            return routeDecision.TryDecideWithoutIp(domainHint) ??
+                RouteDecision.Proxy("FakeIpUnresolved", domainHint, null);
+        }
+
+        return RouteDecision.Proxy("Default", null, null);
+    }
+
     public static bool CanEnsureDirectBypassRoute(IPAddress routeIp) =>
         !FakeIpPool.IsFakeIp(routeIp);
 

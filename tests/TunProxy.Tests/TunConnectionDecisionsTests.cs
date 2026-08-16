@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using TunProxy.CLI;
+using TunProxy.Core.Configuration;
 
 namespace TunProxy.Tests;
 
@@ -69,6 +70,26 @@ public class TunConnectionDecisionsTests
         Assert.False(TunConnectionDecisions.CanUseFakeIpQuickDecision(
             RouteDecision.Direct("DirectDomain", "qq.com", null)));
         Assert.False(TunConnectionDecisions.CanUseFakeIpQuickDecision(null));
+    }
+
+    [Fact]
+    public void SelectFakeIpFallbackDecision_PreservesDirectQuickDecision()
+    {
+        var config = new AppConfig
+        {
+            Route =
+            {
+                DirectDomains = ["lan.example"]
+            }
+        };
+        var routeDecision = new RouteDecisionService(config);
+        var quickDecision = RouteDecision.Direct("DirectDomain", "lan.example", null);
+
+        var decision = TunConnectionDecisions.SelectFakeIpFallbackDecision(quickDecision, "lan.example", routeDecision);
+
+        Assert.False(decision.ShouldProxy);
+        Assert.Equal("DirectDomain", decision.Reason);
+        Assert.Equal("lan.example", decision.Domain);
     }
 
     [Fact]

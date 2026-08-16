@@ -1249,13 +1249,43 @@ public class TunProxyService : IProxyService
             RouteDecision.Direct("DnsResolver", null, dnsServer),
             ct);
 
+    internal static IReadOnlyList<string> BuildStartupDirectDnsServerCandidates(
+        IEnumerable<string> systemDnsServers,
+        string? tunDnsServer)
+    {
+        var servers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddValidIpv4ServerCandidate(servers, DnsProxyService.DefaultDomesticDns);
+        AddValidIpv4ServerCandidate(servers, tunDnsServer);
+
+        foreach (var server in systemDnsServers)
+        {
+            AddValidIpv4ServerCandidate(servers, server);
+        }
+
+        return servers.ToList();
+    }
+
+    private static void AddValidIpv4ServerCandidate(HashSet<string> servers, string? server)
+    {
+        if (string.IsNullOrWhiteSpace(server))
+        {
+            return;
+        }
+
+        if (!IPAddress.TryParse(server, out var address) ||
+            address.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return;
+        }
+
+        servers.Add(server);
+    }
+
     private async Task EnsureStartupDirectDnsRoutesAsync(CancellationToken ct)
     {
-        var servers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            DnsProxyService.DefaultDomesticDns,
-            _config.Tun.DnsServer
-        };
+        var servers = BuildStartupDirectDnsServerCandidates(
+            DnsProxyService.GetSystemDnsServerCandidates(),
+            _config.Tun.DnsServer);
 
         foreach (var server in servers)
         {

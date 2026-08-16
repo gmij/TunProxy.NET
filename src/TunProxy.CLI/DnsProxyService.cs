@@ -835,11 +835,11 @@ public class DnsProxyService
         dnsServers.Add(dnsServer);
     }
 
-    private static IReadOnlyList<string> GetSystemDnsServerCandidates()
+    internal static IReadOnlyList<string> GetSystemDnsServerCandidates()
     {
-        var now = DateTime.UtcNow;
         lock (SystemDnsServerCacheLock)
         {
+            var now = DateTime.UtcNow;
             if (_cachedSystemDnsServers != null && now - _cachedSystemDnsServersUtc < SystemDnsServerCacheTtl)
             {
                 return _cachedSystemDnsServers;

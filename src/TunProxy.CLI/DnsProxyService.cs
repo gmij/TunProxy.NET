@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Collections.Concurrent;
 using Serilog;
 using TunProxy.Core.Connections;
@@ -18,6 +20,10 @@ public class DnsProxyService
     private static readonly TimeSpan DirectDnsTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan HttpConnectRejectWarningWindow = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan DohSuccessInfoWindow = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan SystemDnsServerCacheTtl = TimeSpan.FromSeconds(30);
+    private static readonly object SystemDnsServerCacheLock = new();
+    private static IReadOnlyList<string>? _cachedSystemDnsServers;
+    private static DateTime _cachedSystemDnsServersUtc = DateTime.MinValue;
     private static readonly HashSet<string> DomesticDnsServers = new(StringComparer.OrdinalIgnoreCase)
     {
         "223.5.5.5",
@@ -158,11 +164,9 @@ public class DnsProxyService
                 return;
             }
 
-            var requestedDnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
-                ? _upstreamDns
-                : requestPacket.Header.DestinationAddress.ToString();
             var domainDecision = _routeDecision?.TryDecideWithoutIp(domain);
-            var dnsServer = SelectRoutingDnsServer(_upstreamDns, requestedDnsServer, domainDecision);
+            var requestedDnsServers = GetRequestedDnsServerCandidates(requestPacket.Header.DestinationAddress);
+            var dnsServer = SelectRoutingDnsServer(_upstreamDns, requestedDnsServers, domainDecision);
             var useProxySideResolver = ShouldUseProxySideResolver(domainDecision);
 
             var dnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(
@@ -303,11 +307,9 @@ public class DnsProxyService
         string traceId,
         CancellationToken ct)
     {
-        var requestedDnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
-            ? _upstreamDns
-            : requestPacket.Header.DestinationAddress.ToString();
         var domainDecision = _routeDecision?.TryDecideWithoutIp(domain);
-        var dnsServer = SelectRoutingDnsServer(_upstreamDns, requestedDnsServer, domainDecision);
+        var requestedDnsServers = GetRequestedDnsServerCandidates(requestPacket.Header.DestinationAddress);
+        var dnsServer = SelectRoutingDnsServer(_upstreamDns, requestedDnsServers, domainDecision);
         var useProxySideResolver = ShouldUseProxySideResolver(domainDecision);
         var dnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(
             requestPacket.Payload,
@@ -377,7 +379,7 @@ public class DnsProxyService
                 {
                     var queryPayload = BuildAQueryPayload(domain);
                     var domainDecision = _routeDecision?.TryDecideWithoutIp(domain);
-                    var dnsServer = SelectRoutingDnsServer(_upstreamDns, _upstreamDns, domainDecision);
+                    var dnsServer = SelectRoutingDnsServer(_upstreamDns, GetConfiguredDnsServerCandidates(), domainDecision);
                     var useProxySideResolver = ShouldUseProxySideResolver(domainDecision);
                     var realDnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(queryPayload, domain, dnsServer, useProxySideResolver, traceId, ct);
                     if (realDnsResponse != null && realDnsResponse.Length > 0)
@@ -762,7 +764,7 @@ public class DnsProxyService
 
     internal static string SelectRoutingDnsServer(
         string upstreamDns,
-        string requestedDnsServer,
+        IEnumerable<string> requestedDnsServers,
         RouteDecision? domainDecision)
     {
         if (ShouldUseProxySideResolver(domainDecision))
@@ -770,17 +772,123 @@ public class DnsProxyService
             return upstreamDns;
         }
 
-        if (IsDomesticDnsServer(requestedDnsServer))
+        foreach (var requestedDnsServer in requestedDnsServers)
         {
-            return requestedDnsServer;
+            if (IsPreferredDnsServer(requestedDnsServer))
+            {
+                return requestedDnsServer;
+            }
         }
 
-        if (IsDomesticDnsServer(upstreamDns))
+        if (IsPreferredDnsServer(upstreamDns))
         {
             return upstreamDns;
         }
 
         return DefaultDomesticDns;
+    }
+
+    internal static string SelectRoutingDnsServer(
+        string upstreamDns,
+        string requestedDnsServer,
+        RouteDecision? domainDecision) =>
+        SelectRoutingDnsServer(upstreamDns, [requestedDnsServer], domainDecision);
+
+    private IReadOnlyList<string> GetRequestedDnsServerCandidates(IPAddress destinationAddress)
+    {
+        var requestedDnsServers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!ProtocolInspector.IsPrivateIp(destinationAddress))
+        {
+            requestedDnsServers.Add(destinationAddress.ToString());
+        }
+        else
+        {
+            foreach (var dnsServer in GetSystemDnsServerCandidates())
+            {
+                requestedDnsServers.Add(dnsServer);
+            }
+        }
+
+        AddDnsServerCandidate(requestedDnsServers, _upstreamDns);
+        return requestedDnsServers.ToList();
+    }
+
+    private IReadOnlyList<string> GetConfiguredDnsServerCandidates()
+    {
+        var requestedDnsServers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dnsServer in GetSystemDnsServerCandidates())
+        {
+            requestedDnsServers.Add(dnsServer);
+        }
+
+        AddDnsServerCandidate(requestedDnsServers, _upstreamDns);
+        return requestedDnsServers.ToList();
+    }
+
+    private static void AddDnsServerCandidate(HashSet<string> dnsServers, string? dnsServer)
+    {
+        if (string.IsNullOrWhiteSpace(dnsServer))
+        {
+            return;
+        }
+
+        dnsServers.Add(dnsServer);
+    }
+
+    private static IReadOnlyList<string> GetSystemDnsServerCandidates()
+    {
+        var now = DateTime.UtcNow;
+        lock (SystemDnsServerCacheLock)
+        {
+            if (_cachedSystemDnsServers != null && now - _cachedSystemDnsServersUtc < SystemDnsServerCacheTtl)
+            {
+                return _cachedSystemDnsServers;
+            }
+
+            var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces()
+                .Where(static adapter =>
+                    adapter.OperationalStatus == OperationalStatus.Up &&
+                    adapter.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                    adapter.NetworkInterfaceType != NetworkInterfaceType.Tunnel))
+            {
+                foreach (var dnsAddress in adapter.GetIPProperties().DnsAddresses
+                    .Where(static address => address.AddressFamily == AddressFamily.InterNetwork)
+                    .Where(static address => !IPAddress.IsLoopback(address) && !address.Equals(IPAddress.Any)))
+                {
+                    var dnsServer = dnsAddress.ToString();
+                    results.Add(dnsServer);
+                }
+            }
+
+            _cachedSystemDnsServers = results.ToList();
+            _cachedSystemDnsServersUtc = now;
+            return _cachedSystemDnsServers;
+        }
+    }
+
+    private static bool IsPreferredDnsServer(string dnsServer)
+    {
+        if (string.IsNullOrWhiteSpace(dnsServer))
+        {
+            return false;
+        }
+
+        var trimmed = dnsServer.Trim();
+        if (IsDomesticDnsServer(trimmed))
+        {
+            return true;
+        }
+
+        if (IPAddress.TryParse(trimmed, out var address) &&
+            address.AddressFamily == AddressFamily.InterNetwork &&
+            !IPAddress.IsLoopback(address) &&
+            ProtocolInspector.IsPrivateIp(address))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static bool ShouldUseProxySideResolver(RouteDecision? domainDecision)
@@ -846,7 +954,7 @@ public class DnsProxyService
         var normalized = domain.Trim().TrimEnd('.');
         if (normalized.Length == 0)
         {
-            return true;
+            return false;
         }
 
         if (normalized

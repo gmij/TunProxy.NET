@@ -52,6 +52,17 @@ public class DnsProxyServiceTests
     }
 
     [Fact]
+    public void SelectRoutingDnsServer_PrivateDnsCandidates_PrefersRequestedDnsServer()
+    {
+        var dnsServer = DnsProxyService.SelectRoutingDnsServer(
+            "8.8.8.8",
+            ["192.168.1.1", "223.5.5.5"],
+            domainDecision: null);
+
+        Assert.Equal("192.168.1.1", dnsServer);
+    }
+
+    [Fact]
     public void TryBuildCachedDnsResponse_MultipleARecords_ReturnsAllActiveAddresses()
     {
         var store = new DnsResolutionStore();

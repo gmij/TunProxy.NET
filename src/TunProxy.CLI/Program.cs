@@ -141,14 +141,17 @@ public class Program
                 Log.Information("Registering TUN proxy hosted service.");
                 builder.Services.AddSingleton<TunProxyService>();
                 builder.Services.AddSingleton<IProxyService>(sp => sp.GetRequiredService<TunProxyService>());
-                builder.Services.AddHostedService<ProxyHostedService<TunProxyService>>();
+                builder.Services.AddSingleton<ProxyHostedService<TunProxyService>>();
+                builder.Services.AddSingleton<IProxyRuntimeController>(sp => sp.GetRequiredService<ProxyHostedService<TunProxyService>>());
+                builder.Services.AddHostedService(sp => sp.GetRequiredService<ProxyHostedService<TunProxyService>>());
                 
                 // Also register LocalProxyService when explicitly enabled (multi-hop / LAN access)
                 if (config.LocalProxy.EnableLanProxy)
                 {
                     Log.Information("Registering local proxy hosted service for LAN access (EnableLanProxy=true).");
                     builder.Services.AddSingleton<LocalProxyService>();
-                    builder.Services.AddHostedService<ProxyHostedService<LocalProxyService>>();
+                    builder.Services.AddSingleton<ProxyHostedService<LocalProxyService>>();
+                    builder.Services.AddHostedService(sp => sp.GetRequiredService<ProxyHostedService<LocalProxyService>>());
                 }
             }
             else
@@ -156,7 +159,9 @@ public class Program
                 Log.Information("Registering local proxy hosted service.");
                 builder.Services.AddSingleton<LocalProxyService>();
                 builder.Services.AddSingleton<IProxyService>(sp => sp.GetRequiredService<LocalProxyService>());
-                builder.Services.AddHostedService<ProxyHostedService<LocalProxyService>>();
+                builder.Services.AddSingleton<ProxyHostedService<LocalProxyService>>();
+                builder.Services.AddSingleton<IProxyRuntimeController>(sp => sp.GetRequiredService<ProxyHostedService<LocalProxyService>>());
+                builder.Services.AddHostedService(sp => sp.GetRequiredService<ProxyHostedService<LocalProxyService>>());
             }
 
             Log.Information("Building web application...");
@@ -572,58 +577,129 @@ public class Program
     }
 }
 
-public class ProxyHostedService<T> : IHostedService where T : IProxyService
+public interface IProxyRuntimeController
+{
+    Task<bool> StartProxyAsync(CancellationToken cancellationToken);
+    Task<bool> StopProxyAsync(CancellationToken cancellationToken);
+    Task<bool> RestartProxyAsync(CancellationToken cancellationToken);
+    bool IsRunning { get; }
+}
+
+public class ProxyHostedService<T> : IHostedService, IProxyRuntimeController where T : IProxyService
 {
     private readonly T _proxyService;
+    private readonly object _syncRoot = new();
     private CancellationTokenSource? _cts;
     private Task? _executingTask;
+    private bool _isStopping;
+    private CancellationToken _hostToken;
 
     public ProxyHostedService(T proxyService)
     {
         _proxyService = proxyService;
     }
 
+    public bool IsRunning
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _executingTask is { IsCompleted: false };
+            }
+        }
+    }
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _cts = new CancellationTokenSource();
-        Log.Information("Hosted proxy service starting: {ServiceType}", typeof(T).Name);
-        _executingTask = _proxyService.StartAsync(_cts.Token);
-        _ = _executingTask.ContinueWith(
-            task =>
-            {
-                if (task.IsFaulted)
-                {
-                    Log.Error(task.Exception, "Hosted proxy service faulted: {ServiceType}", typeof(T).Name);
-                }
-                else if (task.IsCanceled)
-                {
-                    Log.Information("Hosted proxy service canceled: {ServiceType}", typeof(T).Name);
-                }
-                else
-                {
-                    Log.Information("Hosted proxy service completed: {ServiceType}", typeof(T).Name);
-                }
-            },
-            TaskScheduler.Default);
-        return Task.CompletedTask;
+        _hostToken = cancellationToken;
+        return StartProxyAsync(cancellationToken);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        Log.Information("Hosted proxy service stopping: {ServiceType}", typeof(T).Name);
-        if (_executingTask == null)
+        lock (_syncRoot)
         {
-            return;
+            _isStopping = true;
+        }
+
+        await StopProxyAsync(cancellationToken);
+    }
+
+    public Task<bool> StartProxyAsync(CancellationToken cancellationToken)
+    {
+        CancellationToken linkedToken;
+
+        lock (_syncRoot)
+        {
+            if (_isStopping || _executingTask is { IsCompleted: false })
+            {
+                return Task.FromResult(false);
+            }
+
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(_hostToken, cancellationToken);
+            linkedToken = _cts.Token;
+            Log.Information("Hosted proxy service starting: {ServiceType}", typeof(T).Name);
+            _executingTask = _proxyService.StartAsync(linkedToken);
+            _ = _executingTask.ContinueWith(
+                task =>
+                {
+                    if (task.IsFaulted)
+                    {
+                        Log.Error(task.Exception, "Hosted proxy service faulted: {ServiceType}", typeof(T).Name);
+                    }
+                    else if (task.IsCanceled)
+                    {
+                        Log.Information("Hosted proxy service canceled: {ServiceType}", typeof(T).Name);
+                    }
+                    else
+                    {
+                        Log.Information("Hosted proxy service completed: {ServiceType}", typeof(T).Name);
+                    }
+                },
+                TaskScheduler.Default);
+        }
+
+        return Task.FromResult(true);
+    }
+
+    public async Task<bool> StopProxyAsync(CancellationToken cancellationToken)
+    {
+        Task? executingTask;
+        CancellationTokenSource? cts;
+
+        lock (_syncRoot)
+        {
+            if (_executingTask == null)
+            {
+                return false;
+            }
+
+            Log.Information("Hosted proxy service stopping: {ServiceType}", typeof(T).Name);
+            executingTask = _executingTask;
+            cts = _cts;
+            _executingTask = null;
+            _cts = null;
         }
 
         try
         {
-            _cts?.Cancel();
+            cts?.Cancel();
+            await Task.WhenAny(executingTask!, Task.Delay(Timeout.Infinite, cancellationToken));
         }
         finally
         {
-            await Task.WhenAny(_executingTask, Task.Delay(Timeout.Infinite, cancellationToken));
             await _proxyService.StopAsync();
+            cts?.Dispose();
         }
+
+        return true;
+    }
+
+    public async Task<bool> RestartProxyAsync(CancellationToken cancellationToken)
+    {
+        var stopped = await StopProxyAsync(cancellationToken);
+        var started = await StartProxyAsync(cancellationToken);
+        return stopped && started;
     }
 }

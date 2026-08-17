@@ -269,10 +269,13 @@
       function controlService(action) {
         serviceBusy.value = true;
         serviceAlertType.value = 'info';
-        serviceMessage.value = C.t(action === 'restart' ? 'Page.Status.ServiceRestarting' : 'Page.Status.ServiceStopping');
+        serviceMessage.value = action === 'start'
+          ? C.t('Page.Status.ServiceStarting')
+          : C.t(action === 'restart' ? 'Page.Status.ServiceRestarting' : 'Page.Status.ServiceStopping');
         window.TunProxyApi.post('/api/service/' + action)
           .then(function () {
-            window.setTimeout(refreshStatus, action === 'restart' ? 5000 : 1500);
+            var delay = action === 'restart' ? 5000 : 1500;
+            window.setTimeout(refreshStatus, delay);
           })
           .catch(function (error) {
             serviceAlertType.value = 'error';
@@ -328,8 +331,9 @@
         :title="t('Page.Status.Heading')"
         @change-culture="setCulture">
         <template #actions>
-          <a-button :disabled="serviceBusy || !isRunning" @click="controlService('restart')">↻ {{ t('Page.Status.ServiceRestart') }}</a-button>
-          <a-button danger :disabled="serviceBusy || !isRunning" @click="controlService('stop')">■ {{ t('Page.Status.ServiceStop') }}</a-button>
+          <a-button v-if="isRunning" :disabled="serviceBusy" @click="controlService('restart')">↻ {{ t('Page.Status.ServiceRestart') }}</a-button>
+          <a-button v-if="isRunning" danger :disabled="serviceBusy" @click="controlService('stop')">■ {{ t('Page.Status.ServiceStop') }}</a-button>
+          <a-button v-else type="primary" :disabled="serviceBusy" @click="controlService('start')">▶ {{ t('Page.Status.ServiceStart') }}</a-button>
         </template>
 
           <a-alert v-if="serviceMessage" :type="serviceAlertType" :message="serviceMessage" show-icon style="margin-bottom: 14px"></a-alert>

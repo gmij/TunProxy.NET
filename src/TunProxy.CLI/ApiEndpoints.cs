@@ -239,20 +239,27 @@ public static class ApiEndpoints
                 AppJsonContext.Default.DictionaryStringString);
         });
 
-        app.MapPost("/api/service/restart", (RestartCoordinator restart, AppConfig cfg) =>
+        app.MapPost("/api/service/start", async (IProxyRuntimeController runtime, CancellationToken ct) =>
         {
-            restart.RequestRestart(cfg);
+            await runtime.StartProxyAsync(ct);
+            return JsonResponse(
+                new Dictionary<string, string> { ["status"] = "running" },
+                AppJsonContext.Default.DictionaryStringString);
+        });
+
+        app.MapPost("/api/service/restart", async (IProxyRuntimeController runtime, CancellationToken ct) =>
+        {
+            await runtime.RestartProxyAsync(ct);
             return JsonResponse(
                 new Dictionary<string, string> { ["status"] = "restarting" },
                 AppJsonContext.Default.DictionaryStringString);
         });
 
-        app.MapPost("/api/service/stop", (RestartCoordinator restart) =>
+        app.MapPost("/api/service/stop", async (IProxyRuntimeController runtime, CancellationToken ct) =>
         {
-            restart.RequestStop();
-
+            await runtime.StopProxyAsync(ct);
             return JsonResponse(
-                new Dictionary<string, string> { ["status"] = "stopping" },
+                new Dictionary<string, string> { ["status"] = "stopped" },
                 AppJsonContext.Default.DictionaryStringString);
         });
 

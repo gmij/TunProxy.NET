@@ -151,6 +151,45 @@ public class ApplicationServiceTests
         Assert.Contains("start \"\" \"C:\\Apps\\TunProxy.CLI.exe\"", command);
     }
 
+    [Fact]
+    public async Task ProxyHostedService_StopAndStartProxy_KeepsControllerAvailable()
+    {
+        var proxy = new LifecycleProxyService();
+        var hosted = new ProxyHostedService<LifecycleProxyService>(proxy);
+
+        await hosted.StartAsync(CancellationToken.None);
+        Assert.True(hosted.IsRunning);
+
+        var stopped = await hosted.StopProxyAsync(CancellationToken.None);
+        Assert.True(stopped);
+        Assert.False(hosted.IsRunning);
+
+        var started = await hosted.StartProxyAsync(CancellationToken.None);
+        Assert.True(started);
+        Assert.True(hosted.IsRunning);
+
+        await hosted.StopAsync(CancellationToken.None);
+        Assert.False(hosted.IsRunning);
+        Assert.True(proxy.StartCount >= 2);
+    }
+
+    [Fact]
+    public async Task ProxyHostedService_RestartProxy_RestartsUnderlyingService()
+    {
+        var proxy = new LifecycleProxyService();
+        var hosted = new ProxyHostedService<LifecycleProxyService>(proxy);
+
+        await hosted.StartAsync(CancellationToken.None);
+        var restarted = await hosted.RestartProxyAsync(CancellationToken.None);
+
+        Assert.True(restarted);
+        Assert.True(hosted.IsRunning);
+        Assert.True(proxy.StartCount >= 2);
+        Assert.True(proxy.StopCount >= 1);
+
+        await hosted.StopAsync(CancellationToken.None);
+    }
+
     private sealed class FakeProxyService : IProxyService
     {
         public int RefreshCount { get; private set; }
@@ -166,5 +205,33 @@ public class ApplicationServiceTests
             RefreshCount++;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class LifecycleProxyService : IProxyService
+    {
+        public int StartCount { get; private set; }
+        public int StopCount { get; private set; }
+
+        public ServiceStatus GetStatus() => new();
+
+        public async Task StartAsync(CancellationToken ct)
+        {
+            StartCount++;
+            try
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        public Task StopAsync()
+        {
+            StopCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task RefreshRuleResourcesAsync(CancellationToken ct) => Task.CompletedTask;
     }
 }

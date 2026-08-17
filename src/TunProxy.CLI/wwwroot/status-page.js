@@ -89,32 +89,44 @@
           {
             label: C.t('Page.Status.ProxyServer'),
             value: status.value.proxyHost + ':' + status.value.proxyPort,
-            sub: C.t('Page.Config.ProxyType') + ': ' + (status.value.proxyType || '-')
+            sub: C.t('Page.Config.ProxyType') + ': ' + (status.value.proxyType || '-'),
+            icon: 'S',
+            tone: 'blue'
           },
           {
             label: C.t('Page.Status.ActiveConnections'),
             value: status.value.activeConnections,
-            sub: C.t('Page.Status.TotalConnections') + ': ' + (metrics.value.totalConnections || 0)
+            sub: C.t('Page.Status.TotalConnections') + ': ' + (metrics.value.totalConnections || 0),
+            icon: '↗',
+            tone: 'cyan'
           },
           {
             label: C.t('Page.Status.Uptime'),
             value: C.fmtUptime(metrics.value.uptimeSeconds),
-            sub: C.t('Shared.RefreshAt').split('|')[0].replace('{0}', '5') + ' · ' + lastUpdate.value
+            sub: C.t('Shared.RefreshAt').split('|')[0].replace('{0}', '5') + ' · ' + lastUpdate.value,
+            icon: '◷',
+            tone: 'violet'
           },
           {
             label: C.t('Page.Config.SystemProxyMode'),
             value: status.value.mode === 'tun' ? C.t('Page.Config.SystemProxyMode.Tun') : C.t('Mode.Proxy'),
-            sub: C.t('Page.Status.FakeIp') + ': ' + C.t(status.value.fakeIpMode ? 'Shared.On' : 'Shared.Off')
+            sub: C.t('Page.Status.FakeIp') + ': ' + C.t(status.value.fakeIpMode ? 'Shared.On' : 'Shared.Off'),
+            icon: 'T',
+            tone: 'green'
           },
           {
             label: C.t('Page.Status.ConnectIssue.Title'),
             value: connectIssueText,
-            sub: C.t('Page.Status.FailedConnections') + ': ' + (metrics.value.failedConnections || 0)
+            sub: C.t('Page.Status.FailedConnections') + ': ' + (metrics.value.failedConnections || 0),
+            icon: '!',
+            tone: connectIssue.value ? 'amber' : 'green'
           },
           {
             label: C.t('Page.Status.BytesSent'),
             value: C.fmtRate(metrics.value.bytesPerSecond, 'B/s'),
-            sub: C.t('Page.Status.PacketRate') + ': ' + C.fmtRate(metrics.value.packetsPerSecond, 'pkt/s')
+            sub: C.t('Page.Status.PacketRate') + ': ' + C.fmtRate(metrics.value.packetsPerSecond, 'pkt/s'),
+            icon: '↑',
+            tone: 'blue'
           }
         ];
       });
@@ -132,13 +144,13 @@
         return [
           { name: C.t('Page.Status.RawPackets'), value: metrics.value.rawPacketsReceived || 0 },
           { name: C.t('Page.Status.Ipv6Packets'), value: metrics.value.iPv6Packets || metrics.value.ipv6Packets || 0 },
-          { name: C.t('Page.Status.ParseFailures'), value: metrics.value.parseFailures || 0, color: (metrics.value.parseFailures || 0) > 0 ? 'red' : 'green' },
+          { name: C.t('Page.Status.ParseFailures'), value: metrics.value.parseFailures || 0, tone: (metrics.value.parseFailures || 0) > 0 ? 'danger' : 'success' },
           { name: C.t('Page.Status.PortFiltered'), value: metrics.value.portFilteredPackets || 0 },
           { name: C.t('Page.Status.DirectRouted'), value: metrics.value.directRoutedPackets || 0 },
           { name: C.t('Page.Status.DnsQueries'), value: metrics.value.dnsQueries || 0 },
-          { name: C.t('Page.Status.DnsFailures'), value: metrics.value.failedDnsQueries || 0, color: (metrics.value.failedDnsQueries || 0) > 0 ? 'orange' : 'green' },
-          { name: C.t('Page.Status.TunSendAllocationRetryAttempts'), value: metrics.value.tunSendAllocationRetryAttempts || 0, color: (metrics.value.tunSendAllocationRetryAttempts || 0) > 0 ? 'orange' : 'green' },
-          { name: C.t('Page.Status.TunSendAllocationDrops'), value: metrics.value.tunSendAllocationDrops || 0, color: (metrics.value.tunSendAllocationDrops || 0) > 0 ? 'red' : 'green' }
+          { name: C.t('Page.Status.DnsFailures'), value: metrics.value.failedDnsQueries || 0, tone: (metrics.value.failedDnsQueries || 0) > 0 ? 'warning' : 'success' },
+          { name: C.t('Page.Status.TunSendAllocationRetryAttempts'), value: metrics.value.tunSendAllocationRetryAttempts || 0, tone: (metrics.value.tunSendAllocationRetryAttempts || 0) > 0 ? 'warning' : 'success' },
+          { name: C.t('Page.Status.TunSendAllocationDrops'), value: metrics.value.tunSendAllocationDrops || 0, tone: (metrics.value.tunSendAllocationDrops || 0) > 0 ? 'danger' : 'success' }
         ];
       });
 
@@ -189,9 +201,18 @@
           }).join(' ');
         }
 
+        function buildAreaPath(key) {
+          var path = buildPath(key);
+          if (!path) return '';
+          var lastX = samples.length > 1 ? width - padding : padding;
+          return path + ' L' + lastX + ' ' + (height - padding) + ' L' + padding + ' ' + (height - padding) + ' Z';
+        }
+
         return {
           max: max,
+          recvAreaPath: buildAreaPath('recv'),
           recvPath: buildPath('recv'),
+          sentAreaPath: buildAreaPath('sent'),
           sentPath: buildPath('sent'),
           viewBox: '0 0 ' + width + ' ' + height
         };
@@ -357,7 +378,7 @@
           </a-alert>
 
           <a-spin :spinning="loading">
-            <section class="tp-section tp-status-header">
+            <section class="tp-section tp-status-header" :class="{ 'is-running': isRunning }">
               <div class="tp-status-primary">
                 <div class="tp-pulse" :class="{ stopped: !isRunning }"></div>
                 <div>
@@ -368,23 +389,23 @@
                   <div class="tp-muted">{{ status && status.mode === 'tun' ? t('Page.Status.ModeTunDescription') : t('Mode.Proxy') }}</div>
                 </div>
               </div>
+              <div class="tp-status-refresh">{{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</div>
             </section>
 
-            <div class="tp-four-grid tp-status-overview-grid" style="margin-top: 12px">
-              <a-card v-for="card in overviewCards" :key="card.label" class="tp-metric-card tp-overview-card" size="small">
-                <div class="tp-card-line">
-                  <div class="tp-card-meta">
-                    <div class="tp-card-label">{{ card.label }}</div>
-                    <div class="tp-muted">{{ card.sub }}</div>
-                  </div>
-                  <div class="tp-card-value tp-overview-value">{{ card.value }}</div>
+            <div class="tp-status-overview-grid">
+              <a-card v-for="card in overviewCards" :key="card.label" class="tp-metric-card tp-overview-card" :class="'tp-tone-' + card.tone" size="small">
+                <div class="tp-overview-head">
+                  <div class="tp-card-label">{{ card.label }}</div>
+                  <span class="tp-overview-icon">{{ card.icon }}</span>
                 </div>
+                <div class="tp-card-value tp-overview-value" :title="String(card.value)">{{ card.value }}</div>
+                <div class="tp-muted tp-overview-sub">{{ card.sub }}</div>
               </a-card>
             </div>
 
-            <div class="tp-page-grid" :class="{ 'tp-page-grid-single': !(status && status.mode === 'tun') }" style="margin-top: 18px">
+            <div class="tp-page-grid tp-status-content-grid" :class="{ 'tp-page-grid-single': !(status && status.mode === 'tun') }">
               <div>
-                <section class="tp-section">
+                <section class="tp-section tp-traffic-section">
                   <div class="tp-section-head">
                     <div><div class="tp-section-title">{{ t('Page.Status.Traffic') }}</div><div class="tp-muted">{{ t('Page.Status.BytesSent') }} / {{ t('Page.Status.BytesReceived') }}</div></div>
                     <a-tag color="processing">{{ t('Page.Status.RollingWindow') }}</a-tag>
@@ -401,11 +422,25 @@
                     </a-card>
                   </div>
                   <div class="tp-chart">
-                    <div class="tp-section-head" style="margin-bottom: 6px"><div class="tp-section-title">{{ t('Page.Status.TrafficChartTitle') }}</div><div class="tp-muted">{{ C.format('Page.Status.TrafficChartDescription', sampleIntervalSeconds) }} · {{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</div></div>
-                    <div class="tp-line-chart" ref="chartRef" style="position:relative;cursor:crosshair" @mousemove="handleChartMove" @mouseleave="handleChartLeave">
-                      <svg preserveAspectRatio="none" :viewBox="trafficLineChart.viewBox" role="img" aria-label="Traffic line chart">
+                    <div class="tp-chart-head">
+                      <div><div class="tp-section-title">{{ t('Page.Status.TrafficChartTitle') }}</div><div class="tp-muted">{{ C.format('Page.Status.TrafficChartDescription', sampleIntervalSeconds) }} · {{ C.format('Shared.RefreshAt', 5, lastUpdate) }}</div></div>
+                      <div class="tp-chart-legend">
+                        <span><i class="sent"></i>{{ t('Page.Status.BytesSent') }}</span>
+                        <span><i class="recv"></i>{{ t('Page.Status.BytesReceived') }}</span>
+                      </div>
+                    </div>
+                    <div class="tp-line-chart" ref="chartRef" @mousemove="handleChartMove" @mouseleave="handleChartLeave">
+                      <svg preserveAspectRatio="none" :viewBox="trafficLineChart.viewBox" role="img" :aria-label="t('Page.Status.TrafficChartTitle')">
+                        <defs>
+                          <linearGradient id="tpSentArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3b82f6" stop-opacity=".2"></stop><stop offset="100%" stop-color="#3b82f6" stop-opacity="0"></stop></linearGradient>
+                          <linearGradient id="tpRecvArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#14b8a6" stop-opacity=".18"></stop><stop offset="100%" stop-color="#14b8a6" stop-opacity="0"></stop></linearGradient>
+                        </defs>
                         <path class="tp-line-grid" d="M12 208 L988 208"></path>
-                        <path class="tp-line-grid" d="M12 12 L12 208"></path>
+                        <path class="tp-line-grid" d="M12 159 L988 159"></path>
+                        <path class="tp-line-grid" d="M12 110 L988 110"></path>
+                        <path class="tp-line-grid" d="M12 61 L988 61"></path>
+                        <path class="tp-area-sent" :d="trafficLineChart.sentAreaPath"></path>
+                        <path class="tp-area-recv" :d="trafficLineChart.recvAreaPath"></path>
                         <path class="tp-line-sent" :d="trafficLineChart.sentPath"></path>
                         <path class="tp-line-recv" :d="trafficLineChart.recvPath"></path>
                         <line v-if="hoverInfo" :x1="hoverInfo.svgX" y1="12" :x2="hoverInfo.svgX" y2="208" class="tp-line-crosshair"></line>
@@ -419,10 +454,10 @@
                   </div>
                 </section>
               </div>
-              <section class="tp-section" v-if="status && status.mode === 'tun'">
+              <section class="tp-section tp-diagnostics-section" v-if="status && status.mode === 'tun'">
                 <div class="tp-section-head"><div><div class="tp-section-title">{{ t('Page.Status.TunDiagnostics') }}</div><div class="tp-muted">{{ t('Page.Status.Wintun') }}</div></div><a-tag color="success">{{ t('Shared.Healthy') }}</a-tag></div>
                 <div class="tp-diagnostics">
-                  <div v-for="item in diagnostics" :key="item.name" class="tp-diagnostic-row"><span class="tp-diagnostic-name">{{ item.name }}</span><span class="tp-diagnostic-value" :style="{ color: item.color === 'red' ? '#dc2626' : item.color === 'orange' ? '#d97706' : item.color === 'green' ? '#16a34a' : '#18202f' }">{{ item.value }}</span></div>
+                  <div v-for="item in diagnostics" :key="item.name" class="tp-diagnostic-row" :class="item.tone ? 'is-' + item.tone : ''"><span class="tp-diagnostic-name" :title="item.name">{{ item.name }}</span><span class="tp-diagnostic-value">{{ item.value }}</span></div>
                 </div>
               </section>
             </div>

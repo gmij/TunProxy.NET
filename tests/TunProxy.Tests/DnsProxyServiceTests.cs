@@ -185,6 +185,46 @@ public class DnsProxyServiceTests
     }
 
     [Fact]
+    public void SelectRoutingDnsServer_NonProxyDomain_PrefersOriginalSystemDns()
+    {
+        var service = new DnsProxyService(
+            "127.0.0.1",
+            1,
+            ProxyType.Socks5,
+            new DnsResolutionStore(),
+            upstreamDns: "8.8.8.8",
+            getOriginalDnsServers: () => ["10.30.96.1"]);
+
+        var dnsServer = service.SelectRoutingDnsServer("internal.yf", "10.255.0.2");
+
+        Assert.Equal("10.30.96.1", dnsServer);
+    }
+
+    [Fact]
+    public void SelectRoutingDnsServer_ProxyDomain_IgnoresOriginalSystemDns()
+    {
+        var config = new TunProxy.Core.Configuration.AppConfig
+        {
+            Route =
+            {
+                ProxyDomains = ["blocked.example"]
+            }
+        };
+        var service = new DnsProxyService(
+            "127.0.0.1",
+            1,
+            ProxyType.Socks5,
+            new DnsResolutionStore(),
+            upstreamDns: "8.8.8.8",
+            routeDecision: new RouteDecisionService(config),
+            getOriginalDnsServers: () => ["10.30.96.1"]);
+
+        var dnsServer = service.SelectRoutingDnsServer("blocked.example", "10.255.0.2");
+
+        Assert.Equal("8.8.8.8", dnsServer);
+    }
+
+    [Fact]
     public void SelectRoutingDnsServer_GfwDomain_UsesConfiguredUpstreamResolver()
     {
         var dnsServer = DnsProxyService.SelectRoutingDnsServer(

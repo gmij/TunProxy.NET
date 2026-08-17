@@ -40,6 +40,7 @@ public class DnsProxyService
     private readonly RouteDecisionService? _routeDecision;
     private readonly Func<IPAddress, RouteDecision, CancellationToken, Task>? _onDirectRouteCandidate;
     private readonly Func<IPAddress, CancellationToken, Task>? _onDirectDnsServerCandidate;
+    private readonly Func<IReadOnlyList<string>> _getOriginalDnsServers;
     private readonly FakeIpPool? _fakeIpPool;
     private readonly int? _linuxSocketMark;
     private readonly HashSet<string> _probeDirectDomainSuffixes;
@@ -74,6 +75,7 @@ public class DnsProxyService
         RouteDecisionService? routeDecision = null,
         Func<IPAddress, RouteDecision, CancellationToken, Task>? onDirectRouteCandidate = null,
         Func<IPAddress, CancellationToken, Task>? onDirectDnsServerCandidate = null,
+        Func<IReadOnlyList<string>>? getOriginalDnsServers = null,
         IEnumerable<string>? probeDirectDomains = null,
         FakeIpPool? fakeIpPool = null,
         int? linuxSocketMark = null)
@@ -88,6 +90,7 @@ public class DnsProxyService
         _routeDecision = routeDecision;
         _onDirectRouteCandidate = onDirectRouteCandidate;
         _onDirectDnsServerCandidate = onDirectDnsServerCandidate;
+        _getOriginalDnsServers = getOriginalDnsServers ?? (static () => []);
         _fakeIpPool = fakeIpPool;
         _linuxSocketMark = linuxSocketMark;
         _dohEndpoint = ResolveDohEndpoint(upstreamDns);
@@ -157,11 +160,10 @@ public class DnsProxyService
                 return;
             }
 
-            var requestedDnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
-                ? _upstreamDns
-                : requestPacket.Header.DestinationAddress.ToString();
             var domainDecision = _routeDecision?.TryDecideWithoutIp(domain);
-            var dnsServer = SelectRoutingDnsServer(_upstreamDns, requestedDnsServer, domainDecision);
+            var dnsServer = SelectRoutingDnsServer(
+                domainDecision,
+                requestPacket.Header.DestinationAddress);
             var useProxySideResolver = ShouldUseProxySideResolver(domainDecision);
 
             var dnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(
@@ -302,11 +304,10 @@ public class DnsProxyService
         string traceId,
         CancellationToken ct)
     {
-        var requestedDnsServer = ProtocolInspector.IsPrivateIp(requestPacket.Header.DestinationAddress)
-            ? _upstreamDns
-            : requestPacket.Header.DestinationAddress.ToString();
         var domainDecision = _routeDecision?.TryDecideWithoutIp(domain);
-        var dnsServer = SelectRoutingDnsServer(_upstreamDns, requestedDnsServer, domainDecision);
+        var dnsServer = SelectRoutingDnsServer(
+            domainDecision,
+            requestPacket.Header.DestinationAddress);
         var useProxySideResolver = ShouldUseProxySideResolver(domainDecision);
         var dnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(
             requestPacket.Payload,
@@ -376,7 +377,7 @@ public class DnsProxyService
                 {
                     var queryPayload = BuildAQueryPayload(domain);
                     var domainDecision = _routeDecision?.TryDecideWithoutIp(domain);
-                    var dnsServer = SelectRoutingDnsServer(_upstreamDns, _upstreamDns, domainDecision);
+                    var dnsServer = SelectRoutingDnsServer(domainDecision, destinationAddress: null);
                     var useProxySideResolver = ShouldUseProxySideResolver(domainDecision);
                     var realDnsResponse = await ResolveDnsThroughUpstreamWithSingleflightAsync(queryPayload, domain, dnsServer, useProxySideResolver, traceId, ct);
                     if (realDnsResponse != null && realDnsResponse.Length > 0)
@@ -755,9 +756,49 @@ public class DnsProxyService
 
     internal string SelectRoutingDnsServer(string domain, string requestedDnsServer) =>
         SelectRoutingDnsServer(
-            _upstreamDns,
-            requestedDnsServer,
-            _routeDecision?.TryDecideWithoutIp(domain));
+            _routeDecision?.TryDecideWithoutIp(domain),
+            IPAddress.TryParse(requestedDnsServer, out var requestedAddress)
+                ? requestedAddress
+                : null);
+
+    private string SelectRoutingDnsServer(
+        RouteDecision? domainDecision,
+        IPAddress? destinationAddress)
+    {
+        if (!ShouldUseProxySideResolver(domainDecision))
+        {
+            var originalDnsServer = SelectOriginalDnsServer(_getOriginalDnsServers());
+            if (originalDnsServer != null)
+            {
+                return originalDnsServer;
+            }
+        }
+
+        var requestedDnsServer = destinationAddress != null &&
+                                 !ProtocolInspector.IsPrivateIp(destinationAddress)
+            ? destinationAddress.ToString()
+            : _upstreamDns;
+        return SelectRoutingDnsServer(_upstreamDns, requestedDnsServer, domainDecision);
+    }
+
+    internal static string? SelectOriginalDnsServer(
+        IEnumerable<string> originalDnsServers)
+    {
+        foreach (var value in originalDnsServers)
+        {
+            if (!IPAddress.TryParse(value, out var address) ||
+                address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork ||
+                IPAddress.IsLoopback(address) ||
+                address.Equals(IPAddress.Any))
+            {
+                continue;
+            }
+
+            return address.ToString();
+        }
+
+        return null;
+    }
 
     internal static string SelectRoutingDnsServer(
         string upstreamDns,

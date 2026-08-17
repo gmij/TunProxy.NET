@@ -6,6 +6,16 @@ namespace TunProxy.Tests;
 public class WintunDeviceTests
 {
     [Fact]
+    public void BuildOriginalDnsServerSnapshot_FiltersInterceptorAndInvalidAddresses()
+    {
+        var servers = WintunDevice.BuildOriginalDnsServerSnapshot(
+            ["10.30.96.1", "10.255.0.2", "10.30.96.1", "127.0.0.1", "not-an-ip"],
+            "10.255.0.2");
+
+        Assert.Equal(["10.30.96.1"], servers);
+    }
+
+    [Fact]
     public void AllocateSendPacketWithRetry_RetriesPastLegacyCapAndEventuallySucceeds()
     {
         const int overflowCount = 300; // intentionally greater than historical bounded retry cap (200)

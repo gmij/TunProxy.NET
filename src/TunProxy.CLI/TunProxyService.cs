@@ -117,6 +117,7 @@ public class TunProxyService : IProxyService
             // arrives at the fake IP (never at the real IP directly).
             onDirectRouteCandidate: _fakeIpPool != null ? null : _directBypassRouteScheduler.ScheduleAsync,
             onDirectDnsServerCandidate: EnsureDirectDnsServerRouteAsync,
+            getOriginalDnsServers: GetOriginalDnsServerCandidates,
             probeDirectDomains: config.Route.ProbeDirectDomains,
             fakeIpPool: _fakeIpPool,
             linuxSocketMark: LinuxSocketMark.TunProxyBypassMark);
@@ -1252,6 +1253,18 @@ public class TunProxyService : IProxyService
             RouteDecision.Direct("DnsResolver", null, dnsServer),
             ct);
 
+    private IReadOnlyList<string> GetOriginalDnsServerCandidates()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return [];
+        }
+
+        return _tunDevice is WintunDevice device
+            ? device.GetOriginalDnsServers()
+            : [];
+    }
+
     private async Task EnsureStartupDirectDnsRoutesAsync(CancellationToken ct)
     {
         var servers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -1259,6 +1272,11 @@ public class TunProxyService : IProxyService
             DnsProxyService.DefaultDomesticDns,
             _config.Tun.DnsServer
         };
+
+        foreach (var server in GetOriginalDnsServerCandidates())
+        {
+            servers.Add(server);
+        }
 
         foreach (var server in servers)
         {

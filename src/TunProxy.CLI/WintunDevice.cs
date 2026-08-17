@@ -37,6 +37,11 @@ public sealed class WintunDevice : ITunDevice
     private readonly Dictionary<string, (bool IsDhcp, string[] Addresses)> _savedAdapterDns = new();
     private bool _disposed;
 
+    public IReadOnlyList<string> GetOriginalDnsServers() =>
+        BuildOriginalDnsServerSnapshot(
+            _savedAdapterDns.Values.SelectMany(static state => state.Addresses),
+            _dnsInterceptorIp);
+
     public WintunDevice(TunConfig config)
     {
         _dnsInterceptorIp = DeriveDnsInterceptorIp(config.IpAddress);
@@ -193,6 +198,28 @@ public sealed class WintunDevice : ITunDevice
         var bytes = tunIp.GetAddressBytes();
         bytes[3] = bytes[3] == 254 ? (byte)1 : (byte)(bytes[3] + 1);
         return new IPAddress(bytes).ToString();
+    }
+
+    internal static IReadOnlyList<string> BuildOriginalDnsServerSnapshot(
+        IEnumerable<string> addresses,
+        string dnsInterceptorIp)
+    {
+        var servers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var value in addresses)
+        {
+            if (!IPAddress.TryParse(value, out var address) ||
+                address.AddressFamily != AddressFamily.InterNetwork ||
+                IPAddress.IsLoopback(address) ||
+                address.Equals(IPAddress.Any) ||
+                address.ToString().Equals(dnsInterceptorIp, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            servers.Add(address.ToString());
+        }
+
+        return servers.ToList();
     }
 
     private static void RunNetsh(string arguments)

@@ -42,7 +42,7 @@ internal sealed class DirectBypassRouteScheduler
             }
         }, ct);
 
-    public async Task EnsureAsync(
+    public async Task<bool> EnsureAsync(
         IPAddress destinationAddress,
         RouteDecision decision,
         CancellationToken ct)
@@ -58,10 +58,10 @@ internal sealed class DirectBypassRouteScheduler
                 _tunIpAddress,
                 _routeService?.GetOriginalDefaultGateway()))
         {
-            return;
+            return true;
         }
 
-        await _routes.EnsureRouteAsync(destIp, decision, ct);
+        return await _routes.EnsureRouteAsync(destIp, decision, ct);
     }
 
     internal static bool ShouldEnsureDirectBypassRoute(

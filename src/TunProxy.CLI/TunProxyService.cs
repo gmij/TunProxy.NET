@@ -48,7 +48,7 @@ public class TunProxyService : IProxyService
     private readonly TunRuntimeStateStore _runtimeStateStore = new();
     private readonly FakeIpPool? _fakeIpPool;
     private readonly DomainFailureTracker _domainFailureTracker;
-    private readonly UdpDirectRelay _udpDirectRelay = new();
+    private UdpDirectRelay _udpDirectRelay = new();
     private readonly TunMtuResolver _tunMtuResolver = new();
     private string? _lastTcpConnectFailure;
     private DateTime? _lastTcpConnectFailureUtc;
@@ -216,6 +216,16 @@ public class TunProxyService : IProxyService
 
         try
         {
+            // The service instance is reused by the in-process restart endpoint. Never carry a
+            // gateway selected during an earlier network state into the next run.
+            _directBypassRoutes.Reset();
+            _proxyBypassRoutes.Clear();
+            _udpDirectRelay = new UdpDirectRelay();
+            _outboundBindAddress = null;
+            _startupIssue = null;
+            _lastTcpConnectFailure = null;
+            _lastTcpConnectFailureUtc = null;
+            _routeService?.RefreshRouteState();
             if (_ruleResources.NeedsInitialization())
             {
                 Log.Information("[TUN ] Loading existing GFWList/GeoIP resources before applying TUN routes.");
@@ -300,6 +310,7 @@ public class TunProxyService : IProxyService
             StartPacketWorkers(_cts.Token);
             StartRuntimeCleanup(_cts.Token);
             StartMetricsLogger(_cts.Token);
+            StartRouteStateMonitor(_cts.Token);
 
             Log.Information("TunProxy is running. Press Ctrl+C to stop.");
             await Task.Run(() => _packetPipeline!.ReadPacketsAsync(_tunDevice, _proxyReady, _cts.Token), _cts.Token);
@@ -326,6 +337,13 @@ public class TunProxyService : IProxyService
             _connectionManager?.Dispose();
             _directConnectionManager?.Dispose();
             _udpDirectRelay.Dispose();
+            foreach (var (key, state) in _relayStates)
+            {
+                if (_relayStates.TryRemove(key, out _))
+                {
+                    state.Dispose();
+                }
+            }
 
             _routeService?.RemoveDefaultRoute();
             _routeService?.ClearAllBypassRoutes();
@@ -417,8 +435,23 @@ public class TunProxyService : IProxyService
 
                 if (!TunPacketDecisions.ShouldRejectUdpPacket(udpDecision))
                 {
+                    var directRouteReady = await _directBypassRouteScheduler.EnsureAsync(
+                        udpDecision.EvaluatedIp ?? udpDestIp,
+                        udpDecision,
+                        ct);
+                    var directBindAddress = _routeService?.GetDirectOutboundAddress();
+                    if (!directRouteReady || (OperatingSystem.IsWindows() && directBindAddress == null))
+                    {
+                        Log.Warning(
+                            "[UDP ] Rejecting DIRECT packet to {DestIP}:{Port}: no safe physical egress is available.",
+                            udpDestIp,
+                            packet.DestinationPort);
+                        TunWriter.WriteIcmpPortUnreachable(device, packet);
+                        return;
+                    }
+
                     // Direct-routed UDP: relay through the physical interface instead of
-                    // writing a kernel route entry (which would drop the first datagram).
+                    // allowing the relay socket to follow the TUN default route.
                     _metrics.IncrementDirectRoutedPackets();
                     Log.Debug("[UDP ] {DestIP}:{Port}  DIRECT  ({Reason}); relaying via application layer",
                         udpDestIp,
@@ -427,7 +460,7 @@ public class TunProxyService : IProxyService
                     await _udpDirectRelay.ForwardAsync(
                         device,
                         packet,
-                        _outboundBindAddress,
+                        directBindAddress,
                         LinuxSocketMark.TunProxyBypassMark,
                         ct);
                     return;
@@ -629,6 +662,33 @@ public class TunProxyService : IProxyService
                             effectiveDestIp,
                             ct);
                     }
+                    if (!finalDecision.ShouldProxy)
+                    {
+                        var routeIp = finalDecision.EvaluatedIp ?? packet.Header.DestinationAddress;
+                        if (TunConnectionDecisions.CanEnsureDirectBypassRoute(routeIp))
+                        {
+                            var directRouteReady = await _directBypassRouteScheduler.EnsureAsync(
+                                routeIp,
+                                finalDecision,
+                                ct);
+                            if (directRouteReady)
+                            {
+                                state.DirectBypassIp = routeIp.ToString();
+                            }
+                            else
+                            {
+                                Log.Warning(
+                                    "[ROUTE] No safe DIRECT egress for {Host} ({IP}); using the configured proxy until the physical route is ready.",
+                                    target.ConnectHost,
+                                    routeIp);
+                                finalDecision = RouteDecision.Proxy(
+                                    "DirectEgressUnavailable",
+                                    target.DomainHint,
+                                    routeIp);
+                            }
+                        }
+                    }
+
                     var dnsStore = _dnsStore;
                     if (target.HasDomainHint && dnsStore != null)
                     {
@@ -669,12 +729,6 @@ public class TunProxyService : IProxyService
                     if (!shouldProxy)
                     {
                         _metrics.IncrementDirectRoutedPackets();
-                        var routeIp = finalDecision.EvaluatedIp ?? packet.Header.DestinationAddress;
-                        if (TunConnectionDecisions.CanEnsureDirectBypassRoute(routeIp))
-                        {
-                            await _directBypassRouteScheduler.EnsureAsync(routeIp, finalDecision, ct);
-                            state.DirectBypassIp = routeIp.ToString();
-                        }
                     }
 
                     var upstreamHost = TunConnectionDecisions.SelectUpstreamHost(
@@ -1247,8 +1301,8 @@ public class TunProxyService : IProxyService
             connectionTimeout: connectionTimeout,
             linuxSocketMark: linuxSocketMark);
 
-    private Task EnsureDirectDnsServerRouteAsync(IPAddress dnsServer, CancellationToken ct) =>
-        _directBypassRouteScheduler.EnsureAsync(
+    private async Task EnsureDirectDnsServerRouteAsync(IPAddress dnsServer, CancellationToken ct) =>
+        await _directBypassRouteScheduler.EnsureAsync(
             dnsServer,
             RouteDecision.Direct("DnsResolver", null, dnsServer),
             ct);
@@ -1263,6 +1317,20 @@ public class TunProxyService : IProxyService
         return _tunDevice is WintunDevice device
             ? device.GetOriginalDnsServers()
             : [];
+    }
+
+    private void StartRouteStateMonitor(CancellationToken ct)
+    {
+        if (_routeService == null || !OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        _ = PeriodicBackgroundTask.Start(TimeSpan.FromSeconds(2), _ =>
+        {
+            _routeService.RefreshRouteState();
+            return Task.CompletedTask;
+        }, ct);
     }
 
     private async Task EnsureStartupDirectDnsRoutesAsync(CancellationToken ct)

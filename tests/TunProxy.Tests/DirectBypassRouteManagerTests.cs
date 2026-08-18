@@ -55,16 +55,48 @@ public class DirectBypassRouteManagerTests
         Assert.Contains("203.0.113.11", routes.RemovedTracked);
     }
 
+    [Fact]
+    public async Task EnsureRouteAsync_ReturnsFalseAndAllowsRetryWhenRouteCannotBeVerified()
+    {
+        var routes = new FakeRouteService { AddResult = false };
+        var manager = new DirectBypassRouteManager(routes);
+        var decision = RouteDecision.Direct("Geo:CN", null, IPAddress.Parse("203.0.113.10"));
+
+        var first = await manager.EnsureRouteAsync("203.0.113.10", decision, CancellationToken.None);
+        routes.AddResult = true;
+        var second = await manager.EnsureRouteAsync("203.0.113.10", decision, CancellationToken.None);
+
+        Assert.False(first);
+        Assert.True(second);
+        Assert.Equal(2, routes.Added.Count);
+    }
+
+    [Fact]
+    public async Task Reset_ForcesSuccessfulRouteToBeCreatedAgainAfterInProcessRestart()
+    {
+        var routes = new FakeRouteService();
+        var manager = new DirectBypassRouteManager(routes);
+        var decision = RouteDecision.Direct("Geo:CN", null, IPAddress.Parse("203.0.113.10"));
+
+        await manager.EnsureRouteAsync("203.0.113.10", decision, CancellationToken.None);
+        manager.Reset();
+        await manager.EnsureRouteAsync("203.0.113.10", decision, CancellationToken.None);
+
+        Assert.Equal(2, routes.Added.Count);
+    }
+
     private sealed class FakeRouteService : IRouteService
     {
         public List<string> Added { get; } = new();
 
         public List<string> RemovedTracked { get; } = new();
 
+        public bool AddResult { get; set; } = true;
+
         public bool AddBypassRoute(string ip, int prefixLength = 32)
         {
             Added.Add(ip);
-            return true;
+            return AddResult;
         }
 
         public bool RemoveBypassRoute(string ip) => true;

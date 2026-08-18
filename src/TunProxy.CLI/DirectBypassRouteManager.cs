@@ -34,11 +34,13 @@ internal sealed class DirectBypassRouteManager
     public List<string> GetSnapshot() =>
         _routes.Keys.Order(StringComparer.OrdinalIgnoreCase).ToList();
 
-    public Task EnsureRouteAsync(string destIP, RouteDecision decision, CancellationToken ct)
+    public void Reset() => _routes.Clear();
+
+    public Task<bool> EnsureRouteAsync(string destIP, RouteDecision decision, CancellationToken ct)
     {
         if (_routeService == null)
         {
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
 
         ct.ThrowIfCancellationRequested();
@@ -97,7 +99,7 @@ internal sealed class DirectBypassRouteManager
         }
     }
 
-    private async Task AwaitRouteAsync(string destIP, DirectBypassRouteEntry entry, CancellationToken ct)
+    private async Task<bool> AwaitRouteAsync(string destIP, DirectBypassRouteEntry entry, CancellationToken ct)
     {
         try
         {
@@ -106,10 +108,11 @@ internal sealed class DirectBypassRouteManager
             if (!ok)
             {
                 TryRemoveEntry(destIP, entry);
-                return;
+                return false;
             }
 
             TrimToLimit(destIP);
+            return true;
         }
         catch
         {

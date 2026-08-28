@@ -95,6 +95,20 @@ public class WebConsoleAssetTests
     }
 
     [Fact]
+    public void StatusPage_UsesResponsiveDashboardLayout()
+    {
+        var script = File.ReadAllText(Path.Combine(SourceRoot, "status-page.js"));
+        var css = File.ReadAllText(Path.Combine(SourceRoot, "console.css"));
+
+        Assert.Contains("class=\"tp-status-overview-grid\"", script);
+        Assert.Contains("tp-status-content-grid", script);
+        Assert.Contains("tp-chart-legend", script);
+        Assert.Contains("grid-template-columns: repeat(3, minmax(0, 1fr));", css);
+        Assert.Contains(".tp-diagnostics {", css);
+        Assert.Contains("grid-template-columns: repeat(2, minmax(0, 1fr));", css);
+    }
+
+    [Fact]
     public void Navigation_DefinesClientSidePageMetadata()
     {
         var script = File.ReadAllText(Path.Combine(SourceRoot, "nav.js"));

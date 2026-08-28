@@ -23,7 +23,7 @@ internal sealed class ProxyBypassRouteConfigurator
         foreach (var address in addresses)
         {
             var ipAddress = address.ToString();
-            var ok = routeService.AddBypassRoute(ipAddress);
+            var ok = routeService.AddProxyBypassRoute(ipAddress);
             if (ok)
             {
                 added.Add(ipAddress);

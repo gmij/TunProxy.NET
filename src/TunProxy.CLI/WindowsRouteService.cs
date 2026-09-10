@@ -181,10 +181,29 @@ public class WindowsRouteService : IRouteService
             IPAddress.TryParse(ipAddress, out var bypassAddress) &&
             bypassAddress.AddressFamily == AddressFamily.InterNetwork)
         {
+            if (IsLocalInterfaceAddress(bypassAddress))
+            {
+                Log.Information(
+                    "[ROUTE] Bypass route already targets a local interface address; preserving the system route: {IP}/{Prefix}",
+                    ipAddress,
+                    prefixLength);
+                return true;
+            }
+
             var onLinkCandidate = FindOnLinkRouteCandidate(bypassAddress, allowOverlayOnLink);
 
             if (TryFindExistingSpecificRoute(ipAddress, out var existingRoute))
             {
+                if (IsLocalHostRoute(existingRoute, bypassAddress))
+                {
+                    Log.Information(
+                        "[ROUTE] Bypass route is covered by a local host route; preserving it: {IP}/{Prefix} on {Interface}",
+                        ipAddress,
+                        prefixLength,
+                        existingRoute.Interface);
+                    return true;
+                }
+
                 var existingRouteIsAllowed = allowOverlayOnLink || IsSafeDirectRoute(existingRoute);
                 if (existingRouteIsAllowed &&
                     (onLinkCandidate == null || RouteUsesLocalAddress(existingRoute, onLinkCandidate.LocalAddress)))
@@ -699,6 +718,48 @@ public class WindowsRouteService : IRouteService
     {
         return route.Interface.Equals(localAddress.ToString(), StringComparison.OrdinalIgnoreCase);
     }
+
+    internal static bool IsLocalHostRoute(RouteEntry route, IPAddress address)
+    {
+        return route.Network.Equals(address.ToString(), StringComparison.OrdinalIgnoreCase) &&
+               GetPrefixLength(route.Netmask) == 32 &&
+               IsOnLinkGateway(route.Gateway) &&
+               RouteUsesLocalAddress(route, address);
+    }
+
+    private static bool IsLocalInterfaceAddress(IPAddress address)
+    {
+        try
+        {
+            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                try
+                {
+                    if (MatchesLocalInterfaceAddress(
+                            address,
+                            networkInterface.GetIPProperties().UnicastAddresses.Select(item => item.Address)))
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // An interface can disappear while its properties are being enumerated.
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("[ROUTE] Failed to inspect local interface addresses: {Message}", ex.Message);
+        }
+
+        return false;
+    }
+
+    internal static bool MatchesLocalInterfaceAddress(
+        IPAddress destination,
+        IEnumerable<IPAddress> localAddresses) =>
+        localAddresses.Any(address => address.Equals(destination));
 
     private bool RouteExists(string ipAddress, string mask = "255.255.255.255")
     {

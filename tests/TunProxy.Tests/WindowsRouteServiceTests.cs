@@ -128,6 +128,58 @@ public class WindowsRouteServiceTests
     }
 
     [Fact]
+    public void IsLocalHostRoute_RecognizesZeroTierLocalAddressRoute()
+    {
+        var route = new RouteEntry
+        {
+            Network = "10.144.20.201",
+            Netmask = "255.255.255.255",
+            Gateway = "On-link",
+            Interface = "10.144.20.201",
+            Metric = "291"
+        };
+
+        Assert.True(WindowsRouteService.IsLocalHostRoute(
+            route,
+            IPAddress.Parse("10.144.20.201")));
+    }
+
+    [Fact]
+    public void IsLocalHostRoute_RejectsZeroTierPeerRoute()
+    {
+        var route = new RouteEntry
+        {
+            Network = "10.144.20.200",
+            Netmask = "255.255.255.255",
+            Gateway = "On-link",
+            Interface = "10.144.20.201",
+            Metric = "291"
+        };
+
+        Assert.False(WindowsRouteService.IsLocalHostRoute(
+            route,
+            IPAddress.Parse("10.144.20.200")));
+    }
+
+    [Fact]
+    public void MatchesLocalInterfaceAddress_MatchesOnlyAssignedAddress()
+    {
+        var localAddresses = new[]
+        {
+            IPAddress.Parse("10.30.96.253"),
+            IPAddress.Parse("10.144.20.201"),
+            IPAddress.Parse("10.255.0.1")
+        };
+
+        Assert.True(WindowsRouteService.MatchesLocalInterfaceAddress(
+            IPAddress.Parse("10.144.20.201"),
+            localAddresses));
+        Assert.False(WindowsRouteService.MatchesLocalInterfaceAddress(
+            IPAddress.Parse("10.144.20.200"),
+            localAddresses));
+    }
+
+    [Fact]
     public void GetPrefixLength_ReturnsMaskBits()
     {
         Assert.Equal(16, WindowsRouteService.GetPrefixLength("255.255.0.0"));

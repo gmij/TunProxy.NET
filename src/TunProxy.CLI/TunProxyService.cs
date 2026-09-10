@@ -21,6 +21,7 @@ namespace TunProxy.CLI;
 public class TunProxyService : IProxyService
 {
     private readonly AppConfig _config;
+    private NetworkStateMonitor? _networkMonitor;
     private ITunDevice? _tunDevice;
     private TcpConnectionManager? _connectionManager;
     private TcpConnectionManager? _directConnectionManager;
@@ -327,6 +328,9 @@ public class TunProxyService : IProxyService
         try
         {
             _cts?.Cancel();
+            var monitor = Interlocked.Exchange(ref _networkMonitor, null);
+            if (monitor != null)
+                await monitor.DisposeAsync();
             _packetPipeline?.Complete();
             if (_packetPipeline != null)
             {
@@ -439,7 +443,8 @@ public class TunProxyService : IProxyService
                         udpDecision.EvaluatedIp ?? udpDestIp,
                         udpDecision,
                         ct);
-                    var directBindAddress = _routeService?.GetDirectOutboundAddress();
+                    var directBindAddress = _routeService?.GetLocalAddressForDestination(udpDecision.EvaluatedIp ?? udpDestIp)
+                        ?? _routeService?.GetDirectOutboundAddress();
                     if (!directRouteReady || (OperatingSystem.IsWindows() && directBindAddress == null))
                     {
                         Log.Warning(
@@ -462,7 +467,8 @@ public class TunProxyService : IProxyService
                         packet,
                         directBindAddress,
                         LinuxSocketMark.TunProxyBypassMark,
-                        ct);
+                        ct,
+                        _routeService?.NetworkVersion ?? 0);
                     return;
                 }
 
@@ -750,7 +756,9 @@ public class TunProxyService : IProxyService
                         upstreamHost,
                         connKey);
 
-                    conn = connManager.GetOrCreateConnection(packet);
+                    var directSource = !usingProxy && IPAddress.TryParse(upstreamHost, out var directTarget)
+                        ? _routeService?.GetLocalAddressForDestination(directTarget) : null;
+                    conn = connManager.GetOrCreateConnection(packet, directSource);
                     if (conn == null)
                     {
                         HandleConnectionFail(connKey, device, packet);
@@ -1326,10 +1334,41 @@ public class TunProxyService : IProxyService
             return;
         }
 
-        _ = PeriodicBackgroundTask.Start(TimeSpan.FromSeconds(2), _ =>
+        long appliedVersion = -1;
+        _networkMonitor = new NetworkStateMonitor(async token =>
         {
             _routeService.RefreshRouteState();
-            return Task.CompletedTask;
+            var version = _routeService.NetworkVersion;
+            if (version == appliedVersion)
+                return;
+            token.ThrowIfCancellationRequested();
+            if (_config.Route.AutoAddDefaultRoute)
+            {
+                var addresses = _proxyBypassRouteConfigurator.ResolveProxyAddresses(_config.Proxy.Host);
+                if (addresses.Count == 0 && !IPAddress.TryParse(_config.Proxy.Host, out _))
+                    throw new InvalidOperationException("Cannot resolve upstream proxy during network refresh.");
+                foreach (var address in addresses)
+                {
+                    if (!_routeService.AddProxyBypassRoute(address.ToString()))
+                        throw new InvalidOperationException($"Cannot restore proxy route for {address}.");
+                }
+                _proxyBypassRoutes.Clear();
+                foreach (var address in addresses) _proxyBypassRoutes.Add(address.ToString());
+            }
+            var proxyAddresses = _proxyBypassRouteConfigurator.ResolveProxyAddresses(_config.Proxy.Host);
+            var bind = proxyAddresses.Select(address => _routeService.GetLocalAddressForDestination(address))
+                .FirstOrDefault(address => address != null);
+            if (proxyAddresses.Count > 0 && bind == null)
+                throw new InvalidOperationException("No usable upstream source address after network change.");
+            if (_config.Route.AutoAddDefaultRoute && !_routeService.AddDefaultRoute())
+                throw new InvalidOperationException("Cannot restore TUN default route.");
+            _outboundBindAddress = bind;
+            _connectionManager?.UpdateBindAddress(bind);
+            if (OperatingSystem.IsWindows() && _tunDevice is WintunDevice windowsDevice)
+                windowsDevice.RefreshDnsRouting();
+            await EnsureStartupDirectDnsRoutesAsync(token);
+            appliedVersion = version;
+            Log.Information("[ROUTE] Applied network version {Version}; upstream source {Address}.", version, bind);
         }, ct);
     }
 

@@ -21,6 +21,7 @@ namespace TunProxy.CLI;
 internal sealed class UdpDirectRelay : IDisposable
 {
     private readonly ConcurrentDictionary<string, UdpRelaySession> _sessions = new();
+    private readonly object _sessionMutation = new();
     private bool _disposed;
 
     /// <summary>
@@ -39,7 +40,8 @@ internal sealed class UdpDirectRelay : IDisposable
         IPPacket packet,
         IPAddress? bindAddress,
         int? linuxSocketMark,
-        CancellationToken ct)
+        CancellationToken ct,
+        long networkVersion = 0)
     {
         if (_disposed)
         {
@@ -50,11 +52,19 @@ internal sealed class UdpDirectRelay : IDisposable
         var dstIp = packet.Header.DestinationAddress;
         var srcPort = packet.SourcePort!.Value;
         var dstPort = packet.DestinationPort!.Value;
-        var key = MakeKey(srcIp, srcPort, dstIp, dstPort);
-
-        var session = _sessions.GetOrAdd(
-            key,
-            _ => CreateSession(key, device, srcIp, srcPort, dstIp, dstPort, bindAddress, linuxSocketMark, ct));
+        var prefix = MakeKey(srcIp, srcPort, dstIp, dstPort) + "@";
+        var key = prefix + $"{bindAddress}/{networkVersion}";
+        UdpRelaySession session;
+        lock (_sessionMutation)
+        {
+            if (_disposed) return Task.CompletedTask;
+            foreach (var item in _sessions.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal) && item.Key != key))
+            {
+                if (_sessions.TryRemove(item.Key, out var stale)) stale.Dispose();
+            }
+            session = _sessions.GetOrAdd(key,
+                _ => CreateSession(key, device, srcIp, srcPort, dstIp, dstPort, bindAddress, linuxSocketMark, ct));
+        }
 
         session.Touch();
         return session.SendAsync(packet.Payload, ct);
@@ -83,18 +93,21 @@ internal sealed class UdpDirectRelay : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        lock (_sessionMutation)
         {
-            return;
-        }
+            if (_disposed)
+            {
+                return;
+            }
 
-        _disposed = true;
-        foreach (var session in _sessions.Values)
-        {
-            session.Dispose();
-        }
+            _disposed = true;
+            foreach (var session in _sessions.Values)
+            {
+                session.Dispose();
+            }
 
-        _sessions.Clear();
+            _sessions.Clear();
+        }
     }
 
     // ── private ──────────────────────────────────────────────────────────────
@@ -174,7 +187,7 @@ internal sealed class UdpDirectRelay : IDisposable
         }
         finally
         {
-            _sessions.TryRemove(key, out _);
+            ((ICollection<KeyValuePair<string, UdpRelaySession>>)_sessions).Remove(new(key, session));
             session.Dispose();
         }
     }

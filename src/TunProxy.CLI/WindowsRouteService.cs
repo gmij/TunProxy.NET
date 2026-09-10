@@ -20,11 +20,28 @@ public class WindowsRouteService : IRouteService
     private readonly Dictionary<string, TrackedBypassRoute> _addedBypassRoutes = new(StringComparer.OrdinalIgnoreCase);
     private DirectEgressRoute? _directEgress;
     private bool _directEgressInitialized;
+    private readonly Func<List<RouteEntry>>? _readRoutes;
+    private readonly Func<IReadOnlyList<OnLinkRouteCandidate>>? _readInterfaces;
+    private readonly Func<string, string, (int ExitCode, string Output)>? _runCommand;
+    private string? _networkSnapshot;
+    private long _networkVersion;
+    private readonly Dictionary<string, TrackedBypassRoute> _pendingRoutes = new(StringComparer.OrdinalIgnoreCase);
+    public long NetworkVersion => Interlocked.Read(ref _networkVersion);
 
     public WindowsRouteService(string tunIpAddress = "10.0.0.1", string tunSubnetMask = "255.255.255.0")
     {
         _tunIpAddress = tunIpAddress;
         _tunSubnetMask = tunSubnetMask;
+    }
+
+    internal WindowsRouteService(Func<List<RouteEntry>> readRoutes,
+        Func<IReadOnlyList<OnLinkRouteCandidate>> readInterfaces,
+        Func<string, string, (int ExitCode, string Output)> runCommand)
+        : this("10.255.0.1")
+    {
+        _readRoutes = readRoutes;
+        _readInterfaces = readInterfaces;
+        _runCommand = runCommand;
     }
 
     private string GetTunInterfaceName()
@@ -105,8 +122,33 @@ public class WindowsRouteService : IRouteService
 
     public void RefreshRouteState()
     {
+        lock (_routeMutationLock)
+        {
+            var routes = GetRouteTable();
+            if (routes.Count == 0)
+                throw new InvalidOperationException("Cannot refresh network state without a route table.");
+            var interfaces = GetRouteInterfaceCandidates();
+            var snapshot = BuildNetworkSnapshot(routes.Where(route =>
+                !_addedBypassRoutes.Any(item => MatchesOwnedRoute(route, item.Key, item.Value))), interfaces)
+                + (_readInterfaces != null ? "" : string.Join("\n", NetworkInterface.GetAllNetworkInterfaces()
+                    .Where(item => item.OperationalStatus == OperationalStatus.Up && !IsTunInterface(item))
+                    .SelectMany(item => item.GetIPProperties().DnsAddresses.Select(address => $"DNS:{item.Id}:{address}"))
+                    .Order(StringComparer.Ordinal)));
+            var changed = snapshot != _networkSnapshot || _addedBypassRoutes.Any(item =>
+                !routes.Any(route => MatchesOwnedRoute(route, item.Key, item.Value)));
+            RefreshDirectEgress(routes);
+            if (!changed && _pendingRoutes.Count == 0)
+                return;
+            _networkSnapshot = snapshot;
+            Interlocked.Increment(ref _networkVersion);
+            RebuildTrackedBypassRoutes();
+        }
+    }
+
+    private void RefreshDirectEgress(List<RouteEntry> routes)
+    {
         var refreshed = SelectDirectEgressRoute(
-            GetRouteTable(),
+            routes,
             GetDirectEgressInterfaceCandidates(),
             _tunIpAddress);
         DirectEgressRoute? previous;
@@ -137,8 +179,12 @@ public class WindowsRouteService : IRouteService
                 refreshed.TotalMetric);
         }
 
-        RebuildTrackedBypassRoutes();
     }
+
+    internal static string BuildNetworkSnapshot(IEnumerable<RouteEntry> routes, IEnumerable<OnLinkRouteCandidate> interfaces) =>
+        string.Join("\n", routes.Select(route => $"R:{route.Network}/{route.Netmask}:{route.Gateway}:{route.Interface}:{route.Metric}")
+            .Concat(interfaces.Select(item => $"I:{item.InterfaceIndex}:{item.LocalAddress}/{item.Netmask}"))
+            .Order(StringComparer.Ordinal));
 
     public IPAddress? GetLocalAddressForDestination(IPAddress destination)
     {
@@ -147,7 +193,9 @@ public class WindowsRouteService : IRouteService
             return null;
         }
 
-        var address = FindLocalAddressForDestination(GetRouteTable(), destination, _tunIpAddress);
+        var candidates = GetRouteInterfaceCandidates();
+        var address = FindLocalAddressForDestination(GetRouteTable()
+            .Where(route => IsRouteOnUsableInterface(route, candidates, _tunIpAddress)).ToList(), destination, _tunIpAddress);
         if (address != null)
         {
             Log.Information(
@@ -181,13 +229,37 @@ public class WindowsRouteService : IRouteService
             IPAddress.TryParse(ipAddress, out var bypassAddress) &&
             bypassAddress.AddressFamily == AddressFamily.InterNetwork)
         {
-            var onLinkCandidate = FindOnLinkRouteCandidate(bypassAddress, allowOverlayOnLink);
+            if (IsLocalInterfaceAddress(bypassAddress))
+            {
+                _addedBypassRoutes.Remove(ipAddress);
+                Log.Information(
+                    "[ROUTE] Bypass route already targets a local interface address; preserving the system route: {IP}/{Prefix}",
+                    ipAddress,
+                    prefixLength);
+                return true;
+            }
+
+            var interfaceCandidates = GetRouteInterfaceCandidates();
+            var onLinkCandidate = SelectBestOnLinkRouteCandidate(
+                interfaceCandidates,
+                bypassAddress,
+                _tunIpAddress,
+                allowOverlayOnLink);
 
             if (TryFindExistingSpecificRoute(ipAddress, out var existingRoute))
             {
-                var existingRouteIsAllowed = allowOverlayOnLink || IsSafeDirectRoute(existingRoute);
-                if (existingRouteIsAllowed &&
-                    (onLinkCandidate == null || RouteUsesLocalAddress(existingRoute, onLinkCandidate.LocalAddress)))
+                if (IsLocalHostRoute(existingRoute, bypassAddress))
+                {
+                    _addedBypassRoutes.Remove(ipAddress);
+                    Log.Information(
+                        "[ROUTE] Bypass route is covered by a local host route; preserving it: {IP}/{Prefix} on {Interface}",
+                        ipAddress,
+                        prefixLength,
+                        existingRoute.Interface);
+                    return true;
+                }
+
+                if (IsRouteOnUsableInterface(existingRoute, interfaceCandidates, _tunIpAddress))
                 {
                     Log.Information(
                         "[ROUTE] Bypass route already covered by existing route: {IP}/{Prefix} via {Gateway} on {Interface}",
@@ -207,7 +279,9 @@ public class WindowsRouteService : IRouteService
                 if (existingRoute.Network.Equals(ipAddress, StringComparison.OrdinalIgnoreCase) &&
                     GetPrefixLength(existingRoute.Netmask) == prefixLength)
                 {
-                    RemoveBypassRoute(ipAddress);
+                    // Never replace a system/user host route merely because its interface disappeared.
+                    if (!_addedBypassRoutes.ContainsKey(ipAddress) || !RemoveBypassRoute(ipAddress))
+                        return false;
                 }
             }
 
@@ -247,8 +321,8 @@ public class WindowsRouteService : IRouteService
         var netshCommand =
             $"interface ipv4 add route {ipAddress}/{prefixLength} interface={egress.InterfaceIndex} nexthop={egress.Gateway} store=active";
         var (exitCode, output) = ExecuteCommandWithOutput("netsh", netshCommand);
-        if ((exitCode == 0 || IsAlreadyExistsOutput(output)) &&
-            RouteExistsOnInterface(ipAddress, mask, egress.LocalAddress))
+        if (exitCode == 0 &&
+            RouteExistsOnInterface(ipAddress, mask, egress.LocalAddress, egress.Gateway))
         {
             Log.Information(
                 "[ROUTE] Bypass route ready: {IP}/{Prefix} via {Gateway} on {Interface} (index {InterfaceIndex}).",
@@ -257,15 +331,15 @@ public class WindowsRouteService : IRouteService
                 egress.Gateway,
                 egress.InterfaceName,
                 egress.InterfaceIndex);
-            _addedBypassRoutes[ipAddress] = new TrackedBypassRoute(prefixLength, allowOverlayOnLink);
+            _addedBypassRoutes[ipAddress] = new TrackedBypassRoute(prefixLength, allowOverlayOnLink, egress.InterfaceIndex, egress.LocalAddress.ToString(), egress.Gateway);
             return true;
         }
 
         var routeCommand =
             $"add {ipAddress} mask {mask} {egress.Gateway} metric 5 IF {egress.InterfaceIndex}";
         var (routeExitCode, routeOutput) = ExecuteCommandWithOutput("route", routeCommand);
-        if ((routeExitCode == 0 || IsAlreadyExistsOutput(routeOutput)) &&
-            RouteExistsOnInterface(ipAddress, mask, egress.LocalAddress))
+        if (routeExitCode == 0 &&
+            RouteExistsOnInterface(ipAddress, mask, egress.LocalAddress, egress.Gateway))
         {
             Log.Information(
                 "[ROUTE] Bypass route ready: {IP}/{Prefix} via {Gateway} on interface index {InterfaceIndex}.",
@@ -273,7 +347,7 @@ public class WindowsRouteService : IRouteService
                 prefixLength,
                 egress.Gateway,
                 egress.InterfaceIndex);
-            _addedBypassRoutes[ipAddress] = new TrackedBypassRoute(prefixLength, allowOverlayOnLink);
+            _addedBypassRoutes[ipAddress] = new TrackedBypassRoute(prefixLength, allowOverlayOnLink, egress.InterfaceIndex, egress.LocalAddress.ToString(), egress.Gateway);
             return true;
         }
 
@@ -304,7 +378,7 @@ public class WindowsRouteService : IRouteService
         var mask = GetMaskForPrefixLength(prefixLength);
         var netshCommand = $"interface ipv4 add route {ipAddress}/{prefixLength} \"{candidate.InterfaceName}\" 0.0.0.0 store=active";
         var (exitCode, output) = ExecuteCommandWithOutput("netsh", netshCommand);
-        if ((exitCode == 0 || IsAlreadyExistsOutput(output)) &&
+        if (exitCode == 0 &&
             OnLinkRouteExists(ipAddress, mask, candidate.LocalAddress))
         {
             Log.Information(
@@ -313,13 +387,13 @@ public class WindowsRouteService : IRouteService
                 prefixLength,
                 candidate.InterfaceName,
                 candidate.LocalAddress);
-            _addedBypassRoutes[ipAddress] = new TrackedBypassRoute(prefixLength, allowOverlayOnLink);
+            _addedBypassRoutes[ipAddress] = new TrackedBypassRoute(prefixLength, allowOverlayOnLink, candidate.InterfaceIndex, candidate.LocalAddress.ToString(), "0.0.0.0");
             return true;
         }
 
         var routeCommand = $"add {ipAddress} mask {mask} 0.0.0.0 IF {candidate.InterfaceIndex}";
         var (routeExitCode, routeOutput) = ExecuteCommandWithOutput("route", routeCommand);
-        if ((routeExitCode == 0 || IsAlreadyExistsOutput(routeOutput)) &&
+        if (routeExitCode == 0 &&
             OnLinkRouteExists(ipAddress, mask, candidate.LocalAddress))
         {
             Log.Information(
@@ -328,7 +402,7 @@ public class WindowsRouteService : IRouteService
                 prefixLength,
                 candidate.InterfaceIndex,
                 candidate.LocalAddress);
-            _addedBypassRoutes[ipAddress] = new TrackedBypassRoute(prefixLength, allowOverlayOnLink);
+            _addedBypassRoutes[ipAddress] = new TrackedBypassRoute(prefixLength, allowOverlayOnLink, candidate.InterfaceIndex, candidate.LocalAddress.ToString(), "0.0.0.0");
             return true;
         }
 
@@ -352,31 +426,61 @@ public class WindowsRouteService : IRouteService
 
     internal bool TryFindExistingSpecificRoute(string ipAddress, out RouteEntry route)
     {
-        route = GetRouteTable()
-            .Where(candidate => IsSpecificRouteForDestination(candidate, ipAddress, _tunIpAddress))
-            .OrderByDescending(candidate => GetPrefixLength(candidate.Netmask))
-            .ThenBy(candidate => int.TryParse(candidate.Metric, out var metric) ? metric : int.MaxValue)
-            .FirstOrDefault() ?? new RouteEntry();
+        route = SelectBestSpecificRoute(GetRouteTable(), ipAddress, _tunIpAddress) ?? new RouteEntry();
 
         return !string.IsNullOrWhiteSpace(route.Network);
     }
 
     public bool RemoveBypassRoute(string ipAddress)
     {
-        var (exitCode, output) = ExecuteCommandWithOutput("route", $"delete {ipAddress}");
-        if (exitCode != 0)
+        lock (_routeMutationLock)
         {
-            Log.Debug("[ROUTE] Failed to remove bypass route {IP}. Output: {Output}", ipAddress, output.Trim());
+            if (!_addedBypassRoutes.TryGetValue(ipAddress, out var owned))
+                return false;
+            if (IPAddress.TryParse(ipAddress, out var address) && IsLocalInterfaceAddress(address))
+            {
+                _addedBypassRoutes.Remove(ipAddress);
+                return true;
+            }
+            var routes = GetRouteTable();
+            if (routes.Count == 0)
+                return false;
+            if (!routes.Any(route => MatchesOwnedRoute(route, ipAddress, owned)))
+            {
+                _addedBypassRoutes.Remove(ipAddress);
+                return true;
+            }
+            var interfaces = GetRouteInterfaceCandidates();
+            if (interfaces.Any(item => item.LocalAddress.ToString() == owned.LocalAddress && item.InterfaceIndex != owned.InterfaceIndex))
+            {
+                _addedBypassRoutes.Remove(ipAddress);
+                return true;
+            }
+            var (exitCode, output) = ExecuteCommandWithOutput("netsh", BuildOwnedRouteDeleteCommand(ipAddress, owned));
+            if (exitCode != 0)
+            {
+                Log.Warning("[ROUTE] Failed to remove owned route {IP}: {Output}", ipAddress, output.Trim());
+                return false;
+            }
+            _addedBypassRoutes.Remove(ipAddress);
+            return true;
         }
-
-        return exitCode == 0;
     }
+
+    internal static string BuildOwnedRouteDeleteCommand(string ip, TrackedBypassRoute route) =>
+        $"interface ipv4 delete route {ip}/{route.PrefixLength} interface={route.InterfaceIndex} nexthop={route.NextHop} store=active";
+
+    internal static bool MatchesOwnedRoute(RouteEntry route, string ip, TrackedBypassRoute owned) =>
+        route.Network == ip && GetPrefixLength(route.Netmask) == owned.PrefixLength &&
+        route.Interface == owned.LocalAddress &&
+        (route.Gateway == owned.NextHop || (IsOnLinkGateway(route.Gateway) && owned.NextHop == "0.0.0.0"));
 
     public bool RemoveTrackedBypassRoute(string ipAddress)
     {
         lock (_routeMutationLock)
         {
-            if (!_addedBypassRoutes.Remove(ipAddress, out var trackedRoute))
+            _pendingRoutes.Remove(ipAddress);
+            if (!_addedBypassRoutes.ContainsKey(ipAddress))
             {
                 return false;
             }
@@ -386,7 +490,6 @@ public class WindowsRouteService : IRouteService
                 return true;
             }
 
-            _addedBypassRoutes[ipAddress] = trackedRoute;
             return false;
         }
     }
@@ -404,6 +507,7 @@ public class WindowsRouteService : IRouteService
     {
         lock (_routeMutationLock)
         {
+            _pendingRoutes.Clear();
             if (_addedBypassRoutes.Count == 0)
             {
                 return;
@@ -416,7 +520,7 @@ public class WindowsRouteService : IRouteService
                 Log.Debug("[ROUTE] Removed bypass route: {IP}", ip);
             }
 
-            _addedBypassRoutes.Clear();
+            _pendingRoutes.Clear();
         }
     }
 
@@ -429,6 +533,7 @@ public class WindowsRouteService : IRouteService
 
     public List<RouteEntry> GetRouteTable()
     {
+        if (_readRoutes != null) return _readRoutes();
         var routes = new List<RouteEntry>();
         try
         {
@@ -600,23 +705,6 @@ public class WindowsRouteService : IRouteService
         }
     }
 
-    private OnLinkRouteCandidate? FindOnLinkRouteCandidate(IPAddress destination, bool allowOverlay)
-    {
-        try
-        {
-            return SelectBestOnLinkRouteCandidate(
-                GetOnLinkRouteCandidates(NetworkInterface.GetAllNetworkInterfaces()),
-                destination,
-                _tunIpAddress,
-                allowOverlay);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning("[ROUTE] Failed to inspect on-link interfaces for {Destination}: {Message}", destination, ex.Message);
-            return null;
-        }
-    }
-
     private static IEnumerable<OnLinkRouteCandidate> GetOnLinkRouteCandidates(IEnumerable<NetworkInterface> interfaces)
     {
         foreach (var networkInterface in interfaces)
@@ -700,6 +788,58 @@ public class WindowsRouteService : IRouteService
         return route.Interface.Equals(localAddress.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
+    internal static bool IsLocalHostRoute(RouteEntry route, IPAddress address)
+    {
+        return route.Network.Equals(address.ToString(), StringComparison.OrdinalIgnoreCase) &&
+               GetPrefixLength(route.Netmask) == 32 &&
+               IsOnLinkGateway(route.Gateway) &&
+               RouteUsesLocalAddress(route, address);
+    }
+
+    internal static bool IsRouteOnUsableInterface(
+        RouteEntry route,
+        IEnumerable<OnLinkRouteCandidate> candidates,
+        string tunIpAddress)
+    {
+        return !route.Interface.Equals(tunIpAddress, StringComparison.OrdinalIgnoreCase) &&
+               candidates.Any(candidate => RouteUsesLocalAddress(route, candidate.LocalAddress));
+    }
+
+    private bool IsLocalInterfaceAddress(IPAddress address)
+    {
+        if (_readInterfaces != null) return _readInterfaces().Any(item => item.LocalAddress.Equals(address));
+        try
+        {
+            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                try
+                {
+                    if (MatchesLocalInterfaceAddress(
+                            address,
+                            networkInterface.GetIPProperties().UnicastAddresses.Select(item => item.Address)))
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // An interface can disappear while its properties are being enumerated.
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("[ROUTE] Failed to inspect local interface addresses: {Message}", ex.Message);
+        }
+
+        return false;
+    }
+
+    internal static bool MatchesLocalInterfaceAddress(
+        IPAddress destination,
+        IEnumerable<IPAddress> localAddresses) =>
+        localAddresses.Any(address => address.Equals(destination));
+
     private bool RouteExists(string ipAddress, string mask = "255.255.255.255")
     {
         return GetRouteTable().Any(route => route.Network == ipAddress && route.Netmask == mask);
@@ -710,49 +850,63 @@ public class WindowsRouteService : IRouteService
         return GetRouteTable().Any(route =>
             route.Network == ipAddress &&
             route.Netmask == mask &&
+            IsOnLinkGateway(route.Gateway) &&
             RouteUsesLocalAddress(route, localAddress));
     }
 
-    private bool RouteExistsOnInterface(string ipAddress, string mask, IPAddress localAddress)
+    private bool RouteExistsOnInterface(string ipAddress, string mask, IPAddress localAddress, string nextHop)
     {
         return GetRouteTable().Any(route =>
             route.Network.Equals(ipAddress, StringComparison.OrdinalIgnoreCase) &&
             route.Netmask.Equals(mask, StringComparison.OrdinalIgnoreCase) &&
+            route.Gateway == nextHop &&
             RouteUsesLocalAddress(route, localAddress) &&
             !route.Interface.Equals(_tunIpAddress, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private bool IsSafeDirectRoute(RouteEntry route)
-    {
-        var egress = GetDirectEgressRoute();
-        return egress != null && RouteUsesLocalAddress(route, egress.LocalAddress);
     }
 
     private void RebuildTrackedBypassRoutes()
     {
         lock (_routeMutationLock)
         {
-            if (_addedBypassRoutes.Count == 0)
-            {
-                return;
-            }
-
-            var routes = _addedBypassRoutes.ToArray();
-            Log.Information("[ROUTE] Rebuilding {Count} tracked bypass route(s) after DIRECT egress changed.", routes.Length);
+            var routes = _pendingRoutes.Concat(_addedBypassRoutes).GroupBy(item => item.Key)
+                .Select(group => group.Last()).ToArray();
+            _pendingRoutes.Clear();
+            Log.Information("[ROUTE] Rechecking {Count} owned bypass route(s) after network change or retry.", routes.Length);
             foreach (var (ipAddress, trackedRoute) in routes)
             {
-                RemoveBypassRoute(ipAddress);
+                if (_addedBypassRoutes.ContainsKey(ipAddress) && !RemoveBypassRoute(ipAddress))
+                {
+                    _pendingRoutes[ipAddress] = trackedRoute;
+                    continue;
+                }
                 if (!AddBypassRouteCore(ipAddress, trackedRoute.PrefixLength, trackedRoute.AllowOverlayOnLink))
                 {
-                    // Keep the desired route tracked so a later network update can retry it.
-                    _addedBypassRoutes[ipAddress] = trackedRoute;
+                    // Desired routes are not owned until successfully created.
+                    _pendingRoutes[ipAddress] = trackedRoute;
                 }
             }
         }
     }
 
+    private IReadOnlyList<OnLinkRouteCandidate> GetRouteInterfaceCandidates()
+    {
+        if (_readInterfaces != null) return _readInterfaces();
+        try
+        {
+            return GetOnLinkRouteCandidates(NetworkInterface.GetAllNetworkInterfaces()).ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("[ROUTE] Failed to inspect route interfaces: {Message}", ex.Message);
+            throw;
+        }
+    }
+
     private IReadOnlyList<DirectEgressInterfaceCandidate> GetDirectEgressInterfaceCandidates()
     {
+        if (_readInterfaces != null)
+            return _readInterfaces().Select(item => new DirectEgressInterfaceCandidate(item.InterfaceName,
+                item.InterfaceName, item.InterfaceIndex, item.LocalAddress, 0, item.IsOverlay, [])).ToList();
         var candidates = new List<DirectEgressInterfaceCandidate>();
         try
         {
@@ -954,6 +1108,16 @@ public class WindowsRouteService : IRouteService
         return (destinationValue & maskValue) == (networkValue & maskValue);
     }
 
+    internal static RouteEntry? SelectBestSpecificRoute(
+        IEnumerable<RouteEntry> routes,
+        string destinationIp,
+        string tunIpAddress) =>
+        routes
+            .Where(candidate => IsSpecificRouteForDestination(candidate, destinationIp, tunIpAddress))
+            .OrderByDescending(candidate => GetPrefixLength(candidate.Netmask))
+            .ThenBy(candidate => ParseMetric(candidate.Metric))
+            .FirstOrDefault();
+
     internal static IPAddress? FindLocalAddressForDestination(
         IReadOnlyCollection<RouteEntry> routes,
         IPAddress destination,
@@ -1113,8 +1277,9 @@ public class WindowsRouteService : IRouteService
                output.Contains("已存在", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static (int ExitCode, string Output) ExecuteCommandWithOutput(string fileName, string arguments)
+    private (int ExitCode, string Output) ExecuteCommandWithOutput(string fileName, string arguments)
     {
+        if (_runCommand != null) return _runCommand(fileName, arguments);
         try
         {
             var psi = new ProcessStartInfo
@@ -1128,7 +1293,8 @@ public class WindowsRouteService : IRouteService
             };
 
             using var proc = Process.Start(psi)!;
-            var output = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
+            var stdout = proc.StandardOutput.ReadToEndAsync();
+            var stderr = proc.StandardError.ReadToEndAsync();
             if (!proc.WaitForExit(5000))
             {
                 try
@@ -1140,10 +1306,10 @@ public class WindowsRouteService : IRouteService
                     // Best effort cleanup for a timed out helper process.
                 }
 
-                return (1, output + "Command timed out.");
+                return (1, "Command timed out.");
             }
 
-            return (proc.ExitCode, output);
+            return (proc.ExitCode, stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult());
         }
         catch (Exception ex)
         {
@@ -1185,7 +1351,7 @@ internal sealed record DirectEgressRoute(
     IPAddress LocalAddress,
     int TotalMetric);
 
-internal readonly record struct TrackedBypassRoute(int PrefixLength, bool AllowOverlayOnLink);
+internal readonly record struct TrackedBypassRoute(int PrefixLength, bool AllowOverlayOnLink, int InterfaceIndex, string LocalAddress, string NextHop);
 
 public class RouteDiagnosisResult
 {

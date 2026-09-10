@@ -31,6 +31,8 @@ public interface IRouteService
     /// <summary>获取当前安全 DIRECT 出口的本地 IPv4 地址。</summary>
     IPAddress? GetDirectOutboundAddress() => null;
 
+    long NetworkVersion => 0;
+
     /// <summary>重新读取平台路由状态；用于应用内重启和网络变化后的自愈。</summary>
     void RefreshRouteState()
     {

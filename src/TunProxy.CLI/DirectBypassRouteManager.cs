@@ -11,6 +11,8 @@ internal sealed class DirectBypassRouteManager
     private readonly IRouteService? _routeService;
     private readonly TimeSpan _idleTimeout;
     private readonly int _maxRouteCount;
+    private long _networkVersion = -1;
+    private readonly object _versionLock = new();
     private readonly ConcurrentDictionary<string, DirectBypassRouteEntry> _routes =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -44,6 +46,15 @@ internal sealed class DirectBypassRouteManager
         }
 
         ct.ThrowIfCancellationRequested();
+        lock (_versionLock)
+        {
+            var version = _routeService.NetworkVersion;
+            if (_networkVersion != version)
+            {
+                _routes.Clear();
+                _networkVersion = version;
+            }
+        }
         var entry = _routes.GetOrAdd(
             destIP,
             static (ip, state) => new DirectBypassRouteEntry(

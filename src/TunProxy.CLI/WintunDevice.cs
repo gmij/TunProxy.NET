@@ -125,6 +125,10 @@ public sealed class WintunDevice : ITunDevice
                 .Select(a => a.ToString())
                 .ToArray();
 
+            // Repeated network notifications must not replace the saved DNS with our own interceptor.
+            if (currentDns.Length == 1 && currentDns[0] == _dnsInterceptorIp)
+                continue;
+
             _savedAdapterDns[adapter.Name] = (isDhcp, currentDns);
             Log.Information(
                 "[TUN ] Redirecting DNS on \"{Adapter}\" to {InterceptorIp} (saved: {Saved})",
@@ -132,9 +136,12 @@ public sealed class WintunDevice : ITunDevice
                 _dnsInterceptorIp,
                 isDhcp ? "dhcp" : (currentDns.Length > 0 ? string.Join(", ", currentDns) : "none"));
 
-            RunNetsh($"interface ipv4 set dnsservers name=\"{adapter.Name}\" static {_dnsInterceptorIp} primary validate=no");
+            if (!RunNetsh($"interface ipv4 set dnsservers name=\"{adapter.Name}\" static {_dnsInterceptorIp} primary validate=no"))
+                throw new InvalidOperationException($"Failed to redirect DNS on {adapter.Name}.");
         }
     }
+
+    internal void RefreshDnsRouting() => SaveAndRedirectPhysicalAdapterDns();
 
     private void RestorePhysicalAdapterDns()
     {
@@ -222,16 +229,22 @@ public sealed class WintunDevice : ITunDevice
         return servers.ToList();
     }
 
-    private static void RunNetsh(string arguments)
+    private static bool RunNetsh(string arguments)
     {
-        var process = Process.Start(new ProcessStartInfo
+        using var process = Process.Start(new ProcessStartInfo
         {
             FileName = "netsh",
             Arguments = arguments,
             CreateNoWindow = true,
             UseShellExecute = false
         });
-        process?.WaitForExit(3000);
+        if (process == null) return false;
+        if (!process.WaitForExit(3000))
+        {
+            try { process.Kill(); } catch (InvalidOperationException) { }
+            return false;
+        }
+        return process.ExitCode == 0;
     }
 
     private static void FlushDnsCache()

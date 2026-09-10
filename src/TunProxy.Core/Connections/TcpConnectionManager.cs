@@ -19,7 +19,7 @@ public class TcpConnectionManager : IDisposable
     private readonly string? _password;
     private readonly int _maxConnections;
     private readonly TimeSpan _connectionTimeout;
-    private readonly IPAddress? _bindAddress; // 强制绑定的本地 IP（防止走 TUN 接口）
+    private IPAddress? _bindAddress; // New connections use the latest network selection.
     private readonly int? _linuxSocketMark;
     private bool _disposed;
 
@@ -48,7 +48,7 @@ public class TcpConnectionManager : IDisposable
     /// <summary>
     /// 获取或创建 TCP 连接
     /// </summary>
-    public TcpConnection? GetOrCreateConnection(IPPacket packet)
+    public TcpConnection? GetOrCreateConnection(IPPacket packet, IPAddress? bindAddress = null)
     {
         if (packet.SourcePort == null || packet.DestinationPort == null)
             throw new ArgumentException("Invalid packet");
@@ -79,7 +79,7 @@ public class TcpConnectionManager : IDisposable
                 _username,
                 _password,
                 _connectionTimeout,
-                _bindAddress,
+                bindAddress ?? Volatile.Read(ref _bindAddress),
                 _linuxSocketMark));
     }
 
@@ -153,6 +153,8 @@ public class TcpConnectionManager : IDisposable
 
     internal IPAddress? BindAddress => _bindAddress;
 
+    public void UpdateBindAddress(IPAddress? address) => Volatile.Write(ref _bindAddress, address);
+
     public void Dispose()
     {
         if (!_disposed)
@@ -193,6 +195,7 @@ public class TcpConnection : IDisposable
 
     public DateTime LastActivity { get; private set; } = DateTime.UtcNow;
     public bool HasErrors { get; private set; }
+    internal IPAddress? BindAddress => _bindAddress;
 
     public TcpConnection(
         string proxyHost,

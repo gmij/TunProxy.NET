@@ -85,8 +85,23 @@ public class DirectBypassRouteManagerTests
         Assert.Equal(2, routes.Added.Count);
     }
 
+    [Fact]
+    public async Task NetworkChange_InvalidatesSuccessfulCacheForContinuouslyUsedDestination()
+    {
+        var routes = new FakeRouteService();
+        var manager = new DirectBypassRouteManager(routes);
+        var decision = RouteDecision.Direct("PrivateIP", null, IPAddress.Parse("192.168.50.80"));
+        await manager.EnsureRouteAsync("192.168.50.80", decision, CancellationToken.None);
+        await manager.EnsureRouteAsync("192.168.50.80", decision, CancellationToken.None);
+        Assert.Single(routes.Added);
+        routes.NetworkVersion++;
+        await manager.EnsureRouteAsync("192.168.50.80", decision, CancellationToken.None);
+        Assert.Equal(2, routes.Added.Count);
+    }
+
     private sealed class FakeRouteService : IRouteService
     {
+        public long NetworkVersion { get; set; }
         public List<string> Added { get; } = new();
 
         public List<string> RemovedTracked { get; } = new();

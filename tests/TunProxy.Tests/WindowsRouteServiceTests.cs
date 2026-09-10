@@ -128,6 +128,177 @@ public class WindowsRouteServiceTests
     }
 
     [Fact]
+    public void SelectBestSpecificRoute_PrefersLongestPrefixAcrossAdapters()
+    {
+        var routes = new[]
+        {
+            new RouteEntry
+            {
+                Network = "10.20.0.0",
+                Netmask = "255.255.0.0",
+                Gateway = "On-link",
+                Interface = "10.20.1.10",
+                Metric = "5"
+            },
+            new RouteEntry
+            {
+                Network = "10.20.30.0",
+                Netmask = "255.255.255.0",
+                Gateway = "On-link",
+                Interface = "10.20.30.20",
+                Metric = "45"
+            }
+        };
+
+        var selected = WindowsRouteService.SelectBestSpecificRoute(
+            routes,
+            "10.20.30.50",
+            "10.255.0.1");
+
+        Assert.NotNull(selected);
+        Assert.Equal("10.20.30.20", selected.Interface);
+    }
+
+    [Fact]
+    public void SelectBestSpecificRoute_UsesMetricForOverlappingAdapters()
+    {
+        var routes = new[]
+        {
+            new RouteEntry
+            {
+                Network = "192.168.10.0",
+                Netmask = "255.255.255.0",
+                Gateway = "On-link",
+                Interface = "192.168.10.10",
+                Metric = "55"
+            },
+            new RouteEntry
+            {
+                Network = "192.168.10.0",
+                Netmask = "255.255.255.0",
+                Gateway = "On-link",
+                Interface = "192.168.10.20",
+                Metric = "25"
+            }
+        };
+
+        var selected = WindowsRouteService.SelectBestSpecificRoute(
+            routes,
+            "192.168.10.80",
+            "10.255.0.1");
+
+        Assert.NotNull(selected);
+        Assert.Equal("192.168.10.20", selected.Interface);
+    }
+
+    [Fact]
+    public void IsLocalHostRoute_RecognizesZeroTierLocalAddressRoute()
+    {
+        var route = new RouteEntry
+        {
+            Network = "10.144.20.201",
+            Netmask = "255.255.255.255",
+            Gateway = "On-link",
+            Interface = "10.144.20.201",
+            Metric = "291"
+        };
+
+        Assert.True(WindowsRouteService.IsLocalHostRoute(
+            route,
+            IPAddress.Parse("10.144.20.201")));
+    }
+
+    [Fact]
+    public void IsLocalHostRoute_RejectsZeroTierPeerRoute()
+    {
+        var route = new RouteEntry
+        {
+            Network = "10.144.20.200",
+            Netmask = "255.255.255.255",
+            Gateway = "On-link",
+            Interface = "10.144.20.201",
+            Metric = "291"
+        };
+
+        Assert.False(WindowsRouteService.IsLocalHostRoute(
+            route,
+            IPAddress.Parse("10.144.20.200")));
+    }
+
+    [Fact]
+    public void MatchesLocalInterfaceAddress_MatchesOnlyAssignedAddress()
+    {
+        var localAddresses = new[]
+        {
+            IPAddress.Parse("10.30.96.253"),
+            IPAddress.Parse("10.144.20.201"),
+            IPAddress.Parse("10.255.0.1")
+        };
+
+        Assert.True(WindowsRouteService.MatchesLocalInterfaceAddress(
+            IPAddress.Parse("10.144.20.201"),
+            localAddresses));
+        Assert.False(WindowsRouteService.MatchesLocalInterfaceAddress(
+            IPAddress.Parse("10.144.20.200"),
+            localAddresses));
+    }
+
+    [Fact]
+    public void IsRouteOnUsableInterface_AcceptsSecondaryLanAndOverlayAdapters()
+    {
+        var candidates = new[]
+        {
+            new OnLinkRouteCandidate(
+                "Ethernet",
+                7,
+                IPAddress.Parse("10.30.96.253"),
+                IPAddress.Parse("255.255.255.0")),
+            new OnLinkRouteCandidate(
+                "Wi-Fi",
+                12,
+                IPAddress.Parse("192.168.10.20"),
+                IPAddress.Parse("255.255.255.0")),
+            new OnLinkRouteCandidate(
+                "ZeroTier One",
+                42,
+                IPAddress.Parse("10.144.20.201"),
+                IPAddress.Parse("255.255.255.0"),
+                IsOverlay: true)
+        };
+
+        Assert.True(WindowsRouteService.IsRouteOnUsableInterface(
+            Route("192.168.10.0", "255.255.255.0", "192.168.10.20"),
+            candidates,
+            "10.255.0.1"));
+        Assert.True(WindowsRouteService.IsRouteOnUsableInterface(
+            Route("10.144.20.0", "255.255.255.0", "10.144.20.201"),
+            candidates,
+            "10.255.0.1"));
+    }
+
+    [Fact]
+    public void IsRouteOnUsableInterface_RejectsTunAndUnavailableAdapters()
+    {
+        var candidates = new[]
+        {
+            new OnLinkRouteCandidate(
+                "Ethernet",
+                7,
+                IPAddress.Parse("10.30.96.253"),
+                IPAddress.Parse("255.255.255.0"))
+        };
+
+        Assert.False(WindowsRouteService.IsRouteOnUsableInterface(
+            Route("0.0.0.0", "0.0.0.0", "10.255.0.1"),
+            candidates,
+            "10.255.0.1"));
+        Assert.False(WindowsRouteService.IsRouteOnUsableInterface(
+            Route("192.168.50.0", "255.255.255.0", "192.168.50.10"),
+            candidates,
+            "10.255.0.1"));
+    }
+
+    [Fact]
     public void GetPrefixLength_ReturnsMaskBits()
     {
         Assert.Equal(16, WindowsRouteService.GetPrefixLength("255.255.0.0"));
@@ -401,6 +572,15 @@ public class WindowsRouteServiceTests
         Gateway = gateway,
         Interface = localAddress,
         Metric = metric.ToString()
+    };
+
+    private static RouteEntry Route(string network, string netmask, string localAddress) => new()
+    {
+        Network = network,
+        Netmask = netmask,
+        Gateway = "On-link",
+        Interface = localAddress,
+        Metric = "25"
     };
 
     private static DirectEgressInterfaceCandidate EgressInterface(
